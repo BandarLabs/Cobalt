@@ -404,6 +404,34 @@ fn lost_most(body: &body::Body, left_out: usize) -> bool {
     kept * of < (kept + left_out) * least
 }
 
+/// How much of a book's own text may be link text before it is a list of
+/// links rather than something to read: two thirds. A post that cites its
+/// sources at the end can be half links; an archive or a front page of
+/// headlines is nearly all links.
+const MOST_LINKS: (usize, usize) = (2, 3);
+
+/// Whether what was found is a list of links rather than an article.
+///
+/// Either the text that would go in the book is itself mostly links, which
+/// is an archive or an index taken whole. Or the page is mostly links and
+/// what was found is a small part of the little it says outside them, which
+/// is a section front: the extractor found no article there and handed back
+/// the one teaser or programme note that scored best. A genuinely short post
+/// on a site with a long sidebar passes the second test because the post is
+/// nearly all of what its page says in plain text, however many links stand
+/// around it.
+fn is_list_of_links(page: extract::PageText, body: &body::Body) -> bool {
+    let kept = body::letters_kept(&body.nodes);
+    let linked = body::letters_linked(&body.nodes);
+    let (most, of) = MOST_LINKS;
+    if linked * of > kept * most {
+        return true;
+    }
+    let page_is_mostly_links = page.linked * 2 > page.letters;
+    let said_plainly = page.letters.saturating_sub(page.linked);
+    page_is_mostly_links && kept.saturating_sub(linked) * 2 < said_plainly
+}
+
 /// The article rebuilt for a book, with its lead figure put back, and
 /// checked to be most of what the extractor found.
 ///
@@ -444,6 +472,9 @@ fn rebuilt_body(
     }
     if lost_most(&body, body.left_to_kind) {
         return Err(Refusal::MostlyLeftOut);
+    }
+    if is_list_of_links(article.page_text, &body) {
+        return Err(Refusal::NotAnArticle);
     }
     Ok(body)
 }

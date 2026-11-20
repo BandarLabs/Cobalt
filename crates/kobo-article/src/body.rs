@@ -1501,6 +1501,19 @@ pub fn letters_kept(nodes: &[Node]) -> usize {
         .sum()
 }
 
+/// Letters of the rebuilt body's text that sit inside links.
+#[must_use]
+pub fn letters_linked(nodes: &[Node]) -> usize {
+    nodes
+        .iter()
+        .map(|node| match node {
+            Node::Element(element) if element.name == "a" => letters_kept(&element.children),
+            Node::Element(element) => letters_linked(&element.children),
+            Node::Text(_) | Node::Picture(_) => 0,
+        })
+        .sum()
+}
+
 /// Whether the body still holds a picture.
 #[must_use]
 pub fn has_picture(nodes: &[Node]) -> bool {

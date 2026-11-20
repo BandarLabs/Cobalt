@@ -832,6 +832,108 @@ fn a_page_that_is_not_an_article_is_refused_in_a_sentence() {
         .starts_with("No article was found on this page."));
 }
 
+fn refused(html: &str, page: &str) -> String {
+    clip(html, page, &Pictures::default(), &options())
+        .expect_err("not an article")
+        .to_string()
+}
+
+const NOT_AN_ARTICLE: &str = "No article was found on this page. It may be a home page, a list \
+                              of links, or a page that only fills itself in with scripts.";
+
+#[test]
+fn a_section_front_is_refused_rather_than_saved_as_whichever_teaser_scored_best() {
+    // The page has a programme note in plain text among its headlines, which
+    // is what the extractor settles on when there is no article to find.
+    let front = fixture("synthetic-section-front.html");
+    assert!(front.contains("An oceanographer explains why"));
+    assert_eq!(
+        refused(&front, "https://www.estuarypost.example.org/science"),
+        NOT_AN_ARTICLE
+    );
+}
+
+#[test]
+fn an_archive_and_a_list_of_threads_are_refused_as_lists_of_links() {
+    let rows = |row: &dyn Fn(usize) -> String| (1..=30).map(row).collect::<String>();
+    let archive = format!(
+        "<html><head><title>Archive | Slipway notes</title></head><body><main><h1>Archive</h1>\
+         <ul>{}</ul></main></body></html>",
+        rows(&|number| format!(
+            "<li><a href=\"/posts/{number}\">Post number {number}, about the boat in the shed \
+             and what was done to it that week</a> <span>{number} May 2026</span></li>"
+        ))
+    );
+    assert_eq!(
+        refused(&archive, "https://slipway.example.net/archive"),
+        NOT_AN_ARTICLE
+    );
+    let threads = format!(
+        "<html><head><title>Boatbuilding | The Yard Forum</title></head><body><table>{}</table>\
+         </body></html>",
+        rows(&|number| format!(
+            "<tr><td>{number}.</td><td><a href=\"/t/{number}\">Thread {number}: has anyone \
+             here steamed oak without a boiler?</a></td><td>{number} replies</td>\
+             <td>by <a href=\"/u/{number}\">member{number}</a></td></tr>"
+        ))
+    );
+    assert_eq!(
+        refused(&threads, "https://forum.example.net/boatbuilding"),
+        NOT_AN_ARTICLE
+    );
+}
+
+#[test]
+fn a_short_post_is_a_book_even_when_the_links_around_it_outweigh_it() {
+    // Two sentences, on a page whose menu, list of recent posts and small
+    // print hold more than twice the post's letters, all of it link.
+    let book = book_of(
+        "synthetic-short-post.html",
+        "https://slipway.example.net/posts/closed-saturday",
+    );
+    let story = book.body.split("<body>").nth(1).unwrap_or_default();
+    assert_eq!(
+        story.trim(),
+        "<p>The workshop is closed this Saturday while the new slip rails go in. Collections \
+         can wait until Monday, or ring the bell at the side door and somebody will come down.</p>\n\
+         <p>Normal hours again from the twelfth.</p>\n\n</body>\n</html>"
+    );
+    assert_gone(
+        "synthetic-short-post.html",
+        &book,
+        &["Recent posts", "Bedding a keel bolt", "Feed for new posts"],
+    );
+    assert!(book
+        .title_page
+        .contains("<h1>Workshop closed this Saturday</h1>"));
+}
+
+#[test]
+fn an_article_that_links_a_great_deal_is_still_an_article() {
+    // A reading list: every item a link, each with a sentence of the
+    // writer's own, which is more plain text than link.
+    let mut items = String::new();
+    for number in 1..=12 {
+        items.push_str(&format!(
+            "<p><a href=\"https://example.net/{number}\">Pilot book, volume {number}</a>. \
+             Worth having for the chapter on bar harbours alone, though the tidal diagrams \
+             are from the old survey and want checking against the new one.</p>"
+        ));
+    }
+    let html = format!(
+        "<html><head><title>A reading list for the estuary</title></head><body><article>\
+         <h1>A reading list for the estuary</h1>{items}</article></body></html>"
+    );
+    let clipping = clip(
+        &html,
+        "https://slipway.example.net/reading",
+        &Pictures::default(),
+        &options(),
+    )
+    .expect("a book");
+    assert_eq!(clipping.title, "A reading list for the estuary");
+}
+
 #[test]
 fn a_saved_page_with_an_address_that_is_not_a_web_address_is_refused() {
     let refusal = clip(
