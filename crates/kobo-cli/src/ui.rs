@@ -51,6 +51,7 @@
 //! [`server`], and each has a test that sees it refuse.
 
 mod api;
+mod arrival;
 mod guard;
 mod http;
 mod jobs;
@@ -154,6 +155,11 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     {
         println!("{HELP}");
         return Ok(());
+    }
+    // Not an option an owner types and not in the help: the server runs
+    // this command again with it, as the job that looks for a reader.
+    if arguments == ["--find-reader"] {
+        return arrival::find();
     }
     let options = parse(arguments)?;
     let machine = api::Machine::here(options.volume, options.release_dir)?;

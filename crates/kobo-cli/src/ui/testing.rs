@@ -294,6 +294,7 @@ pub fn make_desk(name: &str) -> (Machine, Desk) {
         room: Box::new(move |_| *roomy.lock().expect("room")),
         blocked: Box::new(move || kept_out.lock().expect("blocked").clone()),
         attached: Box::new(move || *on_the_bus.lock().expect("attached")),
+        network: Box::new(|| true),
         home: root.join("home"),
         config: root.join("config"),
         uploads: Mutex::default(),

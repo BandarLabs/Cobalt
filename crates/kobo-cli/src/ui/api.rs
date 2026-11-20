@@ -23,6 +23,7 @@ use kobo_app_store::Ed25519PublicKey;
 use kobo_protocol::DeviceError;
 use serde_json::{json, Value};
 
+use super::arrival;
 use super::http::{Malformed, Response};
 use super::jobs::{self, Finish, Kind};
 use super::page;
@@ -97,6 +98,21 @@ pub const ROUTES: &[Route] = &[
         method: "POST",
         path: "/api/reader/eject",
         handle: eject,
+    },
+    Route {
+        method: "POST",
+        path: "/api/reader/find",
+        handle: find_reader,
+    },
+    Route {
+        method: "POST",
+        path: "/api/readers/rename",
+        handle: rename_reader,
+    },
+    Route {
+        method: "POST",
+        path: "/api/readers/forget",
+        handle: forget_reader,
     },
     Route {
         method: "GET",
@@ -198,6 +214,10 @@ pub type Blocked = Box<dyn Fn() -> Vec<PathBuf> + Send + Sync>;
 /// How the Kobos on the USB bus are counted, when this system can count.
 pub type Attached = Box<dyn Fn() -> Option<usize> + Send + Sync>;
 
+/// How it is told whether this computer is on a network a reader could be
+/// looked for on.
+pub type Network = Box<dyn Fn() -> bool + Send + Sync>;
+
 /// What the handlers know about the computer they are running on.
 ///
 /// Everything that reaches outside this process is a field here: where
@@ -228,6 +248,7 @@ pub struct Machine {
     pub room: RoomOf,
     pub blocked: Blocked,
     pub attached: Attached,
+    pub network: Network,
     pub home: PathBuf,
     /// The companion's own folder: saved readers, the clip queue, the
     /// extension.
@@ -326,6 +347,7 @@ impl Machine {
             room: Box::new(surroundings::room),
             blocked,
             attached: Box::new(surroundings::kobos_attached),
+            network: Box::new(|| crate::connect::local_subnet().is_some()),
             home: kobo_abi::home_directory().unwrap_or_default(),
             config: delivery::config_root(),
             uploads: Mutex::default(),
@@ -545,7 +567,7 @@ fn standing(on_reader: Option<&str>, release: Result<&String, &String>) -> &'sta
 ///
 /// The serial is left out. The page has no use for it, and the command line
 /// has never shown more than its first four characters, which are the model.
-fn reader_json(machine: &Machine, reader: &setup::Mounted) -> Value {
+fn reader_json(machine: &Machine, saved: &readers::Store, reader: &setup::Mounted) -> Value {
     let identified = setup::install_profile(reader);
     let profile = identified.as_ref().map_or_else(
         |_| setup::undo_profile(reader).profile,
@@ -583,16 +605,57 @@ fn reader_json(machine: &Machine, reader: &setup::Mounted) -> Value {
         "cobalt_problem": cobalt_problem,
         "free_bytes": room.free,
         "writable": room.writable,
+        "saved_as": arrival::saved_as(saved, &reader.serial),
+        "menu_corner": arrival::menu_corner(&reader.firmware),
     })
+}
+
+/// The readers saved on this computer. A store that cannot be read is an
+/// empty one here: every route that would write to it reads it again and
+/// says so.
+fn saved_readers(machine: &Machine) -> readers::Store {
+    readers::Store::load(&machine.config.join("readers")).unwrap_or_default()
+}
+
+/// Every job, each install and search with where it has got to.
+///
+/// That is in the state, and not only in the job's own report, so that a
+/// window opened in the middle of an install knows which step to show from
+/// the first thing it reads.
+fn jobs_json(shared: &Shared) -> Vec<Value> {
+    shared
+        .jobs
+        .summaries()
+        .into_iter()
+        .map(|summary| {
+            let job = summary["id"].as_u64().and_then(|id| shared.jobs.find(id));
+            job.map_or(summary.clone(), |job| with_arrival(&job, summary))
+        })
+        .collect()
+}
+
+/// Adds where an install or a search has got to, for a job that is one.
+fn with_arrival(job: &jobs::Job, mut answer: Value) -> Value {
+    if arrival::follows(&job.title) {
+        let whole = job.report(0);
+        answer["setup"] = arrival::progress(
+            whole["text"].as_str().unwrap_or_default(),
+            whole["running"] == true,
+            whole["ok"].as_bool(),
+        );
+    }
+    answer
 }
 
 /// `GET /api/state`: everything the page shows without being asked, which
 /// it reads every couple of seconds to notice a reader arriving or leaving.
 fn state(shared: &Arc<Shared>, _: &mut Request<'_>) -> Response {
     let machine = &shared.machine;
-    let readers: Vec<Value> = (machine.readers)()
+    let mounted = (machine.readers)();
+    let saved = saved_readers(machine);
+    let readers: Vec<Value> = mounted
         .iter()
-        .map(|reader| reader_json(machine, reader))
+        .map(|reader| reader_json(machine, &saved, reader))
         .collect();
     Response::ok(&json!({
         "api": API,
@@ -609,14 +672,17 @@ fn state(shared: &Arc<Shared>, _: &mut Request<'_>) -> Response {
             "release_problem": machine.release.as_ref().err(),
             "ejects": cfg!(target_os = "macos"),
             "upload_limit": shared.limits.upload,
+            "network": (machine.network)(),
         },
+        "saved": arrival::saved(&saved, &mounted),
+        "awaiting": arrival::awaiting(&machine.config).is_some(),
         "attached": (machine.attached)(),
         "blocked": (machine.blocked)()
             .iter()
             .map(|volume| volume.to_string_lossy().into_owned())
             .collect::<Vec<_>>(),
         "readers": readers,
-        "jobs": shared.jobs.summaries(),
+        "jobs": jobs_json(shared),
     }))
 }
 
@@ -728,6 +794,82 @@ fn install_cobalt(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         None,
         || {},
     )
+}
+
+/// `POST /api/reader/find`: looks again, over Wi-Fi, for the reader that
+/// was set up from this computer and has not been saved.
+///
+/// Setup looks for five minutes after an install and then gives up, and
+/// until now its last word was a command to type. This is that wait again,
+/// with the saving and the locking that follow it, as a job the window can
+/// start from a button. It takes no reader's name from the request: which
+/// reader is waiting is read from what setup itself recorded.
+fn find_reader(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    if let Err(refusal) = request.json() {
+        return refusal;
+    }
+    if arrival::awaiting(&shared.machine.config).is_none() {
+        return conflict(
+            "refused",
+            "No reader set up from this computer is waiting to be found. Plug the reader in \
+             and install Cobalt on it from here first.",
+        );
+    }
+    start_command(
+        shared,
+        Kind::Reader,
+        arrival::FINDING,
+        None,
+        vec!["ui".to_owned(), "--find-reader".to_owned()],
+        None,
+        || {},
+    )
+}
+
+/// `POST /api/readers/rename`: gives a saved reader another name.
+fn rename_reader(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    let (Some(name), Some(to)) = (text(&body, "name"), text(&body, "to")) else {
+        return bad("Name the reader and the name to give it.");
+    };
+    if let Some(problem) = arrival::name_problem(to) {
+        return bad(problem);
+    }
+    saved_answer(shared, arrival::rename(&shared.machine.config, name, to))
+}
+
+/// `POST /api/readers/forget`: takes a reader out of the ones saved on this
+/// computer, and changes nothing on the reader.
+fn forget_reader(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    let Some(name) = text(&body, "name") else {
+        return bad("Name the reader to forget.");
+    };
+    saved_answer(shared, arrival::forget(&shared.machine.config, name))
+}
+
+/// The saved readers as they now stand, or why they were not changed.
+fn saved_answer(shared: &Shared, changed: Result<(), Option<String>>) -> Response {
+    match changed {
+        Ok(()) => {
+            let machine = &shared.machine;
+            let saved = arrival::saved(&saved_readers(machine), &(machine.readers)());
+            Response::ok(&json!({ "saved": saved }))
+        }
+        Err(None) => Response::refusal(
+            404,
+            "Not Found",
+            "not_found",
+            "No reader is saved under that name.",
+        ),
+        Err(Some(reason)) => conflict("refused", &reason),
+    }
 }
 
 /// `POST /api/reader/remove`: takes Cobalt off the reader with
@@ -1467,7 +1609,7 @@ fn job(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         .and_then(|from| from.parse::<usize>().ok())
         .unwrap_or(0);
     match id.and_then(|id| shared.jobs.find(id)) {
-        Some(job) => Response::ok(&job.report(from)),
+        Some(job) => Response::ok(&with_arrival(&job, job.report(from))),
         None => Response::refusal(
             404,
             "Not Found",

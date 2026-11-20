@@ -600,6 +600,166 @@ fn a_picture_is_only_ever_one_the_store_lists_by_exactly_that_name() {
     assert_eq!(Desk::listing(&desk.root), before);
 }
 
+/// Records that Cobalt was installed on the reader with `serial` from this
+/// desk's computer, as setup does when it finishes.
+fn set_up(desk: &Desk, serial: &str) {
+    let path = desk.root.join("config/setup-steps");
+    let mut done = crate::steps::Steps::load(&path).expect("steps");
+    done.complete(crate::steps::SETUP, serial, 1_800_000_000);
+    done.save(&path).expect("save steps");
+}
+
+/// Saves the reader with `serial` on this desk's computer under `name`.
+fn save(desk: &Desk, serial: &str, name: &str) {
+    let path = desk.root.join("config/readers");
+    let mut store = readers::Store::load(&path).expect("store");
+    store.name(serial, "192.168.1.23", name).expect("a name");
+    store.save(&path).expect("save store");
+}
+
+#[test]
+fn the_state_says_which_readers_are_saved_and_whether_one_is_still_to_be_found() {
+    let (running, desk) = running("arrival-state");
+    let page = running.open();
+    let volume = desk.plug("clara", CLARA_BW, Some("0.3.37"));
+
+    let state = page.get("/api/state").json();
+    assert_eq!(state["saved"], json!([]));
+    assert_eq!(state["awaiting"], false);
+    assert_eq!(state["computer"]["network"], true);
+    assert_eq!(state["readers"][0]["saved_as"], Value::Null);
+    assert_eq!(state["readers"][0]["menu_corner"], "bottom right");
+
+    // Installed from here and unplugged: it is being waited for.
+    set_up(&desk, "N365410043013");
+    assert_eq!(page.get("/api/state").json()["awaiting"], true);
+
+    // Found and saved: it is named wherever it appears, and by name only.
+    save(&desk, "N365410043013", "study");
+    save(&desk, "N418000000000", "kitchen");
+    let reply = page.get("/api/state");
+    let state = reply.json();
+    assert_eq!(state["awaiting"], false);
+    assert_eq!(state["readers"][0]["saved_as"], "study");
+    assert_eq!(
+        state["saved"],
+        json!([
+            { "name": "study", "volume": volume.to_string_lossy() },
+            { "name": "kitchen", "volume": null },
+        ])
+    );
+    assert!(!reply.body.contains("N365410043013"));
+    assert!(!reply.body.contains("N418000000000"));
+}
+
+#[test]
+fn looking_again_runs_the_search_for_the_reader_that_is_waiting_and_for_no_other() {
+    let (running, desk) = running("find");
+    let page = running.open();
+
+    // Nothing was installed from here, so there is nothing to look for.
+    let reply = page.post("/api/reader/find", "{}");
+    assert_eq!((reply.status, reply.kind().as_str()), (409, "refused"));
+    assert!(desk.commands().is_empty());
+
+    set_up(&desk, "N365410043013");
+    // Whatever the request says, the command is the same fixed words.
+    let reply = page.post(
+        "/api/reader/find",
+        r#"{"serial":"N000","volume":"/etc","name":"--device 10.0.0.1"}"#,
+    );
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let id = reply.json()["job"].as_u64().expect("a job");
+    let report = page.finished(id);
+    assert_eq!(desk.commands(), ["ui --find-reader"]);
+    assert_eq!(report["title"], "Looking for the reader");
+    // The job says where it has got to, in its report and in the state.
+    assert!(report["setup"]["stage"].is_string(), "{report}");
+    assert_eq!(report["setup"]["limit"], 300);
+    let state = page.get("/api/state").json();
+    assert_eq!(state["jobs"][0]["setup"]["stage"], report["setup"]["stage"]);
+}
+
+#[test]
+fn an_install_says_where_it_has_got_to_and_other_jobs_say_nothing_of_the_kind() {
+    let (running, desk) = running("stages");
+    let page = running.open();
+    let volume = desk.plug("clara", CLARA_BW, None);
+
+    let reply = page.post("/api/reader/install", &volume_body(&volume));
+    let install = page.finished(reply.json()["job"].as_u64().expect("a job"));
+    // The stand-in command prints none of setup's lines and exits cleanly.
+    assert_eq!(install["setup"]["stage"], "writing");
+    assert_eq!(install["setup"]["saved_as"], Value::Null);
+
+    fs::create_dir_all(volume.join(".adds/cobalt")).expect("installed");
+    fs::write(volume.join(".adds/cobalt/VERSION"), "0.3.37\n").expect("version");
+    let reply = page.post("/api/reader/remove", &volume_body(&volume));
+    let removal = page.finished(reply.json()["job"].as_u64().expect("a job"));
+    assert!(removal.get("setup").is_none(), "{removal}");
+}
+
+#[test]
+fn a_saved_reader_is_renamed_and_forgotten_by_the_name_it_has() {
+    let (running, desk) = running("names");
+    let page = running.open();
+    save(&desk, "N365410043013", "kobo");
+    save(&desk, "N418000000000", "kitchen");
+    let rename = |name: &str, to: &str| {
+        page.post(
+            "/api/readers/rename",
+            &json!({ "name": name, "to": to }).to_string(),
+        )
+    };
+
+    let reply = rename("kobo", "Mum's Kobo");
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        reply.json()["saved"],
+        json!([
+            { "name": "Mum's Kobo", "volume": null },
+            { "name": "kitchen", "volume": null },
+        ])
+    );
+    for (reply, status, kind) in [
+        (rename("Mum's Kobo", "kitchen"), 409, "refused"),
+        (rename("attic", "loft"), 404, "not_found"),
+        (rename("kitchen", "--reader"), 400, "bad_request"),
+        (rename("kitchen", "two\nlines"), 400, "bad_request"),
+        (rename("kitchen", "192.168.1.5"), 400, "bad_request"),
+        (rename("kitchen", ""), 400, "bad_request"),
+        (
+            page.post("/api/readers/rename", r#"{"name":"kitchen"}"#),
+            400,
+            "bad_request",
+        ),
+        (page.post("/api/readers/forget", "{}"), 400, "bad_request"),
+        (
+            page.post("/api/readers/forget", r#"{"name":"attic"}"#),
+            404,
+            "not_found",
+        ),
+    ] {
+        assert_eq!(
+            (reply.status, reply.kind().as_str()),
+            (status, kind),
+            "{}",
+            reply.body
+        );
+    }
+
+    let reply = page.post("/api/readers/forget", r#"{"name":"kitchen"}"#);
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        reply.json()["saved"],
+        json!([{ "name": "Mum's Kobo", "volume": null }])
+    );
+    // The store on disk is what the commands read, and it agrees.
+    let store = readers::Store::load(&desk.root.join("config/readers")).expect("store");
+    assert_eq!(store.readers.len(), 1);
+    assert_eq!(store.readers[0].serial, "N365410043013");
+}
+
 #[test]
 fn what_the_bus_and_the_system_say_about_readers_that_are_not_mounted_is_passed_on() {
     let (running, desk) = running("surroundings");
