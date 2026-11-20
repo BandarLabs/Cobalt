@@ -200,6 +200,12 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             println!(
                 "Cobalt is open in your browser. Close its tab to finish, or press Ctrl-C here."
             );
+            if options.showing == Showing::Best && app_is_owed(&program) {
+                println!(
+                    "The Cobalt app for the Mac is not installed here yet. Run kobo update to \
+                     add it, and kobo ui will open the app."
+                );
+            }
         }
         Shown::Nothing(why) => {
             if let Some(why) = why {
@@ -311,6 +317,24 @@ fn window_beside(program: &Path) -> Option<PathBuf> {
         .join("MacOS")
         .join("Cobalt");
     window.is_file().then_some(window)
+}
+
+/// Whether this Mac should have the Cobalt app beside this command and has
+/// not.
+///
+/// The app comes with the command from the installer, in a release that has
+/// one. The first update to such a release is made by an updater from before
+/// the app, which brings the command and leaves the app behind, and `kobo
+/// update` run again adds it. That is the one case this is true in: a
+/// command the installer put here, which is what the record of its archive
+/// beside it says, on a Mac, with no app. A build from source has no such
+/// record, and its owner knows where the app comes from.
+fn app_is_owed(program: &Path) -> bool {
+    cfg!(target_os = "macos")
+        && window_beside(program).is_none()
+        && program
+            .parent()
+            .is_some_and(|host| host.join("HOST_ARCHIVE_SHA256").is_file())
 }
 
 /// Starts the Cobalt app as a child of this process and hands it the
@@ -501,6 +525,25 @@ mod tests {
         } else {
             assert_eq!(found, None);
         }
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[test]
+    fn the_app_is_owed_only_to_an_installed_command_on_a_mac_that_has_none() {
+        let folder = std::env::temp_dir().join(format!("kobo-ui-owed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("folder");
+        let program = folder.join("kobo");
+        assert!(
+            !app_is_owed(&program),
+            "a build from source is owed nothing"
+        );
+        std::fs::write(folder.join("HOST_ARCHIVE_SHA256"), b"0\n").expect("the installer's record");
+        assert_eq!(app_is_owed(&program), cfg!(target_os = "macos"));
+        let inside = folder.join("Cobalt.app/Contents/MacOS");
+        std::fs::create_dir_all(&inside).expect("bundle");
+        std::fs::write(inside.join("Cobalt"), b"").expect("window");
+        assert!(!app_is_owed(&program), "the app is there");
         let _ = std::fs::remove_dir_all(folder);
     }
 }

@@ -63,10 +63,13 @@ is plugged in but has not been told to connect, a drive macOS will not let
 `kobo` read, storage that is full or mounted read-only, a catalog that
 cannot be reached, a reader unplugged in the middle of an install.
 
-On a Mac, when the Cobalt app sits in the same folder as the `kobo` binary,
-the window is that app, and opening the app from the Dock starts `kobo ui`
-for itself. `tools/build-macos-shell.sh` builds the app. Everywhere else the
-window is a page in the default browser. `--browser` asks for the page on a
+On a Mac the window is the Cobalt app. The installer puts it in the same
+folder as the `kobo` binary, which is the only place `kobo ui` looks for it,
+and opening the app from the Dock starts `kobo ui` for itself. A Mac that
+was updated from a release older than the app has the command and not yet
+the app: `kobo ui` opens the page and says so, and `kobo update` adds the
+app. From a source checkout, `tools/build-macos-shell.sh` builds it.
+Everywhere else the window is a page in the default browser. `--browser` asks for the page on a
 Mac as well, and `--no-open` prints the address instead of opening anything;
 the address opens the page once. `--volume PATH` names the mounted reader
 when it is not found by itself.
