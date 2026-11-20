@@ -478,12 +478,12 @@
   },
   {
    "protocol_version": 18,
-   "reason": "Windows host support for the CLI and simulator, reviewed against the beta catalog published from 716edd9d. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix. OS entropy moves behind kobo-abi, whose Unix arm reads /dev/urandom as the SDK did, and kobo-abi gains a home-directory lookup that is HOME and nothing else on Unix. Directory and file flushes share kobo_protocol::durability, which opens and fsyncs on Unix exactly as the call sites did. Every platform difference is a Windows arm, and the policy and network test changes only gate Unix fixtures. The lock gains workspace-internal kobo-abi edges for the CLI, the SDK, the sidekick helper and wifi-trace, and a Windows-only flate2 edge for the CLI; no third-party version moves and nothing resolves differently for the reader. The wire protocol and its version are unchanged by this port, so published Store apps keep working against the runtime they already have. The base is beta with the Kobo Nia port merged, so these blobs differ from it only by this port.",
+   "reason": "Windows host support for the CLI and simulator, reviewed against the beta catalog published from 716edd9d. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix. OS entropy moves behind kobo-abi, whose Unix arm reads /dev/urandom as the SDK did, and kobo-abi gains a home-directory lookup that is HOME and nothing else on Unix. Directory and file flushes share kobo_protocol::durability, which opens and fsyncs on Unix exactly as the call sites did. Every platform difference is a Windows arm, and the policy and network test changes only gate Unix fixtures. The lock gains workspace-internal kobo-abi edges for the CLI, the SDK, the sidekick helper and wifi-trace, and a Windows-only flate2 edge for the CLI; no third-party version moves and nothing resolves differently for the reader. The wire protocol and its version are unchanged by this port, so published Store apps keep working against the runtime they already have. The base is beta with the Kobo Nia port merged, so these blobs differ from it only by this port. Re-pinned for ranged library reads and the shared limit on what Books opens: the protocol file gains a request and a result on tags of their own (63 and 26) that only Books sends, a larger bound on the library listing that only Books receives, and two constants; the SDK gains the helper that asks for a range and re-exports those constants. No existing encoding changes and the version stays 18, so a published Store app reads and writes every frame it did before. The lock gains one workspace-internal edge, kobo-dict for the CLI, and no third-party package moves.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "10eec69b49ab9097dcb1e49c94ee48e1b3fba7cc",
-     "compatible_blob": "dab8200dda18f0609dfc59ce02b04545fa43d9f9"
+     "compatible_blob": "b33a6a7f85fd551a486e669db01effdde6bb5945"
     },
     {
      "path": "crates/kobo-abi/src/entropy.rs",
@@ -533,7 +533,7 @@
     {
      "path": "crates/kobo-protocol/src/lib.rs",
      "base_blob": "cfd97b28b87f7e6ba1f62b191dc3e568ceda5e71",
-     "compatible_blob": "c1e4edaedd0882b04909166e3810b16751800be5"
+     "compatible_blob": "18a8b3116e7e0f870ac51216fc788d91236323de"
     },
     {
      "path": "crates/kobo-sdk/Cargo.toml",
@@ -548,7 +548,7 @@
     {
      "path": "crates/kobo-sdk/src/lib.rs",
      "base_blob": "7d672a0dee2407bd5cddb8981f575f4df8d465b1",
-     "compatible_blob": "3787ae4d6ecfa6c4042c7077e1f15e36b178f880"
+     "compatible_blob": "76050d7d90488da58c77c2c08eca2f58baf40cd6"
     }
    ]
   }
