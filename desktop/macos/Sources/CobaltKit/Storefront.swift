@@ -128,6 +128,12 @@ public struct Storefront: Equatable, Sendable {
 }
 
 public enum StoreWords {
+    /// Which picture a step from one in a row lands on. It stops at the
+    /// ends and does not go round. The page steps the same way.
+    public static func galleryStep(from index: Int, by: Int, count: Int) -> Int {
+        min(max(index + by, 0), max(count - 1, 0))
+    }
+
     /// Why an app cannot be installed from here as things stand, or nothing
     /// when it can. One sentence, and always a reason.
     public static func obstacle(to entry: StoreEntry, reader: Reader?, hasCatalog: Bool) -> String {

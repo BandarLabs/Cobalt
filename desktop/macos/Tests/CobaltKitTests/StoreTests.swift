@@ -217,4 +217,15 @@ struct StorePicturesTests {
         #expect(store.store.problem?.kind == .notFound)
         #expect(store.link == .connected)
     }
+
+    @Test("The arrows step through an app's pictures one at a time and stop at either end")
+    func galleryStepping() {
+        #expect(StoreWords.galleryStep(from: 0, by: 1, count: 4) == 1)
+        #expect(StoreWords.galleryStep(from: 3, by: 1, count: 4) == 3)
+        #expect(StoreWords.galleryStep(from: 0, by: -1, count: 4) == 0)
+        #expect(StoreWords.galleryStep(from: 2, by: -1, count: 4) == 1)
+        // A row of one, or of none, has nowhere to go.
+        #expect(StoreWords.galleryStep(from: 0, by: 1, count: 1) == 0)
+        #expect(StoreWords.galleryStep(from: 0, by: 1, count: 0) == 0)
+    }
 }

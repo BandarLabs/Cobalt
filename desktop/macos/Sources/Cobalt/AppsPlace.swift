@@ -510,29 +510,60 @@ private struct AppPage: View {
 
 /// An app's pictures, side by side, each with what it shows written under
 /// it. Nothing moves unless the owner moves it.
+///
+/// The row is one stop for the keyboard, and the left and right arrows step
+/// through it a picture at a time, stopping at the ends: a row that went
+/// round from the last picture to the first would leave somebody pressing an
+/// arrow unsure whether they had seen them all. A click on the row gives it
+/// the keys, as a click on a list does.
 private struct Gallery: View {
     var entry: StoreEntry
     var shots: [Shot]
+    /// The picture the arrows last went to.
+    @State private var at = 0
+    @FocusState private var hasKeys: Bool
+    @Environment(\.accessibilityReduceMotion) private var still
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: 24) {
-                ForEach(shots) { shot in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Picture(shot: shot, title: entry.title, width: Picture.page)
-                        if !shot.caption.isEmpty {
-                            Text(shot.caption)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .frame(width: Picture.page, alignment: .leading)
-                                .lineLimit(2)
-                                .accessibilityHidden(true)
+        ScrollViewReader { row in
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 24) {
+                    ForEach(shots) { shot in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Picture(shot: shot, title: entry.title, width: Picture.page)
+                            if !shot.caption.isEmpty {
+                                Text(shot.caption)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: Picture.page, alignment: .leading)
+                                    .lineLimit(2)
+                                    .accessibilityHidden(true)
+                            }
                         }
+                        .id(shot.id)
                     }
-                    .focusable()
+                }
+                .padding(.bottom, 10)
+            }
+            .focusable()
+            .focused($hasKeys)
+            .simultaneousGesture(TapGesture().onEnded { hasKeys = true })
+            .onMoveCommand { direction in
+                let by: Int
+                switch direction {
+                case .left: by = -1
+                case .right: by = 1
+                default: return
+                }
+                let next = StoreWords.galleryStep(from: at, by: by, count: shots.count)
+                guard next != at, shots.indices.contains(next) else { return }
+                at = next
+                withAnimation(still ? nil : .easeOut(duration: 0.2)) {
+                    row.scrollTo(shots[next].id, anchor: .leading)
                 }
             }
-            .padding(.bottom, 10)
+            // Another app's page has another row, which starts at its start.
+            .onChange(of: entry.id) { _ in at = 0 }
         }
         .accessibilityLabel("Pictures of \(entry.title)")
     }
