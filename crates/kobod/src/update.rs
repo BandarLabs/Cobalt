@@ -54,11 +54,24 @@ fn record_failure(adds: &Path, reason: &str) {
     if !cobalt.is_dir() {
         return;
     }
-    let state = cobalt.join("state");
-    if fs::create_dir_all(&state).is_err() {
+    let record = failure_record(&cobalt);
+    if record
+        .parent()
+        .is_some_and(|state| fs::create_dir_all(state).is_err())
+    {
         return;
     }
-    let _ignored = fs::write(state.join("last-update-error"), format!("{reason}\n"));
+    let _ignored = fs::write(record, format!("{reason}\n"));
+}
+
+/// Where the reason the last update failed is kept, in the installation at
+/// `cobalt`.
+///
+/// Named in one expression, as the runtime's other records are, so that the
+/// test which reads these sources for names kept under the state folder
+/// finds this one too.
+fn failure_record(cobalt: &Path) -> std::path::PathBuf {
+    cobalt.join("state").join("last-update-error")
 }
 use std::fs;
 use std::io::Write;

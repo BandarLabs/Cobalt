@@ -33,10 +33,11 @@ const MAX_CAPABILITY_NAME_BYTES: usize = 32;
 /// An application's saved state lives in a folder named after its identifier,
 /// beside the runtime's own records: the browsers the owner linked, the update
 /// switches, the untested-reader acceptances, the notice inbox, the touch
-/// calibration and the reason the last update failed. An application
-/// published under one of those names would be handed that record as its own
-/// state, to read and to rewrite. A name the runtime starts keeping there has
-/// to be added here in the same change.
+/// calibration, the time zone the owner picked and the reason the last update
+/// failed. An application published under one of those names would be handed
+/// that record as its own state, to read and to rewrite. A name the runtime
+/// starts keeping there has to be added here in the same change, and a test
+/// in the runtime reads its own sources to hold it to that.
 static PUBLIC_RESERVED_APP_IDS: &[&str] = &[
     "books",
     "cobalt",
@@ -50,6 +51,7 @@ static PUBLIC_RESERVED_APP_IDS: &[&str] = &[
     "auto-update",
     "last-update-error",
     "notices",
+    "time-zone",
     "touch-calibration",
 ];
 
@@ -1471,6 +1473,7 @@ mod tests {
             "auto-update",
             "last-update-error",
             "notices",
+            "time-zone",
             "touch-calibration",
         ] {
             assert!(
