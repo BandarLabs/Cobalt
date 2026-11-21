@@ -1,4 +1,4 @@
-# sweep: after-main
+# sweep: after-main needs https://science.nasa.gov/feed/
 # The feed the main route followed: its list pages, an article reads to its
 # end and counts as read, search narrows the list, and everything opens again
 # with the network gone and after a restart.
@@ -65,7 +65,9 @@ wait-idle
 wait-for This is the end
 clean
 shot article-end
-tap Back
+# Back by its action, not by its word: the article is live, and one whose
+# last page says "background" was tapped in the middle of that paragraph.
+tap-id 4294967295
 wait-idle
 wait-for 9 unread of 10 articles
 clean
@@ -107,7 +109,7 @@ tap-id item-1
 wait-idle 20000
 clean
 shot article-offline
-tap Back
+tap-id 4294967295
 wait-idle
 wait-for 8 unread of 10 articles
 # Refreshing with no network keeps the articles and says why.
