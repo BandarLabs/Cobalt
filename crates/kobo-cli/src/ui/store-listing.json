@@ -1,0 +1,1069 @@
+{
+  "groups": [
+    {
+      "id": "reading",
+      "title": "Reading and listening",
+      "apps": [
+        "arxiv",
+        "audiobook",
+        "brief",
+        "calibre-web",
+        "fanshelf",
+        "gutenbird",
+        "hn",
+        "panels",
+        "readeck",
+        "readlater",
+        "rss",
+        "rss-miniflux",
+        "verses",
+        "zotero-reader"
+      ]
+    },
+    {
+      "id": "games",
+      "title": "Games",
+      "apps": [
+        "backgammon",
+        "crossword",
+        "inkling",
+        "lichess",
+        "logicpack",
+        "nonograms",
+        "parlor",
+        "parser",
+        "pubquiz",
+        "sudoku",
+        "tictactoe"
+      ]
+    },
+    {
+      "id": "everyday",
+      "title": "Everyday tools",
+      "apps": [
+        "fieldbook",
+        "flashcards",
+        "grimoire",
+        "habits",
+        "kitchencard",
+        "musicstand",
+        "needles",
+        "post",
+        "todo",
+        "vault"
+      ]
+    },
+    {
+      "id": "home-and-computer",
+      "title": "Home and computer",
+      "apps": [
+        "birds",
+        "deck",
+        "frame",
+        "homepanel",
+        "morse",
+        "paperterm",
+        "syncthing"
+      ]
+    },
+    {
+      "id": "developers",
+      "title": "For developers",
+      "apps": [
+        "chat",
+        "gallery",
+        "magnet",
+        "sidekick"
+      ]
+    }
+  ],
+  "shots": {
+    "arxiv": [
+      {
+        "name": "arxiv.png",
+        "caption": "The newest Artificial Intelligence preprints listed newest first in the Preprints app on a Kobo",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "arxiv/abstract.png",
+        "caption": "Abstract",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "arxiv/figure.png",
+        "caption": "Figure",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "arxiv/formulas.png",
+        "caption": "Formulas",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "audiobook": [
+      {
+        "name": "audiobook.png",
+        "caption": "An audiobook player with cover art and playback controls on a Kobo",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "audiobook/narrating.png",
+        "caption": "Narrating a new audiobook, part 1 of 3",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "audiobook/resume.png",
+        "caption": "Choosing a topic and language for a new audiobook",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "backgammon": [
+      {
+        "name": "backgammon.png",
+        "caption": "The computer's opening move marked on the board",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "backgammon/backgammon-selected.png",
+        "caption": "A checker picked up, with the points it can reach boxed",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "backgammon/backgammon-opening.png",
+        "caption": "A new game against the computer",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "birds": [
+      {
+        "name": "birds.png",
+        "caption": "A labelled collage of public-domain bird plates filling a Kobo screen.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "birds/birds-colour.png",
+        "caption": "Birds colour",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "birds/birds-xl.png",
+        "caption": "Birds xl",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "brief": [
+      {
+        "name": "brief.png",
+        "caption": "The week's best stories, numbered, with what is ready offline",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "brief/sources.png",
+        "caption": "Choosing which Hacker News lists feed the brief",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "calibre-web": [
+      {
+        "name": "calibre-web.png",
+        "caption": "The first page of Pride and Prejudice from a calibre-web library on a Kobo.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "calibre-web/catalog.png",
+        "caption": "Catalog",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "calibre-web/libraries.png",
+        "caption": "Libraries",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "calibre-web/private-catalog.png",
+        "caption": "Private catalog",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "chat": [
+      {
+        "name": "chat.png",
+        "caption": "An answer set for reading",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "chat/service.png",
+        "caption": "Choosing OpenAI, Anthropic or Google Gemini",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "crossword": [
+      {
+        "name": "crossword.png",
+        "caption": "Crossword grid on a Kobo with an answer filled in, the current clue above it and every clue below it.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "crossword/clue-entry.png",
+        "caption": "Clue entry",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "crossword/completed.png",
+        "caption": "Completed",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "crossword/crossword-entry.png",
+        "caption": "Crossword entry",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "deck": [
+      {
+        "name": "deck.png",
+        "caption": "Deck paired with a computer, showing Test, Format, Lint, Docs and Deploy command pads.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "deck/run-finished.png",
+        "caption": "Run finished",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "fanshelf": [
+      {
+        "name": "fanshelf.png",
+        "caption": "A followed work in Fanshelf naming its author, fandom, rating and chapter count, with a Download EPUB button.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "fanshelf/fandom-filter.png",
+        "caption": "Fandom filter",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "fanshelf/manage.png",
+        "caption": "Manage",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "fanshelf/reading.png",
+        "caption": "Reading",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "fanshelf/shelf.png",
+        "caption": "Shelf",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "fieldbook": [
+      {
+        "name": "fieldbook.png",
+        "caption": "Fieldbook during an outing at Lake Merced, listing the birds logged so far with a Finish outing button.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "fieldbook/detail-photo.png",
+        "caption": "Detail photo",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "fieldbook/export.png",
+        "caption": "Export",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "fieldbook/home.png",
+        "caption": "Home",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "fieldbook/packs.png",
+        "caption": "Packs",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "flashcards": [
+      {
+        "name": "flashcards.png",
+        "caption": "A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "flashcards/companion-review.png",
+        "caption": "Companion review",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "flashcards/complete.png",
+        "caption": "Complete",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "flashcards/first-use.png",
+        "caption": "First use",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "flashcards/japanese.png",
+        "caption": "Japanese",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "frame": [
+      {
+        "name": "frame.png",
+        "caption": "Ansel Adams's The Tetons and the Snake River filling the Frame screen on a Kobo Clara BW.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "frame/companion-preview.png",
+        "caption": "Companion preview",
+        "width": 1066,
+        "height": 1337
+      }
+    ],
+    "gallery": [
+      {
+        "name": "components.png",
+        "caption": "Text and document components",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "gallery/controls.png",
+        "caption": "A search field, filter chips and playback controls",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "grimoire": [
+      {
+        "name": "grimoire.png",
+        "caption": "Grimoire initiative order showing the active combatant and round counter on a Kobo.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "grimoire/magic-items.png",
+        "caption": "Magic items",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "grimoire/party-member.png",
+        "caption": "Party member",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "grimoire/rule.png",
+        "caption": "Rule",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "gutenbird": [
+      {
+        "name": "gutenbird.png",
+        "caption": "Popular Project Gutenberg books with their covers",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "gutenbird/book.png",
+        "caption": "A book with its cover, edition and description",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "habits": [
+      {
+        "name": "habits.png",
+        "caption": "Habits today screen on a Kobo Clara BW, with Read 20 pages checked off and two more habits due.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "habits/edit.png",
+        "caption": "Edit",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "habits/empty.png",
+        "caption": "Empty",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "habits/export.png",
+        "caption": "Export",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "hn": [
+      {
+        "name": "hackernews.png",
+        "caption": "Ranked Show HN stories with scores",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "hn/thread.png",
+        "caption": "A story with its comment thread",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "homepanel": [
+      {
+        "name": "homepanel.png",
+        "caption": "Home Panel tile grid on a Kobo showing eight Home Assistant tiles with the last refresh time.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "homepanel/climate.png",
+        "caption": "Climate",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "homepanel/edit.png",
+        "caption": "Edit",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "homepanel/setup.png",
+        "caption": "Setup",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "inkling": [
+      {
+        "name": "inkling.png",
+        "caption": "A solved Inkling puzzle in three guesses, with right-spot letters in black squares.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "inkling/archive.png",
+        "caption": "Archive",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "inkling/help.png",
+        "caption": "Help",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "inkling/knowledge.png",
+        "caption": "Knowledge",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "kitchencard": [
+      {
+        "name": "kitchencard.png",
+        "caption": "Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "kitchencard/browse.png",
+        "caption": "Browse",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "kitchencard/ingredients.png",
+        "caption": "Ingredients",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "kitchencard/tonight.png",
+        "caption": "Tonight",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "lichess": [
+      {
+        "name": "lichess.png",
+        "caption": "Lichess on Kobo with Play the computer first, then Play online, Your games, Puzzles and How to play.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "lichess/computer-selection.png",
+        "caption": "Playing the computer offline, with the legal moves for the selected bishop marked",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "lichess/computer-large-text.png",
+        "caption": "The same game at the largest text size",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "lichess/challenge.png",
+        "caption": "An incoming challenge from another player",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "lichess/candidate.png",
+        "caption": "A rated rapid game found and ready to open",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "logicpack": [
+      {
+        "name": "logicpack.png",
+        "caption": "A solved Hashi puzzle in Logic Pack, with sixteen islands joined by single and double bridges.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "logicpack/double-bridge.png",
+        "caption": "Hashi in progress, with double bridges between islands",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "logicpack/collection-slither.png",
+        "caption": "A solved Slitherlink loop",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "logicpack/completed.png",
+        "caption": "A cleared Minesweeper field, with all three mines flagged",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "logicpack/collection.png",
+        "caption": "The Easy Slitherlink puzzles, with one in progress",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "magnet": [
+      {
+        "name": "magnet.png",
+        "caption": "The sensor responding to a magnet at the top edge",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "magnet/no-magnet.png",
+        "caption": "Waiting for a magnet",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "morse": [
+      {
+        "name": "morse.png",
+        "caption": "A letter filling the Kobo screen while the front light sends Morse code",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "musicstand": [
+      {
+        "name": "musicstand.png",
+        "caption": "Music Stand showing the opening of the Prelude from Bach's Cello Suite No. 1 at reading size.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "musicstand/half-turn.png",
+        "caption": "Half turn",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "musicstand/library.png",
+        "caption": "Library",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "musicstand/setlist.png",
+        "caption": "Setlist",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "needles": [
+      {
+        "name": "needles.png",
+        "caption": "Needles row counter showing the current row, section and repeat progress, with +1 row and Undo.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "needles/pattern.png",
+        "caption": "Reading a pattern sent from the computer",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "needles/section.png",
+        "caption": "A pattern opened at its section",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "nonograms": [
+      {
+        "name": "nonograms.png",
+        "caption": "A Nonograms puzzle with the selected square and its row and column clues highlighted.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "nonograms/imported-puzzles.png",
+        "caption": "Imported puzzles",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "nonograms/large-board.png",
+        "caption": "Large board",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "nonograms/picture-completed.png",
+        "caption": "Picture completed",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "panels": [
+      {
+        "name": "panels.png",
+        "caption": "The Panels comic shelf with a cover and saved progress, page 3 of 4.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "panels/download-recovery.png",
+        "caption": "Download recovery",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "panels/import-guide.png",
+        "caption": "Import guide",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "panels/reader.png",
+        "caption": "Reader",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "paperterm": [
+      {
+        "name": "paperterm.png",
+        "caption": "Paperterm showing a laptop terminal session in portrait, with the keyboard open.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "paperterm/address-error.png",
+        "caption": "Address error",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "paperterm/code-error.png",
+        "caption": "Code error",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "paperterm/connection-check.png",
+        "caption": "Connection check",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "paperterm/input-paused.png",
+        "caption": "Input paused",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "parlor": [
+      {
+        "name": "parlor.png",
+        "caption": "Reversi against the computer on a Kobo, on a ruled board with the computer's last disc marked and the legal moves shown as grey dots.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "parlor/draughts.png",
+        "caption": "Draughts",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "parlor/morris.png",
+        "caption": "Morris",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "parlor/reversi-rotated.png",
+        "caption": "Reversi rotated",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "parser": [
+      {
+        "name": "parser.png",
+        "caption": "Parser opening Lamplight, with every word of the story tappable, a run of verbs such as Look and Take, and a row of compass directions.",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "post": [
+      {
+        "name": "post.png",
+        "caption": "Post inbox listing Hermes letters newest first, with Newer and Older paging.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "post/reply-sent.png",
+        "caption": "A letter with its reply delivered",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "post/draft.png",
+        "caption": "Writing a reply",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "pubquiz": [
+      {
+        "name": "pubquiz.png",
+        "caption": "Pub Quiz pass-around question on Ada's turn, with four numbered answer choices.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "pubquiz/keyboard.png",
+        "caption": "Keyboard",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "pubquiz/players.png",
+        "caption": "Players",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "pubquiz/renamed.png",
+        "caption": "Renamed",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "readeck": [
+      {
+        "name": "readeck/inbox.png",
+        "caption": "Readeck inbox on a Kobo listing four public-domain essays with their reading times.",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "readlater": [
+      {
+        "name": "readlater.png",
+        "caption": "The unread list after a sync, with reading times",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "readlater/starred.png",
+        "caption": "The Starred tab",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "rss": [
+      {
+        "name": "feeds.png",
+        "caption": "Unread articles from one feed",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "rss/browse-feeds.png",
+        "caption": "Browsing suggested feeds",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "rss/search-articles.png",
+        "caption": "Searching saved articles",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "rss/import-opml.png",
+        "caption": "Choosing feeds to import from an OPML file",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "rss-miniflux": [
+      {
+        "name": "rss-miniflux.png",
+        "caption": "An essay from Walden open in Digest on a Kobo, under an engraving of Thoreau's house.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "rss-miniflux/rss-miniflux-directory.png",
+        "caption": "Rss miniflux directory",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "sidekick": [
+      {
+        "name": "sidekick.png",
+        "caption": "Sidekick showing several coding-agent sessions and their pending approvals.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "sidekick/asking.png",
+        "caption": "Approving a command from Claude Code",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "sidekick/pairing.png",
+        "caption": "Pairing with a computer",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "sudoku": [
+      {
+        "name": "sudoku.png",
+        "caption": "An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "sudoku/completed.png",
+        "caption": "Completed",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "sudoku/landscape.png",
+        "caption": "Landscape",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "sudoku/recovery.png",
+        "caption": "Recovery",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "syncthing": [
+      {
+        "name": "syncthing.png",
+        "caption": "Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "syncthing/first-sync.png",
+        "caption": "The first sync, with what it imported",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "syncthing/running.png",
+        "caption": "A sync in progress",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "syncthing/conflict.png",
+        "caption": "A conflict, retried on the next sync",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "tictactoe": [
+      {
+        "name": "tictactoe.png",
+        "caption": "A finished game: O wins",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "tictactoe/solo.png",
+        "caption": "Playing against the Kobo",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "todo": [
+      {
+        "name": "todo.png",
+        "caption": "The list, with four items to do and one done",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "todo/compose.png",
+        "caption": "Adding items one after another",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "vault": [
+      {
+        "name": "vault.png",
+        "caption": "Vault home on a Kobo with eight notes and Browse, Tags, Recent and Search rows.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "vault/backlinks.png",
+        "caption": "Backlinks",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "vault/browse.png",
+        "caption": "Browse",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "vault/note.png",
+        "caption": "Note",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "verses": [
+      {
+        "name": "verses.png",
+        "caption": "William Blake's The Tiger in Verses, set in a spacious Kobo reading layout.",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "verses/attribution.png",
+        "caption": "Attribution",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "verses/browse-offline.png",
+        "caption": "Browse offline",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "verses/today.png",
+        "caption": "Today",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "zotero-reader": [
+      {
+        "name": "zotero-reader.png",
+        "caption": "The opening of Darwin's On the Origin of Species, read from a Zotero library's indexed text on a Kobo",
+        "width": 1072,
+        "height": 1448
+      }
+    ]
+  },
+  "release_note_overrides": {
+    "backgammon@0.1.8": null,
+    "grimoire@0.1.3": null,
+    "morse@1.0.14": null,
+    "paperterm@0.1.9": null,
+    "sudoku@1.0.14": null
+  }
+}

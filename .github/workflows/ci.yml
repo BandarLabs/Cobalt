@@ -52,7 +52,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - name: Test the POSIX host installer
         run: |
-          sh -n install.sh docs/install.sh tools/installer-test.sh tools/build-host-release.sh
+          sh -n install.sh docs/install.sh tools/installer-test.sh tools/build-host-release.sh tools/build-macos-shell.sh
           tools/installer-test.sh
       - run: node --test tools/*.test.mjs
       - name: Require current generated app pages
@@ -470,6 +470,16 @@ jobs:
           test -x "target/${{ matrix.target }}/release/kobo"
           test -x "target/${{ matrix.target }}/release/kobo-sidekickd"
           echo "built ${{ matrix.platform }}"
+      # The Mac app is a Swift package that nothing else compiles or tests,
+      # so both happen here on both Mac runners or it would only be found
+      # broken by whoever next built a release.
+      - name: Build the Cobalt app and run its tests
+        if: runner.os == 'macOS'
+        run: |
+          swift test --package-path desktop/macos
+          tools/build-macos-shell.sh
+          test -x target/macos-shell/Cobalt.app/Contents/MacOS/Cobalt
+          codesign --verify --strict target/macos-shell/Cobalt.app
 
   advisories:
     runs-on: ubuntu-latest

@@ -45,8 +45,15 @@ The long-lived `beta` branch is the only source for beta publishing:
   must advance the workspace version for every published test build; an
   existing beta tag or release is never moved or replaced. Assets retain the
   stable deterministic names, including `cobalt-X.Y.Z-KoboRoot.tgz` and
-  `cobalt-X.Y.Z.sha256`. It also publishes four
-  `kobo-X.Y.Z-<platform>.tar.gz` archives and a versioned host manifest.
+  `cobalt-X.Y.Z.sha256`. It also publishes the
+  `kobo-X.Y.Z-<platform>.tar.gz` host archives, a
+  `cobalt-app-X.Y.Z-<platform>.tar.gz` archive of the Mac app for each Mac,
+  and a versioned host manifest. The Mac app is named on host lines of its
+  own, `host macos-arm64-app` and `host macos-x86_64-app`, after every other
+  line: an installed updater checks the host archive against a fixed list of
+  files, so the app cannot go inside it, and reads past a platform it does
+  not ask for. Promotion of the first beta that carries the app has to be
+  started from a ref whose `promote-beta.yml` knows the two extra files.
   The manifest fixes every host/device asset name, size, SHA-256, version, and
   source commit. The protected `COBALT_APP_SIGNING_SEED` signs it twice with
   the repository's existing Ed25519 release key: raw detached form for

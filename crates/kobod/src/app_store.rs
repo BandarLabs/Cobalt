@@ -68,7 +68,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         id: "brief",
         title: "Daily Brief",
         label: "Daily Brief",
-        summary: "Collects the day's stories while you read something else.",
+        summary: "Read a daily news brief.",
         version: "1.0.0",
         glyph: Glyph::Sunrise,
         capabilities: &["network"],
@@ -77,7 +77,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         id: "chat",
         title: "Chat",
         label: "Chat",
-        summary: "Ask a question and tap the answer, rather than typing one.",
+        summary: "Ask a question and read the answer.",
         version: "1.0.0",
         glyph: Glyph::Chat,
         capabilities: &["network"],
@@ -86,7 +86,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         id: "gallery",
         title: "Components",
         label: "Components",
-        summary: "Every UI primitive on real hardware, for checking by eye.",
+        summary: "See every Cobalt UI component on the device.",
         version: "1.0.0",
         glyph: Glyph::Chart,
         capabilities: &["network"],
@@ -95,7 +95,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         id: "gutenbird",
         title: "Gutenbird",
         label: "Gutenbird",
-        summary: "Sixty thousand free books from Project Gutenberg.",
+        summary: "Read free books from Project Gutenberg.",
         version: "1.0.0",
         glyph: Glyph::BookDownload,
         capabilities: &["network", "frontlight-control"],
@@ -104,7 +104,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         id: "hn",
         title: "Hacker News",
         label: "Hacker News",
-        summary: "Top, New, Ask and Show, with whole comment threads.",
+        summary: "Read Hacker News stories and comments.",
         version: "1.0.0",
         glyph: Glyph::News,
         capabilities: &["network"],
@@ -113,7 +113,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         id: "magnet",
         title: "Magnet",
         label: "Magnet",
-        summary: "Find the hall sensor behind the bezel and watch it answer.",
+        summary: "Find the reader's hall sensor with a magnet.",
         version: "1.0.0",
         glyph: Glyph::Magnet,
         capabilities: &["cover-sensor"],
@@ -122,7 +122,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         id: "rss",
         title: "Feeds",
         label: "Feeds",
-        summary: "Follow a site by name and read its articles, not its layout.",
+        summary: "Follow feeds and read their articles.",
         version: "1.0.0",
         glyph: Glyph::Rss,
         capabilities: &["network"],
@@ -131,7 +131,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         id: "sidekick",
         title: "Sidekick",
         label: "Sidekick",
-        summary: "Approve or deny what your coding agents ask to run, from here.",
+        summary: "Approve or deny what your coding agents ask to run.",
         version: "1.0.0",
         glyph: Glyph::Key,
         capabilities: &["network"],
@@ -140,7 +140,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         id: "tictactoe",
         title: "Tic-tac-toe",
         label: "Tic-tac-toe",
-        summary: "Two players, one panel. Nought goes first.",
+        summary: "Play tic-tac-toe with two players.",
         version: "1.0.0",
         glyph: Glyph::NoughtsCrosses,
         capabilities: &[],
@@ -149,7 +149,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         id: "todo",
         title: "Todo",
         label: "Todo",
-        summary: "A list that remembers itself. Tap an item to finish it.",
+        summary: "Keep a to-do list.",
         version: "1.0.0",
         glyph: Glyph::Checklist,
         capabilities: &[],
@@ -232,6 +232,36 @@ pub fn catalog_using(
         Err(DeviceError::NotFound) => local_catalog_info(root, key),
         Err(error) => Err(error),
     }
+}
+
+/// How many bytes each application in the cached catalog occupies once it is
+/// installed, by id.
+///
+/// The listing the Store draws from carries no sizes, because the panel has
+/// never needed one: the reader installs and finds out. A computer about to
+/// write to a mounted reader can do better and say beforehand that something
+/// will not fit, and the size it needs is the binary's, which the signed
+/// manifest in the catalog already states.
+///
+/// # Errors
+///
+/// As [`catalog_using`], except that a channel with no cached catalog is an
+/// error here: there is nothing to read sizes from.
+pub fn catalog_sizes_using(
+    root: &Path,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+) -> Result<Vec<(String, u64)>, DeviceError> {
+    Ok(read_channel_catalog(root, channel, key)?
+        .entries()
+        .iter()
+        .map(|entry| {
+            (
+                entry.manifest().id().to_owned(),
+                entry.manifest().binary_bytes(),
+            )
+        })
+        .collect())
 }
 
 /// Lists every installed Store application whose signed manifest verifies.
@@ -753,6 +783,33 @@ pub fn install_using_fault(
     id: &str,
     channel: UpdateChannel,
     key: &Ed25519PublicKey,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+    fault: Option<AppWriteFault>,
+) -> Result<(), DeviceError> {
+    install_transaction(
+        root,
+        id,
+        channel,
+        key,
+        env!("CARGO_PKG_VERSION"),
+        fetch,
+        fault,
+    )
+}
+
+/// The install transaction, for a package that will run under
+/// `cobalt_version`.
+///
+/// Every caller on the reader passes this build's own version, because this
+/// build is the Cobalt that will start the package. The version is a
+/// parameter only so that [`install_onto_using`] can answer for a Cobalt it
+/// is not.
+fn install_transaction(
+    root: &Path,
+    id: &str,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+    cobalt_version: &str,
     mut fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
     fault: Option<AppWriteFault>,
 ) -> Result<(), DeviceError> {
@@ -767,7 +824,7 @@ pub fn install_using_fault(
         .find(|entry| entry.manifest().id() == id)
         .ok_or(DeviceError::NotFound)?;
     if !kobo_app_store::cobalt_version_at_least(
-        env!("CARGO_PKG_VERSION"),
+        cobalt_version,
         entry.manifest().minimum_cobalt_version(),
     ) {
         return Err(DeviceError::InvalidInput);
@@ -812,6 +869,33 @@ pub fn install_using(
     fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
 ) -> Result<(), DeviceError> {
     install_channel_with(root, id, channel, key, fetch)
+}
+
+/// Installs into a Cobalt installation that is not the one running this
+/// code, such as a reader's book partition mounted on a computer.
+///
+/// [`install_using`] asks whether this build is new enough for the package,
+/// which is the right question on the reader, where this build is what will
+/// start it. A computer writing to a mounted reader is usually a different
+/// release from the one on the volume, and answering with its own version
+/// gets it wrong in both directions: an older computer refuses a package the
+/// reader can run, and a newer one installs a package the reader cannot.
+/// `cobalt_version` is the release the package will run under, read from the
+/// installation itself. Every other check is the one [`install_using`] makes.
+///
+/// # Errors
+///
+/// As [`install_using`], with [`DeviceError::InvalidInput`] when the package
+/// needs a newer Cobalt than `cobalt_version`.
+pub fn install_onto_using(
+    root: &Path,
+    id: &str,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+    cobalt_version: &str,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<(), DeviceError> {
+    install_transaction(root, id, channel, key, cobalt_version, fetch, None)
 }
 
 /// Fetches a channel's catalog and its signature.
@@ -2175,6 +2259,88 @@ mod tests {
             }
         );
         assert!(!plan.install);
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_cached_catalog_says_how_large_each_application_is_and_nothing_without_one() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        assert_eq!(
+            catalog_sizes_using(&root, UpdateChannel::Stable, &key),
+            Err(DeviceError::NotFound)
+        );
+        let (json, signature, _) = release(&seed);
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh");
+        assert_eq!(
+            catalog_sizes_using(&root, UpdateChannel::Stable, &key).expect("sizes"),
+            [(
+                "word-count".to_owned(),
+                "word-count app binary".len() as u64
+            )]
+        );
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_install_onto_another_cobalt_is_judged_by_that_cobalt_and_not_this_build() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) =
+            release_for_minimum(&seed, "word-count", "1.0.0", "999.0.0");
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh");
+
+        // This build is older than the package asks for, and so is a reader
+        // on 998; neither may take it.
+        assert_eq!(
+            install_with(&root, "word-count", &key, |_, _| Ok(package.clone())),
+            Err(DeviceError::InvalidInput)
+        );
+        assert_eq!(
+            install_onto_using(
+                &root,
+                "word-count",
+                UpdateChannel::Stable,
+                &key,
+                "998.9.9",
+                |_, _| Ok(package.clone())
+            ),
+            Err(DeviceError::InvalidInput)
+        );
+        assert!(installed_manifests(&root, &key)
+            .expect("nothing installed")
+            .is_empty());
+
+        // A reader that is new enough takes it, whatever this build is.
+        install_onto_using(
+            &root,
+            "word-count",
+            UpdateChannel::Stable,
+            &key,
+            "999.0.0",
+            |_, _| Ok(package.clone()),
+        )
+        .expect("install onto a newer Cobalt");
+        assert_eq!(
+            installed_manifests(&root, &key).expect("installed")[0].version(),
+            "1.0.0"
+        );
         let _ignored = fs::remove_dir_all(root);
     }
 
