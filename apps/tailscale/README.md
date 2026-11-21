@@ -124,6 +124,31 @@ it is not available there.
   carry traffic, the switch says it is not available and nothing is offered
   to your tailnet.
 
+## Reaching your own servers from apps
+
+Any app that may use the network can reach a computer on your tailnet, by
+its tailnet name or its address. The app does not have to know about
+Tailscale: a library in calibre-web, a Miniflux or Readeck server, a home
+panel.
+
+Apps only make `https` requests, on your tailnet as everywhere else, and most
+things people run at home answer plain `http` on a port. Give the one you
+want a certificate. On the computer that runs it:
+
+1. In the Tailscale admin console, under **DNS**, turn on MagicDNS and HTTPS
+   certificates.
+2. Run `tailscale serve --bg 8083`, with the port your server listens on in
+   place of 8083. It prints the `https` address to use, which looks like
+   `https://nas.example.ts.net`.
+
+Type that address where the app asks for your server. The reader knows your
+tailnet's names while Tailscale is running, and the certificate is one every
+app already trusts, so nothing is installed on the reader.
+
+This reaches the computers on your tailnet and nothing behind them. The
+reader does not use a network another device shares, and does not send its
+own traffic through an exit node.
+
 ## What the reader opens to your tailnet
 
 The reader has no packet filter, so every port it listens on is reachable
@@ -144,10 +169,23 @@ accepts:
   program that holds the port. It accepts only the computers you paired.
 - **Tailscale's own listener** on the tailnet address.
 
-Anything else refuses the join, and the screen names the port: a second SSH
-server, telnet or FTP from the reader's debug services, something started
-from a shell. So does a reader that cannot say what is listening. Nothing
-from Cobalt itself listens on a network port.
+Anything else refuses the join: a second SSH server, telnet or FTP from the
+reader's debug services, something started from a shell. The screen names
+the port and, where it can tell, the program holding it. So does a reader
+that cannot say what is listening. Nothing from Cobalt itself listens on a
+network port.
+
+If you run a program of your own on the reader, have it listen on
+`127.0.0.1` and reach it through SSH, which the tailnet already carries:
+
+```sh
+ssh -L 8080:127.0.0.1:8080 root@kobo-cobalt
+```
+
+A program listening only there is not offered to the tailnet and does not
+stop the reader joining. If a reader you have added nothing to is refused,
+the program named is part of its firmware and the list above is one short:
+report the port and the name.
 
 This covers TCP. A program that only receives datagrams cannot be held to a
 list this way and stays reachable from the tailnet. On a stock reader that is

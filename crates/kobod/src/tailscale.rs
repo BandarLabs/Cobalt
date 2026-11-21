@@ -1570,11 +1570,11 @@ fn preflight(layout: &Layout) -> Option<Status> {
             "This reader's software has no tunnel support, so Tailscale cannot run on it.",
         ));
     }
-    refusal(exposure(layout, None))
+    refusal(layout, exposure(layout, None))
 }
 
 /// The words for a reader that should not be on a tailnet as it stands.
-fn refusal(exposure: Exposure) -> Option<Status> {
+fn refusal(layout: &Layout, exposure: Exposure) -> Option<Status> {
     let why = match exposure {
         Exposure::Acceptable => return None,
         Exposure::PasswordLogin => {
@@ -1592,9 +1592,16 @@ fn refusal(exposure: Exposure) -> Option<Status> {
              reader's debug services, restart it, then turn Tailscale on again."
                 .to_owned()
         }
+        // Named where it can be, because "something" is no help to the owner
+        // who has to stop it, and none to whoever is told that a reader was
+        // refused and has to decide whether the list above is one short.
         Exposure::Listening(port) => format!(
-            "Something on this reader is listening on port {port}, where your whole tailnet \
-             could reach it. Stop it, then turn Tailscale on again."
+            "{} is listening on port {port} on this reader, where your whole tailnet could \
+             reach it. Stop it, then turn Tailscale on again.",
+            who_listens(layout, port).map_or_else(
+                || "Something".to_owned(),
+                |program| format!("A program called {program}")
+            )
         ),
         Exposure::Unreadable => {
             "The reader does not say what is listening on it, so Tailscale will not put it on \
@@ -1747,6 +1754,33 @@ fn holds_socket(layout: &Layout, pid: u32, inode: u64) -> bool {
             fs::read_link(file.path()).is_ok_and(|target| target.as_os_str() == socket.as_str())
         })
     })
+}
+
+/// The program holding the listener on `port`, by the name it was started
+/// under.
+///
+/// The name is the process's own word about itself and ends up drawn on the
+/// reader's screen, so only a short, plain one is passed on. A program that
+/// calls itself anything else is not named at all.
+fn who_listens(layout: &Layout, port: u16) -> Option<String> {
+    let inode = listeners(layout)?
+        .into_iter()
+        .find(|listener| listener.port == port)?
+        .inode?;
+    let holder = fs::read_dir(&layout.proc)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .find(|pid| holds_socket(layout, *pid, inode))?;
+    let line = fs::read(layout.proc.join(holder.to_string()).join("cmdline")).ok()?;
+    let started_as = std::str::from_utf8(line.split(|byte| *byte == 0).next()?).ok()?;
+    let name = Path::new(started_as).file_name()?.to_str()?;
+    let plain = !name.is_empty()
+        && name.len() <= 32
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+    plain.then(|| name.to_owned())
 }
 
 /// The processes that were started as `program`.
@@ -2592,7 +2626,7 @@ fn keep_up(supervisor: &Supervisor, daemon: &mut Daemon) -> Result<(), End> {
             // reader listens on can change under a tunnel that is up: a
             // hardening nobody confirmed undoes itself after five minutes,
             // and a reader kept connected for days has days for that.
-            if let Some(refusal) = refusal(exposure(layout, daemon.pid())) {
+            if let Some(refusal) = refusal(layout, exposure(layout, daemon.pid())) {
                 return Err(supervisor.fail(daemon, &refusal, End::Settled));
             }
             match report(layout) {
