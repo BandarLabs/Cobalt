@@ -9,7 +9,8 @@ expect Approved.
 expect-missing Your devices can choose it
 expect Waiting for approval: 192.168.1.0/24
 expect Approve it once in the Tailscale admin console
-expect it stops carrying traffic when it sleeps or Tailscale stops.
+expect the reader stays awake while Cobalt is open, down to 20% battery.
+expect It stops carrying traffic when it sleeps or Tailscale stops.
 clean
 shot tailscale-routing
 # Switching one off is saved at once, and a switch that is off has no line

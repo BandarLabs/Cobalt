@@ -396,7 +396,7 @@ impl Tailscale {
             screen = screen.secondary("Approve it once in the Tailscale admin console, under this reader's route settings.");
         }
         if offered {
-            screen = screen.secondary("A reader is slow at this, and it stops carrying traffic when it sleeps or Tailscale stops.");
+            screen = screen.secondary("A reader is slow at this. Once approved, the reader stays awake while Cobalt is open, down to 20% battery. It stops carrying traffic when it sleeps or Tailscale stops.");
         }
         screen.build()
     }

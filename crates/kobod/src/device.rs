@@ -2803,6 +2803,8 @@ fn host_applications(
         let mut visited: Vec<String> = Vec::new();
         let mut ceiling = Instant::now() + limits.ceiling;
         let mut last_activity = Instant::now();
+        let mut awake_for_others = crate::tailscale::AwakeForOthers::default();
+        let mut was_held = false;
         // Set when Back has been handed to an application that asked for it,
         // and cleared by the next screen that application draws. The reader's
         // way out is never left waiting on an application: if this is still
@@ -2977,6 +2979,23 @@ fn host_applications(
                 last_activity = now;
                 ceiling = now + limits.ceiling;
             }
+            // A reader other devices are sending their traffic through is in
+            // use with nobody touching it, so neither limit ends the session
+            // under them. The idle clock itself is left running: it is also
+            // what lets a found update be applied to a quiet panel, and a
+            // reader held for a week should still get those.
+            let held = awake_for_others.holds(now);
+            if held != was_held {
+                was_held = held;
+                trace(if held {
+                    "staying open: other devices send traffic through this reader"
+                } else {
+                    "no longer staying open for other devices"
+                });
+            }
+            if held {
+                ceiling = now + limits.ceiling;
+            }
             if now >= ceiling {
                 return Ok(finish(
                     &apps,
@@ -2985,7 +3004,7 @@ fn host_applications(
                 ));
             }
             let idle_at = last_activity + limits.idle;
-            if now >= idle_at && power.state() == kobod::power::State::Awake {
+            if now >= idle_at && !held && power.state() == kobod::power::State::Awake {
                 match begin_power(
                     &mut power,
                     &apps,
@@ -3048,6 +3067,10 @@ fn host_applications(
                 .saturating_duration_since(now)
                 .min(if power.state() == kobod::power::State::Preparing {
                     Duration::from_millis(50)
+                } else if held {
+                    // The idle limit is not being waited for, and a limit
+                    // already passed would otherwise make this no wait at all.
+                    BEAT_INTERVAL
                 } else {
                     (last_activity + limits.idle).saturating_duration_since(now)
                 })

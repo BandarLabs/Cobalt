@@ -108,8 +108,16 @@ it is not available there.
   says it is waiting.
 - **A reader is slow at this.** It has one core and Wi-Fi. Expect a few
   megabits, not a router's speed.
-- **It stops when the reader sleeps or Tailscale stops.** A phone using the
-  reader as its exit node loses its connection until you pick another.
+- **The reader stays awake for it while Cobalt is open.** Cobalt normally
+  closes itself after an hour untouched, and the Kobo software then puts the
+  reader to sleep. Once your tailnet has approved the exit node or the
+  network, Cobalt stays open instead, on a charger or down to 20% battery.
+  Below that the reader is let go to sleep.
+- **It stops when the reader sleeps or Tailscale stops.** The power button
+  and the cover put the reader to sleep as always. So does the Kobo
+  software's own sleep timer once you have left Cobalt, with Stay connected
+  on or off. A phone using the reader as its exit node loses its connection
+  until you pick another.
 - **TCP, UDP and ping only.** The Tailscale program carries each connection
   itself and makes it again from the reader.
 - **Unverified on any reader.** If the reader turns out not to be able to

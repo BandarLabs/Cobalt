@@ -900,6 +900,86 @@ fn connected_in(layout: &Layout) -> bool {
         && read_status(layout).lines().next() == Some("running")
 }
 
+/// Whether another device may be sending its traffic through this reader
+/// right now: the tunnel is up, and the tailnet has approved the exit node
+/// or the shared network.
+///
+/// An offer still waiting for approval is not this. No device can use it
+/// yet, and a reader kept awake for it would spend its battery on nothing.
+/// The witnesses are the two [`connected`] takes, for the same reasons.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+fn carrying_in(layout: &Layout) -> bool {
+    if !layout.interfaces.join(INTERFACE).exists() {
+        return false;
+    }
+    let status = read_status(layout);
+    let mut lines = status.lines();
+    // The exit node and the shared network are the seventh and eighth lines.
+    lines.next() == Some("running") && lines.skip(5).take(2).any(|offer| offer == "approved")
+}
+
+/// How often a session asks whether the reader is carrying traffic for other
+/// devices. The supervisor learns what the tailnet has approved once a
+/// minute, so asking more often would hear the same answer.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+const HOLD_CHECK: Duration = Duration::from_secs(60);
+
+/// The charge below which a reader stops staying awake for other devices.
+///
+/// Carrying traffic is something the owner switches on and walks away from,
+/// and what they come back to has to be a reader that still turns on. On a
+/// charger it is held at any charge. The Tailscale app says this number.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+const HOLD_MIN_BATTERY: u8 = 20;
+
+/// Keeps a session from ending under a device that depends on this reader.
+///
+/// A session nobody has touched for an hour ends itself. That hands the
+/// reader to the Kobo software, which puts it to sleep and switches Wi-Fi
+/// off, and a phone using this reader as its exit node loses the internet at
+/// that moment with nothing on the phone to say why. So a reader whose exit
+/// node or shared network the tailnet has approved counts as in use, for as
+/// long as that is so and the battery can afford it.
+///
+/// A gauge that cannot be read does not hold the reader. Trusting it would
+/// mean running a battery flat on the strength of not knowing how full it is.
+///
+/// The power button and the cover are not held back by this. They are the
+/// owner saying the reader is done, whatever it is carrying.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+#[derive(Debug, Default)]
+pub struct AwakeForOthers {
+    looked: Option<Instant>,
+    held: bool,
+}
+
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+impl AwakeForOthers {
+    /// Whether the session's limits should move on at `now`.
+    pub fn holds(&mut self, now: Instant) -> bool {
+        self.holds_in(&Layout::device(), now, kobo_hal::battery::read)
+    }
+
+    fn holds_in(
+        &mut self,
+        layout: &Layout,
+        now: Instant,
+        battery: impl FnOnce() -> Option<kobo_hal::battery::Battery>,
+    ) -> bool {
+        if self
+            .looked
+            .is_some_and(|at| now.saturating_duration_since(at) < HOLD_CHECK)
+        {
+            return self.held;
+        }
+        self.looked = Some(now);
+        self.held = carrying_in(layout)
+            && battery()
+                .is_some_and(|battery| battery.charging || battery.percent >= HOLD_MIN_BATTERY);
+        self.held
+    }
+}
+
 /// How a run of the supervisor ended, which is all the runtime needs to know
 /// to decide whether to start another.
 #[derive(Debug, Eq, PartialEq)]

@@ -1360,6 +1360,110 @@ fn the_band_shows_the_tunnel_only_while_the_kernel_has_its_interface() {
     assert!(!connected_in(&layout));
 }
 
+/// Writes a connected reader's status with where its two offers stand.
+fn say_offers(layout: &Layout, exit_node: &'static str, network: &'static str) {
+    let status = Status {
+        routing: RoutingNotes {
+            exit_node,
+            network,
+            ..RoutingNotes::default()
+        },
+        ..Status::quiet("running", "Connected.")
+    };
+    fs::write(layout.app_state.join(STATUS), status.render()).expect("status");
+}
+
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "stands in for the gauge, which may have nothing to say"
+)]
+fn on_battery_at(percent: u8) -> Option<kobo_hal::battery::Battery> {
+    Some(kobo_hal::battery::Battery {
+        percent,
+        charging: false,
+    })
+}
+
+#[test]
+fn a_reader_counts_as_carrying_only_what_the_tailnet_has_approved() {
+    let (root, layout) = reader("carrying");
+    fs::create_dir_all(root.join("interfaces/tailscale0")).expect("interface");
+    for (exit_node, network, carrying) in [
+        ("", "", false),
+        // Nothing can use an offer the admin console has not allowed yet.
+        ("waiting", "waiting", false),
+        ("unavailable", "unavailable", false),
+        ("approved", "", true),
+        ("", "approved", true),
+        ("waiting", "approved", true),
+    ] {
+        say_offers(&layout, exit_node, network);
+        assert_eq!(carrying_in(&layout), carrying, "{exit_node:?} {network:?}");
+    }
+    // A daemon that died approved left that word behind and took the
+    // interface with it.
+    say_offers(&layout, "approved", "approved");
+    fs::remove_dir_all(root.join("interfaces/tailscale0")).expect("interface gone");
+    assert!(!carrying_in(&layout));
+    // An address or a message that happens to read "approved" is not an
+    // offer: only the two lines that hold them are looked at.
+    fs::create_dir_all(root.join("interfaces/tailscale0")).expect("interface");
+    let status = Status {
+        address: "approved".to_owned(),
+        name: "approved".to_owned(),
+        cannot_stay: "approved".to_owned(),
+        ..Status::quiet("running", "approved")
+    };
+    fs::write(layout.app_state.join(STATUS), status.render()).expect("status");
+    assert!(!carrying_in(&layout));
+}
+
+#[test]
+fn a_reader_carrying_traffic_is_held_awake_only_while_its_battery_can_afford_it() {
+    let (root, layout) = reader("afford");
+    fs::create_dir_all(root.join("interfaces/tailscale0")).expect("interface");
+    say_offers(&layout, "approved", "");
+    let now = Instant::now();
+    let held = |battery: Option<kobo_hal::battery::Battery>| {
+        AwakeForOthers::default().holds_in(&layout, now, || battery)
+    };
+    assert!(held(on_battery_at(80)));
+    assert!(held(on_battery_at(HOLD_MIN_BATTERY)));
+    assert!(!held(on_battery_at(HOLD_MIN_BATTERY - 1)));
+    // A charger is paying for it, whatever the gauge says.
+    assert!(held(Some(kobo_hal::battery::Battery {
+        percent: 3,
+        charging: true,
+    })));
+    // A gauge that says nothing is not a reason to run a battery flat.
+    assert!(!held(None));
+    // A reader carrying nothing is never held, and its gauge is not asked.
+    say_offers(&layout, "waiting", "");
+    assert!(!AwakeForOthers::default()
+        .holds_in(&layout, now, || panic!("the gauge was read for nothing")));
+}
+
+#[test]
+fn a_session_asks_once_a_minute_whether_it_is_held_and_keeps_the_answer_between() {
+    let (root, layout) = reader("asked");
+    fs::create_dir_all(root.join("interfaces/tailscale0")).expect("interface");
+    say_offers(&layout, "approved", "");
+    let mut hold = AwakeForOthers::default();
+    let start = Instant::now();
+    assert!(hold.holds_in(&layout, start, || on_battery_at(80)));
+    // The owner switches the exit node off. The session runs many times a
+    // second while the panel is in use, and none of those passes reads a
+    // file or the gauge.
+    say_offers(&layout, "", "");
+    let almost = start + (HOLD_CHECK - Duration::from_secs(1));
+    assert!(hold.holds_in(&layout, almost, || panic!("asked again too soon")));
+    assert!(!hold.holds_in(&layout, start + HOLD_CHECK, || on_battery_at(80)));
+    // And the other way: approved again, it is held from the next look.
+    say_offers(&layout, "approved", "");
+    assert!(!hold.holds_in(&layout, start + HOLD_CHECK, || on_battery_at(80)));
+    assert!(hold.holds_in(&layout, start + HOLD_CHECK * 2, || on_battery_at(80)));
+}
+
 #[test]
 fn the_runtime_is_asked_to_run_only_what_the_owner_asked_for() {
     let (_, layout) = reader("wanted");
