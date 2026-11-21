@@ -68,6 +68,7 @@ mod stardict;
 mod steps;
 mod sync;
 mod targets;
+mod ui;
 
 const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
 const SYNCTHING_SOURCE_RECORD: &str = "\
@@ -1180,6 +1181,10 @@ fn run(arguments: &[String]) -> Result<(), String> {
 }
 
 /// [`run`], once a request for help has been answered.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per command, so its length is the number of commands"
+)]
 fn run_command(arguments: &[String]) -> Result<(), String> {
     let filled = with_default_reader(arguments)?;
     let arguments = filled.as_slice();
@@ -1267,6 +1272,7 @@ fn run_command(arguments: &[String]) -> Result<(), String> {
         "update" => update_host(&arguments[1..]),
         "setup" => setup_device(&arguments[1..]),
         "apps" => apps::command(&arguments[1..]),
+        "ui" => ui::command(&arguments[1..]),
         "deploy" => deploy_package(&arguments[1..]),
         "secret" => secret_command(&arguments[1..]),
         "trust" => trust_command(&arguments[1..]),
@@ -8824,6 +8830,10 @@ Getting started:
                          below (run with no options to be asked)
   pair [NAME]            Save or rename a reader that is already on Wi-Fi
   apps [search WORD | setup APP]  Find apps and read their setup steps
+  apps installed | available | install APP... | remove APP
+                         See and change the apps on a reader connected by USB
+  ui                     Open Cobalt in a window: set up a reader, manage its
+                         apps, set up your browsers and send things to it
   update [--channel stable|beta]  Update this kobo command
 
 Send things to your apps. These go to the reader kobo setup saved; add
@@ -8939,6 +8949,7 @@ const ANSWERS_ITS_OWN_HELP: &[&str] = &[
     "stream",
     "sync",
     "trust",
+    "ui",
     "vault",
 ];
 

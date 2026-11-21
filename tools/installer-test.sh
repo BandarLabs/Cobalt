@@ -29,6 +29,20 @@ PAGES_INSTALLER=$WORK/pages-install.sh
 sed "s|cobalt-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL7XUR3p+tvPgftO/kRbigc8gagzP2RBDG3tWIu/1KXe|$SIGNER|" \
     "$ROOT/docs/install.sh" > "$PAGES_INSTALLER"
 
+# Signs a release's manifest, again if it has been signed before. The old
+# signature is taken away first: ssh-keygen asks before writing over one, and
+# waits for an answer for as long as its input stays open.
+sign_manifest() {
+    directory=$1
+    rm -f "$directory/cobalt-host-manifest.txt.sig" \
+        "$directory/cobalt-host-manifest.txt.sshsig"
+    ssh-keygen -q -Y sign -f "$WORK/signing" -n cobalt-host-release \
+        "$directory/cobalt-host-manifest.txt" >/dev/null
+    mv "$directory/cobalt-host-manifest.txt.sig" \
+        "$directory/cobalt-host-manifest.txt.sshsig"
+    printf '%0128d\n' 0 > "$directory/cobalt-host-manifest.txt.sig"
+}
+
 make_release() {
     directory=$1
     version=$2
@@ -80,11 +94,7 @@ EOF
                 "$(sha256_file "$directory/$asset")"
         done
     } > "$directory/cobalt-host-manifest.txt"
-    ssh-keygen -q -Y sign -f "$WORK/signing" -n cobalt-host-release \
-        "$directory/cobalt-host-manifest.txt" >/dev/null
-    mv "$directory/cobalt-host-manifest.txt.sig" \
-        "$directory/cobalt-host-manifest.txt.sshsig"
-    printf '%0128d\n' 0 > "$directory/cobalt-host-manifest.txt.sig"
+    sign_manifest "$directory"
     rm -rf "$directory/package"
 }
 
@@ -470,12 +480,170 @@ expect_failure "signature failure" \
 duplicate=$WORK/duplicate-field
 cp -R "$stable" "$duplicate"
 printf 'version 9.9.9\n' >> "$duplicate/cobalt-host-manifest.txt"
-ssh-keygen -q -Y sign -f "$WORK/signing" -n cobalt-host-release \
-    "$duplicate/cobalt-host-manifest.txt" >/dev/null
-mv "$duplicate/cobalt-host-manifest.txt.sig" \
-    "$duplicate/cobalt-host-manifest.txt.sshsig"
-printf '%0128d\n' 0 > "$duplicate/cobalt-host-manifest.txt.sig"
+sign_manifest "$duplicate"
 expect_failure "duplicate signed manifest field" \
     run_install "$WORK/home-duplicate" "$duplicate" --platform linux-x86_64
+
+# The Mac app. A release that has one names it on a host line of its own,
+# and a Mac gets it beside the command.
+# Puts a Mac app in a release: an archive for each Mac, a line for each in
+# the manifest, and the manifest signed again. The third argument is what is
+# wrong with the archive, for the cases that are about a refusal.
+add_mac_app() {
+    directory=$1
+    version=$2
+    wrong=${3:-nothing}
+    bundle=$directory/app-package/Cobalt.app
+    mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources" \
+        "$bundle/Contents/_CodeSignature"
+    printf 'what the app is\n' > "$bundle/Contents/Info.plist"
+    # Left without its execute bit, as an archive made from an artifact
+    # could leave it: the installer is what makes it a program.
+    printf '#!/bin/sh\necho the Mac app\n' > "$bundle/Contents/MacOS/Cobalt"
+    chmod 644 "$bundle/Contents/MacOS/Cobalt"
+    printf 'icon\n' > "$bundle/Contents/Resources/Cobalt.icns"
+    printf 'seal\n' > "$bundle/Contents/_CodeSignature/CodeResources"
+    case "$wrong" in
+        beside) printf 'not the app\n' > "$directory/app-package/beside" ;;
+        link) ln -s /etc/hosts "$bundle/Contents/Resources/elsewhere" ;;
+    esac
+    for platform in macos-x86_64 macos-arm64; do
+        asset="cobalt-app-$version-$platform.tar.gz"
+        COPYFILE_DISABLE=1 tar -czf "$directory/$asset" -C "$directory/app-package" .
+        line="host $platform-app $asset $(size_file "$directory/$asset") $(sha256_file "$directory/$asset")"
+        printf '%s\n' "$line" >> "$directory/cobalt-host-manifest.txt"
+        if [ "$wrong" = twice ]; then
+            printf '%s\n' "$line" >> "$directory/cobalt-host-manifest.txt"
+        fi
+    done
+    rm -rf "$directory/app-package"
+    sign_manifest "$directory"
+}
+
+run_app_update() {
+    home=$1
+    release=$2
+    platform=$3
+    selected=$(cat "$home/data/kobo/current")
+    HOME=$home \
+    XDG_DATA_HOME=$home/data \
+    XDG_CACHE_HOME=$home/cache \
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    KOBO_INSTALLER_TESTING=1 \
+    KOBO_INSTALLER_BASE_URL="file://$release" \
+    sh "$home/data/kobo/hosts/$selected/updater.sh" \
+        --host-update --channel stable --platform "$platform"
+}
+
+# The stand-in app is a shell script, which nothing can seal, so the seal is
+# not asked about except in the one case below that is about it.
+export KOBO_TEST_UNSEALED_APP=1
+
+# The same release as `stable`, byte for byte, with the app added: what an
+# updater that knows about the app sees where an older one saw `stable`.
+with_app=$WORK/with-app
+cp -R "$stable" "$with_app"
+add_mac_app "$with_app" 0.3.3
+
+app_home=$WORK/home-app
+run_install "$app_home" "$with_app" --platform macos-arm64 > "$WORK/app.out"
+grep -F "Mac app: Cobalt.app" "$WORK/app.out" >/dev/null
+app_host=$(cat "$app_home/data/kobo/current")
+app_sha=$(sha256_file "$with_app/cobalt-app-0.3.3-macos-arm64.tar.gz")
+case "$app_host" in
+    0.3.3-stable-macos-arm64-*-app-"$app_sha") ;;
+    *)
+        printf 'a host with the app is not named for it: %s\n' "$app_host" >&2
+        exit 1
+        ;;
+esac
+app_dir=$app_home/data/kobo/hosts/$app_host
+[ "$("$app_dir/Cobalt.app/Contents/MacOS/Cobalt")" = "the Mac app" ]
+[ -f "$app_dir/Cobalt.app/Contents/Resources/Cobalt.icns" ]
+[ "$(cat "$app_dir/APP_ARCHIVE_SHA256")" = "$app_sha" ]
+[ "$("$app_home/.local/bin/kobo")" = stable-one ]
+# Installing the same release again finds the same host and leaves it.
+run_install "$app_home" "$with_app" --platform macos-arm64 >/dev/null
+[ "$(cat "$app_home/data/kobo/current")" = "$app_host" ]
+
+# The other Mac gets its own archive, and Linux gets none.
+run_install "$WORK/home-app-intel" "$with_app" --platform macos-x86_64 >/dev/null
+case "$(cat "$WORK/home-app-intel/data/kobo/current")" in
+    *-app-"$(sha256_file "$with_app/cobalt-app-0.3.3-macos-x86_64.tar.gz")") ;;
+    *) printf 'the Intel Mac was not given its own app\n' >&2; exit 1 ;;
+esac
+run_install "$WORK/home-app-linux" "$with_app" --platform linux-x86_64 > "$WORK/app-linux.out"
+linux_host=$(cat "$WORK/home-app-linux/data/kobo/current")
+case "$linux_host" in
+    *-app-*) printf 'Linux was given the Mac app\n' >&2; exit 1 ;;
+esac
+[ ! -e "$WORK/home-app-linux/data/kobo/hosts/$linux_host/Cobalt.app" ]
+if grep -F "Mac app" "$WORK/app-linux.out" >/dev/null; then
+    printf 'Linux was told about the Mac app\n' >&2
+    exit 1
+fi
+
+# A Mac that is current but has no app, which is where an updater from before
+# the app leaves it, is given the app the next time it is asked to update.
+# The host it had is left exactly as it was.
+late_home=$WORK/home-app-late
+run_install "$late_home" "$stable" --platform macos-arm64 >/dev/null
+bare_host=$(cat "$late_home/data/kobo/current")
+[ ! -e "$late_home/data/kobo/hosts/$bare_host/Cobalt.app" ]
+run_app_update "$late_home" "$with_app" macos-arm64 > "$WORK/app-late.out"
+grep -F "Adding the Mac app" "$WORK/app-late.out" >/dev/null
+late_host=$(cat "$late_home/data/kobo/current")
+[ "$late_host" = "$bare_host-app-$app_sha" ]
+[ -x "$late_home/data/kobo/hosts/$late_host/Cobalt.app/Contents/MacOS/Cobalt" ]
+[ -x "$late_home/data/kobo/hosts/$bare_host/kobo" ]
+[ ! -e "$late_home/data/kobo/hosts/$bare_host/Cobalt.app" ]
+run_app_update "$late_home" "$with_app" macos-arm64 > "$WORK/app-late-again.out"
+grep -F "already current" "$WORK/app-late-again.out" >/dev/null
+[ "$(cat "$late_home/data/kobo/current")" = "$late_host" ]
+# Linux has nothing to add and says it is current.
+run_app_update "$WORK/home-app-linux" "$with_app" linux-x86_64 > "$WORK/app-linux-again.out"
+grep -F "already current" "$WORK/app-linux-again.out" >/dev/null
+
+# An app that is cut short, altered, has something beside it, holds a link,
+# or is named twice is refused, and nothing is installed.
+app_truncated=$WORK/app-truncated
+cp -R "$with_app" "$app_truncated"
+printf x >> "$app_truncated/cobalt-app-0.3.3-macos-arm64.tar.gz"
+expect_failure "truncated Mac app" \
+    run_install "$WORK/home-app-truncated" "$app_truncated" --platform macos-arm64
+grep -F "is truncated" "$WORK/failure.out" >/dev/null
+app_altered=$WORK/app-altered
+cp -R "$with_app" "$app_altered"
+printf X | dd of="$app_altered/cobalt-app-0.3.3-macos-arm64.tar.gz" bs=1 seek=8 conv=notrunc 2>/dev/null
+expect_failure "altered Mac app" \
+    run_install "$WORK/home-app-altered" "$app_altered" --platform macos-arm64
+grep -F "checksum failed" "$WORK/failure.out" >/dev/null
+for wrong in beside link twice; do
+    refused=$WORK/app-$wrong
+    cp -R "$stable" "$refused"
+    add_mac_app "$refused" 0.3.3 "$wrong"
+    expect_failure "Mac app wrong by $wrong" \
+        run_install "$WORK/home-app-$wrong" "$refused" --platform macos-arm64
+    case "$wrong" in
+        beside) grep -F "contains an unexpected path" "$WORK/failure.out" >/dev/null ;;
+        link) grep -F "neither a file nor a folder" "$WORK/failure.out" >/dev/null ;;
+        twice) grep -F "more than one macos-arm64 Mac app" "$WORK/failure.out" >/dev/null ;;
+    esac
+    [ ! -e "$WORK/home-app-$wrong/data/kobo/current" ]
+    # The same release still installs where the app is not wanted.
+    run_install "$WORK/home-app-$wrong-linux" "$refused" --platform linux-arm64 >/dev/null
+done
+
+# On a Mac the app must also be one the Mac will run. The stand-in is not
+# sealed, so with the question asked it is refused.
+if [ "$(uname -s)" = Darwin ]; then
+    expect_failure "unsealed Mac app" \
+        env KOBO_TEST_UNSEALED_APP=0 KOBO_TEST_UNAME_S=Darwin KOBO_TEST_UNAME_M=arm64 \
+        HOME="$WORK/home-app-unsealed" XDG_DATA_HOME="$WORK/home-app-unsealed/data" \
+        XDG_CACHE_HOME="$WORK/home-app-unsealed/cache" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+        KOBO_INSTALLER_TESTING=1 KOBO_INSTALLER_BASE_URL="file://$with_app" \
+        sh "$INSTALLER" --yes --no-setup --no-path
+    grep -F "does not match its own seal" "$WORK/failure.out" >/dev/null
+fi
 
 printf 'installer tests passed\n'

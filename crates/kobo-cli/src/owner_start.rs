@@ -3,6 +3,8 @@ use std::io::{BufRead, Write};
 
 pub const COMPACT_HELP: &str = "Cobalt - tools for your reader
 
+  kobo ui
+    Do all of this in a window
   kobo setup
     Set up a reader over USB and save it
   kobo send FILE

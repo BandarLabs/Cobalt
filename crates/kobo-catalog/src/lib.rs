@@ -66,6 +66,18 @@ impl App {
     }
 }
 
+/// Every bundled manifest as its app wrote it.
+///
+/// For a caller that shows more of a manifest than [`App`] keeps. The
+/// companion window draws an app's page from what the app says about itself
+/// at length and what changed in its latest version, which nothing else here
+/// reads, and handing over the text lets it take those without every other
+/// user of an [`App`] carrying them.
+#[must_use]
+pub const fn sources() -> &'static [&'static str] {
+    SOURCES
+}
+
 /// Catalog contents at build time, sorted by application identity.
 ///
 /// # Errors

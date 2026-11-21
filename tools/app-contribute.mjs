@@ -187,6 +187,12 @@ function main(args) {
     ["tools/generate-app-pages.mjs"],
     "Fix the manifest or generated-page error, then retry; do not hand-edit generated pages."
   );
+  // The companion's store is built from the same tables and pictures.
+  run(
+    "node",
+    ["tools/store-listing.mjs"],
+    "Fix the table it names in tools/generate-app-pages.mjs, then retry; do not hand-edit the listing."
+  );
   run("cargo", ["fmt", "--all", "--", "--check"], "Run cargo fmt --all, then retry.");
   run(
     "cargo",

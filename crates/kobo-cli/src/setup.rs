@@ -1521,11 +1521,10 @@ fn next_steps_for(finding: Finding, staged: Staged, firmware: Option<&str>) -> S
     let menu = firmware.map_or_else(
         || "Open the Kobo menu and choose Cobalt.".to_owned(),
         |version| {
-            if firmware_at_least(version, [4, 23, 15_505]) {
-                "Open the bottom-right Kobo menu and choose Cobalt.".to_owned()
-            } else {
-                "Open the top-left Kobo menu and choose Cobalt.".to_owned()
-            }
+            format!(
+                "Open the {} Kobo menu and choose Cobalt.",
+                menu_corner(version).replace(' ', "-")
+            )
         },
     );
     format!(
@@ -1533,6 +1532,21 @@ fn next_steps_for(finding: Finding, staged: Staged, firmware: Option<&str>) -> S
         staged.scope(),
         staged.restart()
     )
+}
+
+/// Which corner of the home screen the reader's menu is in, in words.
+///
+/// The firmware moved it from the top left to the bottom right, and an
+/// owner told to look in the wrong corner finds a search box. Said here
+/// once so that the report this command prints and the window that walks
+/// an owner through the same step cannot name different corners.
+#[must_use]
+pub fn menu_corner(firmware: &str) -> &'static str {
+    if firmware_at_least(firmware, [4, 23, 15_505]) {
+        "bottom right"
+    } else {
+        "top left"
+    }
 }
 
 fn firmware_at_least(value: &str, minimum: [u64; 3]) -> bool {
