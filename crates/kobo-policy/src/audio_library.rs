@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::library::{skipped_directory, MAX_DEPTH, MAX_PER_DIRECTORY, ROOTS};
+use crate::library::{skipped_directory, wire_path, MAX_DEPTH, MAX_PER_DIRECTORY, ROOTS};
 
 /// How many books one listing may contain.
 pub const MAX_ENTRIES: usize = kobo_protocol::MAX_AUDIO_ENTRIES;
@@ -317,7 +317,7 @@ fn folder_entry(
 /// left off the listing rather than failing the whole reply, and never
 /// shortened, because a shortened identifier resolves to nowhere.
 fn id_of(root: &Path, path: &Path, root_index: usize) -> Option<String> {
-    let relative = path.strip_prefix(root).ok()?.to_str()?;
+    let relative = wire_path(root, path)?;
     let id = format!("{root_index}/{relative}");
     (id.len() <= kobo_protocol::MAX_LIBRARY_ID_LEN && !id.chars().any(char::is_control))
         .then_some(id)

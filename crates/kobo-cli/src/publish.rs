@@ -47,11 +47,9 @@ pub fn atomically(destination: &Path, bytes: &[u8], what: &str) -> Result<(), St
     // The rename itself sits in the parent directory's metadata: sync it
     // too, or a power loss right here can bring the old name back.
     if let Some(parent) = destination.parent() {
-        fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| {
-                format!("published {what}, but the rename may not survive a power loss: {error}")
-            })?;
+        kobo_protocol::durability::sync_directory(parent).map_err(|error| {
+            format!("published {what}, but the rename may not survive a power loss: {error}")
+        })?;
     }
     Ok(())
 }

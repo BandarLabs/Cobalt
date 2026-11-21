@@ -143,11 +143,8 @@ pub fn steps_path() -> PathBuf {
     if let Some(value) = std::env::var_os("KOBO_CONFIG_DIR") {
         return PathBuf::from(value).join("setup-steps");
     }
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(home)
-        .join(".config")
-        .join("kobo")
-        .join("setup-steps")
+    let home = kobo_abi::home_directory().unwrap_or_default();
+    home.join(".config").join("kobo").join("setup-steps")
 }
 
 /// The current time as the steps file records it.
