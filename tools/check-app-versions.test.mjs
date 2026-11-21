@@ -18,6 +18,7 @@ import {
   isFilmingScript,
   lockChangesResolvedAgainstBase,
   lockfileOnlyAddsPackages,
+  lockfileToMeasureAgainst,
   manifestOnlyChangesPathDependencyVersions,
   manifestOnlyChangesVersions,
   manifestOnlyChangesWorkspaceMembershipOrVersion,
@@ -27,6 +28,7 @@ import {
   releaseDependencyIds,
   releaseDiffArguments,
   releaseLockPackageIdentities,
+  reviewedLockBlob,
   releaseNeeded,
   storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
@@ -982,6 +984,89 @@ test("new lockfile package blocks do not change existing app release inputs", ()
   const current = `${previous}\n[[package]]\nname = "reader"\nversion = "1.0.0"\n`;
 
   assert.equal(lockfileOnlyAddsPackages(previous, current), true);
+});
+
+test("a lockfile that only adds an app to the reviewed one answers for the app alone", () => {
+  const block = (name, dependencies = []) =>
+    `[[package]]\nname = "${name}"\nversion = "0.3.37"\n` +
+    (dependencies.length > 0
+      ? `dependencies = [\n${dependencies.map(dependency => ` "${dependency}",\n`).join("")}]\n`
+      : "");
+  const lock = (...blocks) => `version = 4\n\n${blocks.join("\n")}`;
+  // The channel was published with one SDK. The platform then gave the SDK a
+  // dependency, and that lockfile was reviewed as compatible for the apps
+  // already published.
+  const published = lock(block("kobo-notes", ["kobo-sdk"]), block("kobo-sdk"));
+  const reviewed = lock(
+    block("kobo-notes", ["kobo-sdk"]),
+    block("kobo-sdk", ["kobo-text"]),
+    block("kobo-text")
+  );
+  // A pull request adds an app, and the lockfile gains its block.
+  const withNewApp = lock(
+    block("kobo-notes", ["kobo-sdk"]),
+    block("kobo-reader", ["kobo-sdk"]),
+    block("kobo-sdk", ["kobo-text"]),
+    block("kobo-text")
+  );
+  const changedSince = reference =>
+    [...releaseLockPackageIdentities(reference, withNewApp, new Set())]
+      .map(identity => JSON.parse(identity)[0])
+      .sort();
+
+  // Measured against what was published, the SDK change the review covered
+  // is charged to the new app's pull request, and every app uses the SDK.
+  assert.deepEqual(changedSince(published), ["kobo-reader", "kobo-sdk", "kobo-text"]);
+  assert.equal(lockfileToMeasureAgainst(published, withNewApp, reviewed), reviewed);
+  assert.deepEqual(changedSince(lockfileToMeasureAgainst(published, withNewApp, reviewed)), [
+    "kobo-reader"
+  ]);
+
+  // Anything other than additions is measured against the published file:
+  // an existing block that changed, one that went, or nothing added at all.
+  const sdkMoved = withNewApp.replace(' "kobo-text",\n', ' "kobo-text",\n "kobo-json",\n');
+  assert.equal(lockfileToMeasureAgainst(published, sdkMoved, reviewed), published);
+  const textGone = lock(
+    block("kobo-notes", ["kobo-sdk"]),
+    block("kobo-reader", ["kobo-sdk"]),
+    block("kobo-sdk", ["kobo-text"])
+  );
+  assert.equal(lockfileToMeasureAgainst(published, textGone, reviewed), published);
+  assert.equal(lockfileToMeasureAgainst(published, reviewed, reviewed), published);
+  // No review, or one this checkout cannot read, is no review.
+  for (const missing of [null, undefined, false]) {
+    assert.equal(lockfileToMeasureAgainst(published, withNewApp, missing), published);
+  }
+});
+
+test("the reviewed lockfile is the one pinned for this protocol and this published file", () => {
+  const published = "a".repeat(40);
+  const reviewed = "b".repeat(40);
+  const manifest = {
+    format_version: 1,
+    changes: [
+      {
+        protocol_version: 17,
+        reason: "an earlier protocol",
+        files: [{ path: "Cargo.lock", base_blob: published, compatible_blob: "c".repeat(40) }]
+      },
+      {
+        protocol_version: 18,
+        reason: "the protocol in force",
+        files: [
+          { path: "crates/kobo-sdk/src/lib.rs", base_blob: published, compatible_blob: "d".repeat(40) },
+          { path: "Cargo.lock", base_blob: published, compatible_blob: reviewed }
+        ]
+      }
+    ]
+  };
+  assert.equal(reviewedLockBlob(manifest, 18, published), reviewed);
+  // A review of some other published lockfile says nothing about this one.
+  assert.equal(reviewedLockBlob(manifest, 18, "e".repeat(40)), null);
+  // Nor does a review made under a protocol that is no longer in force.
+  assert.equal(reviewedLockBlob(manifest, 19, published), null);
+  assert.equal(reviewedLockBlob({ format_version: 1, changes: [] }, 18, published), null);
+  assert.equal(reviewedLockBlob(null, 18, published), null);
 });
 
 test("Cargo.lock changes are isolated only after exact compatible review", () => {

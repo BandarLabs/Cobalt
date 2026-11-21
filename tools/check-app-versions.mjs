@@ -805,8 +805,11 @@ export function releaseDiffArguments(baseRevision) {
   ];
 }
 
-// Kept as a small compatibility helper for callers that only need to know
-// whether an edit consists entirely of unrelated package additions.
+// Whether an edit to the lockfile consists entirely of package additions:
+// every block that was there is there still, byte for byte, and at least one
+// is new. A block carries its package's resolved version, checksum and
+// dependency list, so an edit of this kind cannot have changed what any
+// package already in the file compiles against.
 export function lockfileOnlyAddsPackages(previousSource, currentSource) {
   const previous = lockfileParts(previousSource);
   const current = lockfileParts(currentSource);
@@ -823,6 +826,48 @@ export function lockfileOnlyAddsPackages(previousSource, currentSource) {
     available.set(packageBlock, count - 1);
   }
   return true;
+}
+
+// The reviewed lockfile a change may be measured against, by its blob: the
+// one the compatible-change manifest pins for the lockfile this channel was
+// published from, under the protocol in force. None when there is no such
+// review, which leaves the published lockfile itself as the measure.
+export function reviewedLockBlob(manifest, protocolVersion, baseBlob) {
+  for (const change of manifest?.changes || []) {
+    if (change?.protocol_version !== protocolVersion) continue;
+    for (const file of change.files || []) {
+      if (
+        file?.path === "Cargo.lock" &&
+        file.base_blob === baseBlob &&
+        /^[0-9a-f]{40}$/.test(file.compatible_blob || "")
+      ) {
+        return file.compatible_blob;
+      }
+    }
+  }
+  return null;
+}
+
+// The lockfile whose difference from the current one says which packages
+// changed.
+//
+// That is the published lockfile, unless a later one was reviewed as
+// compatible and the current one only adds packages to it. A reviewed
+// lockfile is pinned by its exact bytes, so a pull request that adds an app,
+// and with it one block for the app's own package, no longer matches the
+// review. Measured against the published lockfile it then answers for every
+// platform change the review had already covered, and each existing app is
+// told to publish a new version on account of somebody else's new one.
+// Measured against the reviewed lockfile, it answers for what it added.
+//
+// Anything more than additions is measured against the published lockfile
+// as before: a changed or missing block is a change to something an existing
+// app may compile against, and that is not what was reviewed.
+export function lockfileToMeasureAgainst(publishedSource, currentSource, reviewedSource) {
+  return typeof reviewedSource === "string" &&
+    lockfileOnlyAddsPackages(reviewedSource, currentSource)
+    ? reviewedSource
+    : publishedSource;
 }
 
 // Given an explicit change list, decide whether the catalog must move.
@@ -986,12 +1031,23 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
   }
 
   if (changedPaths.includes("Cargo.lock")) {
-    const previousLock = command("git", ["show", `${baseRevision}:Cargo.lock`]);
-    const lockChanges = releaseLockPackageIdentities(
-      previousLock,
-      readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8"),
-      compatiblePaths
+    const publishedLock = command("git", ["show", `${baseRevision}:Cargo.lock`]);
+    const currentLock = readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8");
+    // Only looked for when the current lockfile is not itself the reviewed
+    // one. A reviewed blob this checkout does not hold reads as no review.
+    const reviewedBlob = compatiblePaths.has("Cargo.lock")
+      ? null
+      : reviewedLockBlob(
+          compatibleManifest,
+          currentProtocolVersion(),
+          optionalCommand("git", ["rev-parse", `${baseRevision}:Cargo.lock`])
+        );
+    const previousLock = lockfileToMeasureAgainst(
+      publishedLock,
+      currentLock,
+      reviewedBlob && optionalCommand("git", ["cat-file", "blob", reviewedBlob])
     );
+    const lockChanges = releaseLockPackageIdentities(previousLock, currentLock, compatiblePaths);
     const currentPackageNames = new Set(metadata.packages.map(package_ => package_.name));
     for (const identity of lockChangesResolvedAgainstBase(
       previousLock,
