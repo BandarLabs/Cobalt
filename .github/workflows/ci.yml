@@ -94,7 +94,10 @@ jobs:
                   summary.write("| App | Coverage | Result |\n| --- | --- | --- |\n")
                   for result in report["results"]:
                       coverage = "drive route" if result.get("route") else "launch only"
-                      summary.write(f"| {result['app']} | {coverage} | {result['status']} |\n")
+                      # A route left out because a site it reads was down
+                      # says so here, where the outcome is read.
+                      outcome = result["status"] + (f": {result['reason']}" if result.get("reason") else "")
+                      summary.write(f"| {result['app']} | {coverage} | {outcome} |\n")
               for result in report["results"]:
                   if result["status"] != "pass":
                       log = path.parent / (result["app"].replace(":", "-") + ".log")
