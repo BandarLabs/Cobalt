@@ -1757,6 +1757,53 @@ fn the_runtime_is_asked_to_run_only_what_the_owner_asked_for() {
 }
 
 #[test]
+fn a_start_that_ended_waiting_on_the_owner_is_not_made_again_until_they_ask() {
+    let mut settled = Settled::default();
+    assert!(!settled.holds(Want::Run), "a session starts it once");
+    // Refused, or a sign-in nobody finished: ended, and not a failure.
+    settled.ended(Want::Run);
+    assert!(settled.holds(Want::Run));
+    // The owner taps Try again with nothing running.
+    settled.asked(false);
+    assert!(!settled.holds(Want::Run));
+    settled.ended(Want::Run);
+    assert!(settled.holds(Want::Run));
+}
+
+#[test]
+fn a_supervisor_that_left_for_a_choice_the_owner_changed_is_followed_by_the_next() {
+    let mut settled = Settled::default();
+    // Stay connected switched on while a supervisor that cannot do that
+    // was running: it leaves, and the other kind is what is wanted now.
+    settled.asked(true);
+    settled.ended(Want::Run);
+    assert!(!settled.holds(Want::Stay));
+    assert!(!settled.holds(Want::Run), "the same choice saved again");
+    // Only that once. What ends after it waits for the owner again.
+    settled.ended(Want::Run);
+    assert!(settled.holds(Want::Run));
+}
+
+#[test]
+fn a_reader_that_could_not_be_kept_connected_still_gets_the_session_supervisor() {
+    let mut settled = Settled::default();
+    // The step that arranges staying ended well and left a note that it
+    // could not, so what is wanted next is the supervisor that runs here.
+    settled.ended(Want::Stay);
+    assert!(settled.holds(Want::Stay));
+    assert!(!settled.holds(Want::Run));
+}
+
+#[test]
+fn a_failure_is_left_to_the_clock_and_forgets_that_the_owner_asked() {
+    let mut settled = Settled::default();
+    settled.asked(true);
+    settled.failed();
+    settled.ended(Want::Run);
+    assert!(settled.holds(Want::Run));
+}
+
+#[test]
 fn the_same_status_is_not_written_twice() {
     let (_, layout) = reader("status-once");
     let status = Status::quiet("running", "Connected.");

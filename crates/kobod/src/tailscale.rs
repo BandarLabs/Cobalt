@@ -739,6 +739,60 @@ impl Want {
     }
 }
 
+/// What a session remembers of a start that ended with nothing wrong, so it
+/// is not made again until the owner has done something.
+///
+/// A supervisor ends without failing when it is waiting on the owner: the
+/// reader was refused, nobody finished signing in, an admin has to approve
+/// it. The status says which, and starting again without them changes
+/// nothing. Yet the session's only question used to be whether the switch
+/// was on, so on a reader it started the next supervisor the moment one
+/// ended, around and around for as long as Cobalt was open: a refusal was
+/// checked for again every second or two, and a sign-in nobody finished
+/// never stopped its daemon, it only got a new link every ten minutes.
+///
+/// The one settled end that must be followed by a start is the supervisor
+/// leaving because the owner changed a choice it cannot take up while
+/// running. That is told apart by the owner having asked while it ran.
+#[derive(Clone, Copy, Debug, Default)]
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub struct Settled {
+    ended: Option<Want>,
+    asked_meanwhile: bool,
+}
+
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+impl Settled {
+    /// The owner saved something in the app. `running` says whether a
+    /// supervisor was there to see it.
+    pub fn asked(&mut self, running: bool) {
+        self.ended = None;
+        self.asked_meanwhile = running;
+    }
+
+    /// What was started for `want` ended without failing.
+    pub fn ended(&mut self, want: Want) {
+        if !std::mem::take(&mut self.asked_meanwhile) {
+            self.ended = Some(want);
+        }
+    }
+
+    /// What was started failed, which is tried again by the clock.
+    pub fn failed(&mut self) {
+        self.asked_meanwhile = false;
+    }
+
+    /// Whether `want` has been done as far as it can be without the owner.
+    ///
+    /// Asked of what is wanted now, not of what ended: a step that could not
+    /// arrange for the reader to stay connected ends well too, and what is
+    /// wanted after it is the supervisor that runs with the session.
+    #[must_use]
+    pub fn holds(self, want: Want) -> bool {
+        self.ended == Some(want)
+    }
+}
+
 /// Whether the service should be started, read from what the app saved.
 #[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 pub fn wanted() -> Option<Want> {
