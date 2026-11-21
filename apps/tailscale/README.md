@@ -200,13 +200,15 @@ the names of your tailnet's computers are kept in a marked block in
 
 ## What it keeps, and where
 
-- **The reader's key** is in `/var/lib/cobalt/tailscale` on the reader's own
+- **The reader's key** is in `/usr/local/cobalt/tailscale` on the reader's own
   system partition. It is not on the partition a computer sees over USB.
 - **It survives** a restart, a Cobalt update and reinstalling Cobalt, so the
   reader stays the same device on your tailnet and needs no second approval.
-- **A Kobo firmware update replaces that partition**, and the key with it.
-  The reader then asks to be approved again and appears as a new device,
-  usually named `kobo-cobalt-1`. Remove the old one in the admin console.
+- **A factory reset erases that partition**, and the key with it. The reader
+  then asks to be approved again and appears as a new device, usually named
+  `kobo-cobalt-1`. Remove the old one in the admin console. A firmware
+  update writes only its own files, so the key is expected to outlive one;
+  that has not been watched happen.
 - **Uninstalling Cobalt does not remove the key**, because uninstalling
   happens over USB and cannot reach that partition. Use **Sign out** in the
   app first. If the reader is offline when you sign out, also remove it in
@@ -215,7 +217,7 @@ the names of your tailnet's computers are kept in a marked block in
   partition beside the Sync engine, and downloaded again after each Cobalt
   update.
 - **They are run from the reader's system storage**, in
-  `/var/lib/cobalt/tailscale-bin`, when it has 110 MB free. The book
+  `/usr/local/cobalt/tailscale-bin`, when it has 110 MB free. The book
   partition can be rewritten by any computer the reader is plugged into, so
   the programs are copied from it, checked against pinned digests where they
   land, and checked again before every start. Switching Tailscale off, or
@@ -241,7 +243,7 @@ The app saves one word, on or off. The runtime does the rest
    `pkgs.tailscale.com` if it is not installed, four megabytes at a time
    straight to a file, and refuses anything that does not match the digests
    compiled into the runtime.
-3. Starts `tailscaled` with its state under `/var/lib/cobalt/tailscale`, log
+3. Starts `tailscaled` with its state under `/usr/local/cobalt/tailscale`, log
    upload and file transfer off, and a memory limit sized for a reader.
 4. Runs `tailscale up` with every leaf setting named and anything set by hand
    reset.
@@ -298,13 +300,13 @@ Tailscale on, once it says **Connected**, and after leaving Cobalt:
 kobo doctor --device READER
 ssh root@READER 'grep -E "MemTotal|MemAvailable" /proc/meminfo; grep tun /proc/misc; cat /etc/hosts; ip route'
 ssh root@READER 'pid=$(pidof tailscaled); grep -E "VmRSS|VmHWM" /proc/$pid/status; cat /proc/$pid/oom_score_adj'
-ssh root@READER 'cat /mnt/onboard/.adds/cobalt/state/tailscale/tailscale-status; tail -40 /var/lib/cobalt/tailscale/tailscaled.log'
+ssh root@READER 'cat /mnt/onboard/.adds/cobalt/state/tailscale/tailscale-status; tail -40 /usr/local/cobalt/tailscale/tailscaled.log'
 ```
 
 With an option on, also capture:
 
 ```sh
-ssh root@READER 'ls -la /var/lib/cobalt/tailscale-bin; df -h /; tr "\0" " " < /proc/$(cat /var/lib/cobalt/tailscale/supervisor.pid)/cmdline'
+ssh root@READER 'ls -la /usr/local/cobalt/tailscale-bin; df -h /; tr "\0" " " < /proc/$(cat /usr/local/cobalt/tailscale/supervisor.pid)/cmdline'
 ssh root@READER 'tr "\0" "\n" < /proc/$(pidof tailscaled)/environ | grep -E "NETSTACK|GOMEMLIMIT"; cat /proc/sys/net/ipv4/ip_forward'
 ```
 

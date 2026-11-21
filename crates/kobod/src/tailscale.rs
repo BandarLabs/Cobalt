@@ -89,14 +89,23 @@ use std::time::{Duration, Instant};
 /// is ever written here.
 const APP_STATE: &str = "/mnt/onboard/.adds/cobalt/state/tailscale";
 /// The daemon's home on the root filesystem: the node key and the socket.
-const HOME: &str = "/var/lib/cobalt/tailscale";
+///
+/// Under `/usr/local`, beside the stock reader's own folder, and not under
+/// `/var/lib`, where this began. The firmware mounts a RAM disk of sixteen
+/// kilobytes over `/var/lib` at every start (seen on a Clara BW on
+/// 4.46.23852), so a key kept there was gone at the next restart, leaving the
+/// reader to be approved again and a dead entry behind in the tailnet, and
+/// the daemon's state did not fit in it to begin with. A folder here is on
+/// the flash, is not exported over USB, and is left alone by a firmware
+/// update, which only writes the files it carries.
+const HOME: &str = "/usr/local/cobalt/tailscale";
 /// The two programs, on the book partition beside the Sync engine.
 const BIN_DIR: &str = "/mnt/onboard/.adds/cobalt/bin/tailscale";
 /// The two programs again, with a copy of this runtime, on the root
 /// filesystem, for a reader that stays connected after Cobalt hands the
 /// screen back. Beside the daemon's home rather than inside it, so signing
 /// out, which empties the home, does not also mean downloading 70 MB again.
-const KEPT_BIN_DIR: &str = "/var/lib/cobalt/tailscale-bin";
+const KEPT_BIN_DIR: &str = "/usr/local/cobalt/tailscale-bin";
 /// The partition the stock reader hands to a computer over USB.
 const CARD: &str = "/mnt/onboard";
 
