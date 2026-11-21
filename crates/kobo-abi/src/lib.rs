@@ -2647,7 +2647,7 @@ pub mod pty {
         fn posix_openpt(flags: c_int) -> c_int;
         fn grantpt(fd: c_int) -> c_int;
         fn unlockpt(fd: c_int) -> c_int;
-        fn ptsname(fd: c_int) -> *mut c_char;
+        fn ptsname_r(fd: c_int, buffer: *mut c_char, length: usize) -> c_int;
         fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
         fn setsid() -> c_int;
     }
@@ -2852,9 +2852,14 @@ pub mod pty {
     }
 
     fn open_master() -> io::Result<File> {
+        // The master must not survive exec. The runtime holds it for as long
+        // as a root shell runs and starts applications meanwhile, and Command
+        // closes nothing for them: every descriptor without the flag reaches
+        // the jail, and this one types at root. Asking for it in the open
+        // itself leaves no moment in which another thread could fork.
         // SAFETY: a plain libc call taking only flags. The descriptor it
         // returns is handed straight to `File`, which owns it from here on.
-        let fd: RawFd = unsafe { posix_openpt(O_RDWR | O_NOCTTY) };
+        let fd: RawFd = unsafe { posix_openpt(O_RDWR | O_NOCTTY | libc::O_CLOEXEC) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -2869,18 +2874,32 @@ pub mod pty {
     }
 
     fn slave_path(master: &File) -> io::Result<String> {
-        // SAFETY: `ptsname` returns a pointer into storage owned by libc,
-        // valid until the next call on this thread. It is copied immediately,
-        // before anything else can call it.
-        let name = unsafe { ptsname(master.as_raw_fd()) };
-        if name.is_null() {
+        // `ptsname` answers out of one buffer that the whole process shares,
+        // so a second thread asking at the same moment could be given the
+        // other's terminal, and this one runs a root shell. The reentrant
+        // form writes into a buffer of ours. Linux returns the error where
+        // macOS returns -1 and sets it, so both are read.
+        let mut name = [0_u8; 128];
+        // SAFETY: the buffer is a live local and the length passed is its
+        // own, so libc writes nowhere else.
+        let result = unsafe {
+            ptsname_r(
+                master.as_raw_fd(),
+                name.as_mut_ptr().cast::<c_char>(),
+                name.len(),
+            )
+        };
+        if result > 0 {
+            return Err(io::Error::from_raw_os_error(result));
+        }
+        if result < 0 {
             return Err(io::Error::last_os_error());
         }
-        // SAFETY: libc guarantees a NUL-terminated string here.
-        let name = unsafe { CStr::from_ptr(name) };
-        name.to_str()
+        CStr::from_bytes_until_nul(&name)
+            .ok()
+            .and_then(|name| name.to_str().ok())
             .map(str::to_owned)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "terminal name is not text"))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "terminal name is not text"))
     }
 
     fn set_window_size(terminal: &File, columns: u16, rows: u16) -> io::Result<()> {
@@ -2903,6 +2922,26 @@ pub mod pty {
             return Err(io::Error::last_os_error());
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::Pty;
+        use std::os::fd::AsRawFd;
+
+        #[test]
+        fn the_master_of_an_open_terminal_is_not_inherited_by_later_programs() {
+            // The runtime holds a root shell's master and goes on starting
+            // applications while it is open. A descriptor that survives exec
+            // reaches every one of them inside its jail, and writing to it is
+            // typing at that shell.
+            let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20).expect("a terminal");
+            // SAFETY: F_GETFD reads the flags of a descriptor this test owns.
+            let flags = unsafe { libc::fcntl(pty.master.as_raw_fd(), libc::F_GETFD) };
+            assert!(flags >= 0, "read the master's descriptor flags");
+            assert_ne!(flags & libc::FD_CLOEXEC, 0, "the master survives exec");
+            pty.close().expect("closing");
+        }
     }
 }
 

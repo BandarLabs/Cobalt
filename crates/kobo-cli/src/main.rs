@@ -258,6 +258,15 @@ if ! grep -q ' /dev/pts ' /proc/mounts 2>/dev/null; then
   mkdir -p /dev/pts 2>/dev/null &&
     mount -t devpts devpts /dev/pts -o mode=0620,ptmxmode=0666 || true
 fi
+# A start begins the log. The one start that does not is the runtime starting
+# itself again after an update has been put in place: that is the same
+# session carrying on, and what was written before it, about the update, is
+# the part somebody reading the log afterwards came for. So it adds to the
+# log, where beginning it again would wipe that.
+if [ \"${KOBOD_UPDATE_SETTLED:-}\" = 1 ]; then
+  KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION \\
+    exec \"$root/bin/kobod\" --present \"$root/bin/kobo-launcher\" >> /mnt/onboard/kobod.txt 2>&1
+fi
 KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION \\
   exec \"$root/bin/kobod\" --present \"$root/bin/kobo-launcher\" > /mnt/onboard/kobod.txt 2>&1
 ";

@@ -478,7 +478,7 @@
   },
   {
    "protocol_version": 18,
-   "reason": "Windows host support for the CLI and simulator, reviewed against the beta catalog published from 716edd9d. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix. OS entropy moves behind kobo-abi, whose Unix arm reads /dev/urandom as the SDK did, and kobo-abi gains a home-directory lookup that is HOME and nothing else on Unix. Directory and file flushes share kobo_protocol::durability, which opens and fsyncs on Unix exactly as the call sites did. Every platform difference is a Windows arm, and the policy and network test changes only gate Unix fixtures. The lock gains workspace-internal kobo-abi edges for the CLI, the SDK, the sidekick helper and wifi-trace, and a Windows-only flate2 edge for the CLI; no third-party version moves and nothing resolves differently for the reader. The wire protocol and its version are unchanged by this port, so published Store apps keep working against the runtime they already have. The base is beta with the Kobo Nia port merged, so these blobs differ from it only by this port. Re-pinned for ranged library reads and the shared limit on what Books opens: the protocol file gains a request and a result on tags of their own (63 and 26) that only Books sends, a larger bound on the library listing that only Books receives, and two constants; the SDK gains the helper that asks for a range and re-exports those constants. No existing encoding changes and the version stays 18, so a published Store app reads and writes every frame it did before. The lock gains one workspace-internal edge, kobo-dict for the CLI, and no third-party package moves.",
+   "reason": "Windows host support for the CLI and simulator, reviewed against the beta catalog published from 716edd9d. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix. OS entropy moves behind kobo-abi, whose Unix arm reads /dev/urandom as the SDK did, and kobo-abi gains a home-directory lookup that is HOME and nothing else on Unix. Directory and file flushes share kobo_protocol::durability, which opens and fsyncs on Unix exactly as the call sites did. Every platform difference is a Windows arm, and the policy and network test changes only gate Unix fixtures. The lock gains workspace-internal kobo-abi edges for the CLI, the SDK, the sidekick helper and wifi-trace, and a Windows-only flate2 edge for the CLI; no third-party version moves and nothing resolves differently for the reader. The wire protocol and its version are unchanged by this port, so published Store apps keep working against the runtime they already have. The base is beta with the Kobo Nia port merged, so these blobs differ from it only by this port. Re-pinned for ranged library reads and the shared limit on what Books opens: the protocol file gains a request and a result on tags of their own (63 and 26) that only Books sends, a larger bound on the library listing that only Books receives, and two constants; the SDK gains the helper that asks for a range and re-exports those constants. No existing encoding changes and the version stays 18, so a published Store app reads and writes every frame it did before. The lock gains one workspace-internal edge, kobo-dict for the CLI, and no third-party package moves. The capability fixes change two of these files again, both in code only the runtime runs: kobo-abi opens the terminal's pty master close-on-exec and asks for its name with the reentrant call, and the terminal is a built-in no Store package can be; kobo-policy holds the Library's catalog credential rule to the app's own named secret, which the runtime enforces when it attaches a credential and no published app's bytes carry.",
    "files": [
     {
      "path": "Cargo.lock",
@@ -493,7 +493,7 @@
     {
      "path": "crates/kobo-abi/src/lib.rs",
      "base_blob": "a8d3c94988dee343d89cdb214f23314e6f0c5a8d",
-     "compatible_blob": "f5b78efcb5bd2e02a3f0d1bbec6d9e945b168421"
+     "compatible_blob": "23e5ba48c5e8cf09695ce466fdad3a032250bbf2"
     },
     {
      "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
@@ -508,7 +508,7 @@
     {
      "path": "crates/kobo-policy/src/credentials.rs",
      "base_blob": "8fe14ad961bdf06f68066e010b80dbcb56ec7460",
-     "compatible_blob": "cc31ae77b64f8b0fac3d267e080975d6d5690c0e"
+     "compatible_blob": "7ba8eb6d8b12d5fc75972d16332858fb67f795b5"
     },
     {
      "path": "crates/kobo-policy/src/persistence.rs",

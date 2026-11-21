@@ -18,6 +18,7 @@ import {
   isFilmingScript,
   lockChangesResolvedAgainstBase,
   lockfileOnlyAddsPackages,
+  lockfileToMeasureAgainst,
   manifestOnlyChangesPathDependencyVersions,
   manifestOnlyChangesVersions,
   manifestOnlyChangesWorkspaceMembershipOrVersion,
@@ -27,6 +28,7 @@ import {
   releaseDependencyIds,
   releaseDiffArguments,
   releaseLockPackageIdentities,
+  reviewedLockBlob,
   releaseNeeded,
   storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
@@ -841,7 +843,14 @@ test("active protocol compatible-change entries name the exact current files", (
           );
           continue;
         }
-        const changed = changedLockPackageIdentities(reviewed, readFileSync(file.path, "utf8"));
+        const currentLock = readFileSync(file.path, "utf8");
+        // A lockfile that only adds packages to the reviewed one resolves
+        // everything the review covered exactly as it did, and the release
+        // logic measures it against the reviewed one. So adding an app does
+        // not lapse the entry either: a contributor's pull request would
+        // otherwise have to re-pin a review it has nothing to do with.
+        if (lockfileOnlyAddsPackages(reviewed, currentLock)) continue;
+        const changed = changedLockPackageIdentities(reviewed, currentLock);
         assert.deepEqual(
           [...changed],
           [],
@@ -982,6 +991,151 @@ test("new lockfile package blocks do not change existing app release inputs", ()
   const current = `${previous}\n[[package]]\nname = "reader"\nversion = "1.0.0"\n`;
 
   assert.equal(lockfileOnlyAddsPackages(previous, current), true);
+});
+
+test("a lockfile that only adds an app to the reviewed one answers for the app alone", () => {
+  const block = (name, dependencies = []) =>
+    `[[package]]\nname = "${name}"\nversion = "0.3.37"\n` +
+    (dependencies.length > 0
+      ? `dependencies = [\n${dependencies.map(dependency => ` "${dependency}",\n`).join("")}]\n`
+      : "");
+  const lock = (...blocks) => `version = 4\n\n${blocks.join("\n")}`;
+  // The channel was published with one SDK. The platform then gave the SDK a
+  // dependency, and that lockfile was reviewed as compatible for the apps
+  // already published.
+  const published = lock(block("kobo-notes", ["kobo-sdk"]), block("kobo-sdk"));
+  const reviewed = lock(
+    block("kobo-notes", ["kobo-sdk"]),
+    block("kobo-sdk", ["kobo-text"]),
+    block("kobo-text")
+  );
+  // A pull request adds an app, and the lockfile gains its block.
+  const withNewApp = lock(
+    block("kobo-notes", ["kobo-sdk"]),
+    block("kobo-reader", ["kobo-sdk"]),
+    block("kobo-sdk", ["kobo-text"]),
+    block("kobo-text")
+  );
+  const changedSince = reference =>
+    [...releaseLockPackageIdentities(reference, withNewApp, new Set())]
+      .map(identity => JSON.parse(identity)[0])
+      .sort();
+
+  // Measured against what was published, the SDK change the review covered
+  // is charged to the new app's pull request, and every app uses the SDK.
+  assert.deepEqual(changedSince(published), ["kobo-reader", "kobo-sdk", "kobo-text"]);
+  assert.equal(lockfileToMeasureAgainst(published, withNewApp, reviewed), reviewed);
+  assert.deepEqual(changedSince(lockfileToMeasureAgainst(published, withNewApp, reviewed)), [
+    "kobo-reader"
+  ]);
+
+  // Anything other than additions is measured against the published file:
+  // an existing block that changed, one that went, or nothing added at all.
+  const sdkMoved = withNewApp.replace(' "kobo-text",\n', ' "kobo-text",\n "kobo-json",\n');
+  assert.equal(lockfileToMeasureAgainst(published, sdkMoved, reviewed), published);
+  const textGone = lock(
+    block("kobo-notes", ["kobo-sdk"]),
+    block("kobo-reader", ["kobo-sdk"]),
+    block("kobo-sdk", ["kobo-text"])
+  );
+  assert.equal(lockfileToMeasureAgainst(published, textGone, reviewed), published);
+  assert.equal(lockfileToMeasureAgainst(published, reviewed, reviewed), published);
+  // No review, or one this checkout cannot read, is no review.
+  for (const missing of [null, undefined, false]) {
+    assert.equal(lockfileToMeasureAgainst(published, withNewApp, missing), published);
+  }
+});
+
+test("a new app that brings a second version of a crate still only adds packages", () => {
+  const registry = 'source = "registry+https://github.com/rust-lang/crates.io-index"';
+  const one = [
+    "version = 4",
+    "",
+    "[[package]]",
+    'name = "foldhash"',
+    'version = "0.1.5"',
+    registry,
+    "",
+    "[[package]]",
+    'name = "kobo-notes"',
+    'version = "0.3.37"',
+    "dependencies = [",
+    ' "foldhash",',
+    "]",
+    ""
+  ].join("\n");
+  // Cargo names foldhash by name alone while one version is locked. The new
+  // app needs another, so the notes app's block is rewritten to say which it
+  // means, and still means the one it meant.
+  const two = [
+    "version = 4",
+    "",
+    "[[package]]",
+    'name = "foldhash"',
+    'version = "0.1.5"',
+    registry,
+    "",
+    "[[package]]",
+    'name = "foldhash"',
+    'version = "0.2.0"',
+    registry,
+    "",
+    "[[package]]",
+    'name = "kobo-notes"',
+    'version = "0.3.37"',
+    "dependencies = [",
+    ' "foldhash 0.1.5",',
+    "]",
+    "",
+    "[[package]]",
+    'name = "kobo-reader"',
+    'version = "0.3.37"',
+    "dependencies = [",
+    ' "foldhash 0.2.0",',
+    "]",
+    ""
+  ].join("\n");
+  assert.equal(lockfileOnlyAddsPackages(one, two), true);
+  // The workspace's own version moving with a release is not a change.
+  assert.equal(lockfileOnlyAddsPackages(one, two.replaceAll('"0.3.37"', '"0.3.38"')), true);
+  // The notes app moving to the new version is one.
+  assert.equal(
+    lockfileOnlyAddsPackages(one, two.replace(' "foldhash 0.1.5",', ' "foldhash 0.2.0",')),
+    false
+  );
+  // And so is a file that is not a lockfile, or one with nothing added.
+  assert.equal(lockfileOnlyAddsPackages(one, "not a lockfile"), false);
+  assert.equal(lockfileOnlyAddsPackages(one, one), false);
+});
+
+test("the reviewed lockfile is the one pinned for this protocol and this published file", () => {
+  const published = "a".repeat(40);
+  const reviewed = "b".repeat(40);
+  const manifest = {
+    format_version: 1,
+    changes: [
+      {
+        protocol_version: 17,
+        reason: "an earlier protocol",
+        files: [{ path: "Cargo.lock", base_blob: published, compatible_blob: "c".repeat(40) }]
+      },
+      {
+        protocol_version: 18,
+        reason: "the protocol in force",
+        files: [
+          { path: "crates/kobo-sdk/src/lib.rs", base_blob: published, compatible_blob: "d".repeat(40) },
+          { path: "Cargo.lock", base_blob: published, compatible_blob: reviewed }
+        ]
+      }
+    ]
+  };
+  assert.equal(reviewedLockBlob(manifest, 18, published), reviewed);
+  // A review of some other published lockfile says nothing about this one.
+  assert.equal(reviewedLockBlob(manifest, 18, "e".repeat(40)), null);
+  // Nor does a review made under a protocol that is no longer in force.
+  assert.equal(reviewedLockBlob(manifest, 19, published), null);
+  assert.equal(reviewedLockBlob({ format_version: 1, changes: [] }, 18, published), null);
+  assert.equal(reviewedLockBlob(null, 18, published), null);
 });
 
 test("Cargo.lock changes are isolated only after exact compatible review", () => {
