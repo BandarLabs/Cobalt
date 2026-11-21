@@ -63,7 +63,8 @@
         "homepanel",
         "morse",
         "paperterm",
-        "syncthing"
+        "syncthing",
+        "tailscale"
       ]
     },
     {
@@ -966,6 +967,26 @@
       {
         "name": "syncthing/conflict.png",
         "caption": "A conflict, retried on the next sync",
+        "width": 1072,
+        "height": 1448
+      }
+    ],
+    "tailscale": [
+      {
+        "name": "tailscale.png",
+        "caption": "Tailscale connected on a Kobo, with the reader's tailnet name and address",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "tailscale/approve.png",
+        "caption": "The approval code to scan with a phone",
+        "width": 1072,
+        "height": 1448
+      },
+      {
+        "name": "tailscale/options.png",
+        "caption": "Options, with the exit node approved and the network waiting",
         "width": 1072,
         "height": 1448
       }

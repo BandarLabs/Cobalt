@@ -75,6 +75,7 @@ const screenshots = {
   store: ["store.png", "The Cobalt App Store listing installed and available apps"],
   sudoku: ["sudoku.png", "An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded"],
   syncthing: ["syncthing.png", "Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it."],
+  tailscale: ["tailscale.png", "Tailscale connected on a Kobo, with the reader's tailnet name and address"],
   terminal: ["terminal.png", "A shell and touch keyboard on a Kobo"],
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
   todo: ["todo.png", "A to-do list with four open items and one done on a Kobo."],
