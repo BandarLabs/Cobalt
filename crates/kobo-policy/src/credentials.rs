@@ -9,6 +9,7 @@ use kobo_net::{has_origin, parse};
 use kobo_protocol::{Credential, CredentialUse, SecretHeader};
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 #[path = "miniflux_credentials.rs"]
@@ -183,16 +184,21 @@ fn write_private_record(
         fs::remove_file(&temporary).map_err(|_| kobo_protocol::DeviceError::Backend)?;
     }
     let result: std::io::Result<()> = (|| {
-        let mut file = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(&temporary)?;
+        let mut options = fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        // Unix mode bits keep the record owner-only. Windows has no mode bits;
+        // a file under the user profile is restricted to the owning account by
+        // its ACL instead, which is the same privacy outcome by the platform's
+        // own mechanism.
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&temporary)?;
+        #[cfg(unix)]
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         file.write_all(bytes)?;
         file.sync_all()?;
         fs::rename(&temporary, &destination)?;
-        fs::File::open(directory)?.sync_all()
+        crate::persistence::sync_directory(directory)
     })();
     if result.is_err() {
         let _ignored = fs::remove_file(&temporary);
@@ -204,24 +210,27 @@ fn private_directory(path: &Path) -> Result<(), kobo_protocol::DeviceError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_dir() => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::DirBuilder::new()
-                .mode(0o700)
+            #[allow(unused_mut)] // Windows has no mode bits to set.
+            let mut builder = fs::DirBuilder::new();
+            #[cfg(unix)]
+            builder.mode(0o700);
+            builder
                 .create(path)
                 .map_err(|_| kobo_protocol::DeviceError::Backend)?;
         }
         Ok(_) | Err(_) => return Err(kobo_protocol::DeviceError::Backend),
     }
+    #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
         .map_err(|_| kobo_protocol::DeviceError::Backend)?;
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    // The directory flushes go through the persistence boundary, whose Windows
+    // half opens directories with FILE_FLAG_BACKUP_SEMANTICS.
+    crate::persistence::sync_directory(path).map_err(|_| kobo_protocol::DeviceError::Backend)?;
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
-        fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
+        crate::persistence::sync_directory(parent)
             .map_err(|_| kobo_protocol::DeviceError::Backend)?;
     }
     Ok(())
@@ -526,7 +535,12 @@ fn store_app_credential_allowed(
 ) -> Option<bool> {
     let allowed = match app {
         "calibre-web" => {
-            matches!(credential.header, SecretHeader::Basic)
+            // The name is part of the boundary, as it is for every app below.
+            // A catalog address is the owner's to choose, so without it any
+            // key the owner had installed for another provider could be sent
+            // as a password to whichever host a path ending in `/opds` named.
+            credential.secret == "calibre"
+                && matches!(credential.header, SecretHeader::Basic)
                 && usage == CredentialUse::Fetch
                 && parsed_path(url).is_some_and(|path| clean_path(&path).ends_with("/opds"))
         }
@@ -875,7 +889,9 @@ mod tests {
             })
         );
         // A link is never followed by a request, so it never counts here.
+        // Making one on Windows needs a privilege, so only Unix plants it.
         std::fs::remove_file(root.join("exa")).unwrap();
+        #[cfg(unix)]
         std::os::unix::fs::symlink(root.join("openai"), root.join("exa")).unwrap();
         install_app_secret(&root, "audiobook", "exa", "typed-on-the-reader")
             .expect("install the app's own copy");
@@ -927,6 +943,8 @@ mod tests {
         let _ignored = std::fs::remove_dir_all(root);
     }
 
+    // Symlink fixtures need Unix semantics.
+    #[cfg(unix)]
     #[test]
     fn app_identity_and_symlink_boundaries_fail_closed() {
         use std::os::unix::fs::symlink;
@@ -1129,6 +1147,32 @@ mod tests {
             assert!(
                 !allowed("other", &credential, url, usage),
                 "another app used {app}'s credential"
+            );
+        }
+    }
+
+    #[test]
+    fn the_library_sends_only_its_own_account_to_a_catalog() {
+        // An owner-installed account has no saved server to hold it to, so
+        // the catalog address is whatever the application was pointed at.
+        // The name is then the only thing between that address and every
+        // other key on the reader.
+        let catalog = "https://books.example/opds";
+        assert!(allowed(
+            "calibre-web",
+            &Credential::basic("calibre"),
+            catalog,
+            CredentialUse::Fetch
+        ));
+        for other in ["openai", "anthropic", "lichess", "komga", "homeassistant"] {
+            assert!(
+                !allowed(
+                    "calibre-web",
+                    &Credential::basic(other),
+                    catalog,
+                    CredentialUse::Fetch
+                ),
+                "the library sent the {other} key to a catalog"
             );
         }
     }

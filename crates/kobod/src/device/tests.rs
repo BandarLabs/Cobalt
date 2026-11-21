@@ -342,7 +342,7 @@ fn native_power_delivery_pauses_tasks_and_resumes_each_host_once() {
     let root =
         std::env::temp_dir().join(format!("cobalt-native-power-host-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    let (runtime, mut client) = std::os::unix::net::UnixStream::pair().unwrap();
+    let (runtime, mut client) = kobo_protocol::channel::pair().unwrap();
     client
         .set_read_timeout(Some(Duration::from_secs(1)))
         .unwrap();
@@ -428,7 +428,7 @@ fn native_power_delivery_pauses_tasks_and_resumes_each_host_once() {
 
 #[test]
 fn cancelled_touch_cannot_activate_an_app_control() {
-    let (mut writer, mut reader) = std::os::unix::net::UnixStream::pair().unwrap();
+    let (mut writer, mut reader) = kobo_protocol::channel::pair().unwrap();
     reader.set_nonblocking(true).unwrap();
     let result = super::deliver_touch(
         &mut writer,
@@ -454,7 +454,7 @@ fn cancelled_touch_cannot_activate_an_app_control() {
 
 #[test]
 fn an_application_cannot_change_protocol_version_after_greeting() {
-    let (runtime, mut application) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+    let (runtime, mut application) = kobo_protocol::channel::pair().expect("socket pair");
     let (sender, receiver) = std::sync::mpsc::channel();
     super::pump_application(&runtime, &sender, 42, kobo_protocol::VERSION)
         .expect("start application pump");
@@ -475,7 +475,7 @@ fn an_application_cannot_change_protocol_version_after_greeting() {
     ));
 }
 
-fn hosted_peer(protocol: u8) -> (super::Hosted, std::os::unix::net::UnixStream, PathBuf) {
+fn hosted_peer(protocol: u8) -> (super::Hosted, kobo_protocol::channel::Stream, PathBuf) {
     use super::{ApplicationChild, Hosted};
     let root = std::env::temp_dir().join(format!(
         "cobalt-protocol-echo-{}-{}-{}",
@@ -485,7 +485,7 @@ fn hosted_peer(protocol: u8) -> (super::Hosted, std::os::unix::net::UnixStream, 
     ));
     let _ignored = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("scratch device");
-    let (runtime, client) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+    let (runtime, client) = kobo_protocol::channel::pair().expect("socket pair");
     client
         .set_read_timeout(Some(Duration::from_secs(1)))
         .expect("read timeout");
@@ -521,7 +521,7 @@ fn hosted_peer(protocol: u8) -> (super::Hosted, std::os::unix::net::UnixStream, 
 }
 
 fn assert_runtime_frame(
-    client: &mut std::os::unix::net::UnixStream,
+    client: &mut kobo_protocol::channel::Stream,
     protocol: u8,
     request_id: u32,
     expected: &Message,
@@ -614,7 +614,7 @@ fn runtime_keeps_protocol_on_tap_and_hold(protocol: u8) {
     let tap = content_tap(&screen);
     let words = selectable_page();
     let word_tap = text_tap(&words);
-    let (mut runtime, mut app) = std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
+    let (mut runtime, mut app) = kobo_protocol::channel::pair().expect("a pair of sockets");
     app.set_read_timeout(Some(Duration::from_secs(1)))
         .expect("read timeout");
     assert_eq!(
@@ -719,10 +719,10 @@ fn a_greeted_protocol_13_app_survives_the_first_runtime_frame() {
     let _ignored = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("scratch");
     let socket = directory.join("runtime.sock");
-    let listener = std::os::unix::net::UnixListener::bind(&socket).expect("listen");
+    let listener = kobo_protocol::channel::Listener::bind(&socket).expect("listen");
     let client_socket = socket.clone();
     let client = thread::spawn(move || {
-        let mut stream = std::os::unix::net::UnixStream::connect(client_socket).expect("connect");
+        let mut stream = kobo_protocol::channel::connect(&client_socket).expect("connect");
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .expect("timeout");
@@ -1148,17 +1148,22 @@ fn a_session_is_refused_before_the_reader_is_stopped_when_there_is_nothing_to_ru
         .expect_err("a directory is refused")
         .contains("not a file"));
 
-    let unreadable = directory.join("not-executable");
-    fs::write(&unreadable, b"#!/bin/sh\n").expect("write a file");
-    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644))
-        .expect("clear the executable bits");
-    assert!(preflight(&unreadable)
-        .expect_err("a file that cannot be executed is refused")
-        .contains("not executable"));
+    // The executable-bit refusal is a Unix mode-bit check; Windows has no
+    // equivalent to test.
+    #[cfg(unix)]
+    {
+        let unreadable = directory.join("not-executable");
+        fs::write(&unreadable, b"#!/bin/sh\n").expect("write a file");
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644))
+            .expect("clear the executable bits");
+        assert!(preflight(&unreadable)
+            .expect_err("a file that cannot be executed is refused")
+            .contains("not executable"));
 
-    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o755))
-        .expect("set the executable bits");
-    assert!(preflight(&unreadable).is_ok());
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o755))
+            .expect("set the executable bits");
+        assert!(preflight(&unreadable).is_ok());
+    }
     let _ignored = fs::remove_dir_all(&directory);
 }
 
@@ -1497,7 +1502,7 @@ fn a_screen_that_asked_for_back_is_given_it_and_one_that_did_not_is_left() {
         y: u32::try_from(back.y + back.height / 2).expect("inside the panel"),
     };
 
-    let (mut runtime, mut app) = std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
+    let (mut runtime, mut app) = kobo_protocol::channel::pair().expect("a pair of sockets");
     assert_eq!(
         deliver_touch(
             &mut runtime,
@@ -1549,7 +1554,7 @@ fn overlay_close_is_delivered_before_a_root_back_leaves() {
         "Settings",
         vec![],
     ));
-    let (mut runtime, mut app) = std::os::unix::net::UnixStream::pair().unwrap();
+    let (mut runtime, mut app) = kobo_protocol::channel::pair().unwrap();
     app.set_read_timeout(Some(Duration::from_millis(20)))
         .unwrap();
     for (screen, kind, expected) in [

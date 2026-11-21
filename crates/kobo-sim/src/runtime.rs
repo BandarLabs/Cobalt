@@ -371,12 +371,12 @@ fn prepare_catalog(server: &AppServer, programs: &BTreeMap<String, Program>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::net::UnixStream;
+
     use std::sync::{Arc, Mutex};
 
     #[test]
     fn owned_back_is_delivered_and_only_its_deadline_or_answer_ends_the_offer() {
-        let (mut peer, stream) = UnixStream::pair().unwrap();
+        let (mut peer, stream) = kobo_protocol::channel::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_millis(20)))
             .unwrap();
         let clock = Arc::new(
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn overlay_back_closes_in_app_then_root_back_leaves_and_unanswered_close_times_out() {
-        let (mut peer, stream) = UnixStream::pair().unwrap();
+        let (mut peer, stream) = kobo_protocol::channel::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_millis(20)))
             .unwrap();
         let clock = Arc::new(

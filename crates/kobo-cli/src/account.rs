@@ -1158,6 +1158,9 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    // The account record is installed by the reader's /bin/sh script, so these
+    // run it against a scratch tree with a real shell, which is Unix's.
+    #[cfg(unix)]
     fn run(script: &str) -> std::process::Output {
         std::process::Command::new("sh")
             .args(["-c", script])
@@ -1165,6 +1168,7 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_reader_gets_the_bound_record_and_the_setting_while_cobalt_runs() {
         let root = scratch("device");
@@ -1206,6 +1210,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_owner_token_replaces_a_typed_copy_and_leaves_no_staging_behind() {
         let root = scratch("owner");

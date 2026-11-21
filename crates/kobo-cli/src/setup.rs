@@ -376,6 +376,33 @@ pub fn mount_roots() -> Vec<PathBuf> {
     }
 }
 
+/// Every drive-letter root, `A:\` through `Z:\`.
+fn drive_letter_roots() -> Vec<PathBuf> {
+    (b'A'..=b'Z')
+        .map(|letter| PathBuf::from(format!("{}:\\", char::from(letter))))
+        .collect()
+}
+
+/// Every volume worth checking for a reader, one per mount point.
+///
+/// On Unix the mount points are the children of [`mount_roots`]. Windows has
+/// no shared parent directory: each volume is its own drive-letter root, so
+/// the letters themselves are the candidates. Probing a letter with no drive
+/// behind it fails fast and silently.
+fn candidates() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        return drive_letter_roots();
+    }
+    let mut volumes = Vec::new();
+    for root in mount_roots() {
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        volumes.extend(entries.flatten().map(|entry| entry.path()));
+    }
+    volumes
+}
+
 /// Every mounted reader this machine can see.
 ///
 /// A volume qualifies when it has a readable `.kobo/version` naming a Kobo
@@ -384,17 +411,10 @@ pub fn mount_roots() -> Vec<PathBuf> {
 /// for.
 #[must_use]
 pub fn mounted_readers() -> Vec<Mounted> {
-    let mut found = Vec::new();
-    for root in mount_roots() {
-        let Ok(entries) = fs::read_dir(&root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if let Some(reader) = read_reader(&entry.path()) {
-                found.push(reader);
-            }
-        }
-    }
+    let mut found: Vec<Mounted> = candidates()
+        .iter()
+        .filter_map(|volume| read_reader(volume))
+        .collect();
     found.sort_by(|left, right| left.volume.cmp(&right.volume));
     found.dedup_by(|left, right| left.volume == right.volume);
     found
@@ -613,13 +633,8 @@ pub fn host_trust_names() -> Vec<String> {
 
 /// Where this machine keeps the trust roots its own tooling made.
 fn host_trust_directory() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(
-        PathBuf::from(home)
-            .join(".config")
-            .join("kobo")
-            .join("trust"),
-    )
+    let home = kobo_abi::home_directory()?;
+    Some(home.join(".config").join("kobo").join("trust"))
 }
 
 /// The testable inside of [`carry_trust_roots`]: everything but where home is.
@@ -1123,9 +1138,7 @@ pub fn write_sample(volume: &Path) -> Result<PathBuf, String> {
     let path = volume.join(SAMPLE_NAME);
     fs::write(&path, sample_text())
         .map_err(|error| format!("{} cannot be written: {error}", path.display()))?;
-    let file = fs::File::open(&path)
-        .map_err(|error| format!("{} cannot be synced: {error}", path.display()))?;
-    file.sync_all()
+    kobo_protocol::durability::sync_file(&path)
         .map_err(|error| format!("{} cannot be synced: {error}", path.display()))?;
     Ok(path)
 }
@@ -1255,16 +1268,9 @@ fn preserve_owner_folders(
     Ok(true)
 }
 
-#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), String> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
+    kobo_protocol::durability::sync_directory(path)
         .map_err(|error| format!("sync {}: {error}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 /// Flushes the volume and ejects it, so the reader remounts its own storage.
@@ -1793,6 +1799,7 @@ pub fn wait_for_reader(
 mod tests {
     #[cfg(target_os = "linux")]
     use super::mount_roots;
+    use super::{candidates, drive_letter_roots};
     use super::{
         carry_trust_from, clear_setting, install_profile, is_kobo_serial, next_steps,
         next_steps_for, parse_version, set_setting, wait_for_reader, Arrival, Finding, Mounted,
@@ -2366,6 +2373,31 @@ mod tests {
     }
 
     #[test]
+    fn drive_letter_roots_cover_a_through_z() {
+        let roots = drive_letter_roots();
+        assert_eq!(roots.len(), 26);
+        assert_eq!(roots.first(), Some(&PathBuf::from("A:\\")));
+        assert!(roots.contains(&PathBuf::from("E:\\")));
+        assert_eq!(roots.last(), Some(&PathBuf::from("Z:\\")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_mount_discovery_probes_every_drive_letter_root() {
+        assert_eq!(candidates(), drive_letter_roots());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_mount_discovery_scans_the_children_of_the_mount_roots() {
+        // The Windows arm probes drive-letter roots themselves; everywhere
+        // else the candidates are the entries inside the mount roots.
+        assert!(!candidates()
+            .iter()
+            .any(|volume| volume == Path::new("/media")));
+    }
+
+    #[test]
     fn an_existing_key_is_replaced_in_place_and_nothing_else_moves() {
         let before = "[ApplicationPreferences]\nCurrentLocale=en_US\n\n[DeveloperSettings]\nForceWifiOn=false\n\n[PowerOptions]\nAutoColorEnabled=true\n";
         let after = set_setting(before, "DeveloperSettings", "ForceWifiOn", "true");
@@ -2759,8 +2791,20 @@ mod tests {
     }
 
     fn transaction_fixture(name: &str) -> PathBuf {
+        // Debug-formatted step names carry quotes, which Windows filenames
+        // forbid; the label only has to be unique and readable.
+        let label: String = name
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                    character
+                } else {
+                    '-'
+                }
+            })
+            .collect();
         let root = std::env::temp_dir().join(format!(
-            "kobo-setup-transaction-{name}-{}",
+            "kobo-setup-transaction-{label}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);

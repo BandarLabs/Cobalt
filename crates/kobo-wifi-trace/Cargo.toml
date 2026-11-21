@@ -11,6 +11,7 @@ name = "kobo-wifi-trace"
 path = "src/main.rs"
 
 [dependencies]
+kobo-abi = { path = "../kobo-abi" }
 kobo-json = { path = "../kobo-json" }
 ring = "0.17"
 

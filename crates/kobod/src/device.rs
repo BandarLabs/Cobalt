@@ -51,6 +51,7 @@ use kobo_ui::{
 };
 use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -808,8 +809,11 @@ pub fn present(
     let reader = Reader::find().map_err(|error| error.to_string())?;
     let network = kobo_hal::network::Connection::capture();
     let state = PathBuf::from(format!("/tmp/kobo-session-{}", std::process::id()));
-    fs::DirBuilder::new()
-        .mode(0o700)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut state_builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    state_builder.mode(0o700);
+    state_builder
         .create(&state)
         .map_err(|error| format!("create private reader session: {error}"))?;
     reader
@@ -2138,7 +2142,7 @@ struct Hosted {
     /// is using.
     identity_slot: Option<u32>,
     child: ApplicationChild,
-    stream: std::os::unix::net::UnixStream,
+    stream: kobo_protocol::channel::Stream,
     store: kobo_policy::store::Store,
     shelf: kobo_policy::shelf::Shelf,
     tasks: TaskRunner,
@@ -2290,7 +2294,7 @@ impl ApplicationChild {
 }
 
 struct AppLaunch {
-    listener: std::os::unix::net::UnixListener,
+    listener: kobo_protocol::channel::Listener,
     socket_path: PathBuf,
     child_socket: PathBuf,
     program: PathBuf,
@@ -2335,7 +2339,7 @@ impl AppLaunch {
         let socket_path =
             std::env::temp_dir().join(format!("kobo-session-{}-{id}.sock", std::process::id()));
         let _ignored = fs::remove_file(&socket_path);
-        let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+        let listener = kobo_protocol::channel::Listener::bind(&socket_path)
             .map_err(|error| format!("bind application socket: {error}"))?;
         Ok(Self {
             listener,
@@ -2370,6 +2374,9 @@ impl AppLaunch {
         fs::create_dir(&root)
             .map_err(|error| format!("create application sandbox {}: {error}", root.display()))?;
         let prepared = (|| -> Result<Self, String> {
+            // Unreachable on Windows (is_root() is false there); mode bits
+            // are the Unix sandbox mechanism.
+            #[cfg(unix)]
             fs::set_permissions(&root, fs::Permissions::from_mode(0o755))
                 .map_err(|error| format!("protect application sandbox: {error}"))?;
             let program = root.join("app");
@@ -2382,11 +2389,13 @@ impl AppLaunch {
                     })?;
                 }
             }
+            #[cfg(unix)]
             fs::set_permissions(&program, fs::Permissions::from_mode(0o555))
                 .map_err(|error| format!("protect sandboxed application: {error}"))?;
             let socket_path = root.join("runtime.sock");
-            let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+            let listener = kobo_protocol::channel::Listener::bind(&socket_path)
                 .map_err(|error| format!("bind sandbox application socket: {error}"))?;
+            #[cfg(unix)]
             fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666))
                 .map_err(|error| format!("make sandbox socket connectable: {error}"))?;
             let sandbox = kobo_abi::sandbox::Sandbox::new(&root, identity_slot)
@@ -3936,9 +3945,14 @@ fn host_applications(
                                     // The heartbeat is not quiet, though: a
                                     // release takes longer to fetch and
                                     // unpack than the watchdog waits.
+                                    //
+                                    // Settings checked the signed manifest
+                                    // before asking, and the runtime checks it
+                                    // again: what replaces the installation is
+                                    // not decided by an application's word.
                                     kobo_protocol::DeviceRequest::Update { url, sha256 } => {
                                         match while_beating(watchdog, || {
-                                            crate::update::apply(url, sha256)
+                                            crate::update::apply_requested(url, sha256)
                                         }) {
                                             Ok(()) => kobo_protocol::DeviceResult::Done,
                                             Err(error) => {
@@ -5231,6 +5245,9 @@ fn preflight(application: &Path) -> Result<(), String> {
             application.display()
         ));
     }
+    // Windows marks executability by extension, not mode bits; the check has
+    // no meaning there and the CLI's own packaging never reaches it.
+    #[cfg(unix)]
     if metadata.permissions().mode() & 0o111 == 0 {
         return Err(format!(
             "{} is not executable. Nothing was changed on the device",
@@ -5664,11 +5681,11 @@ fn trace_picture_evictions(handle: kobo_ui::PictureHandle, evicted: &[kobo_ui::P
 /// The application is told the panel size rather than discovering it, so an
 /// application binary is not tied to one model.
 fn greet(
-    listener: &std::os::unix::net::UnixListener,
+    listener: &kobo_protocol::channel::Listener,
     whole_screen: Rect,
     expected_name: &str,
-) -> Result<(std::os::unix::net::UnixStream, String, u8), String> {
-    let (mut stream, _) = listener
+) -> Result<(kobo_protocol::channel::Stream, String, u8), String> {
+    let mut stream = listener
         .accept()
         .map_err(|error| format!("application never connected: {error}"))?;
     let hello =
@@ -6023,7 +6040,7 @@ fn type_into(
     reason = "touch delivery needs the negotiated protocol, retained screen, and physical pose"
 )]
 fn deliver_touch(
-    stream: &mut std::os::unix::net::UnixStream,
+    stream: &mut kobo_protocol::channel::Stream,
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: &Chrome,
@@ -6462,7 +6479,7 @@ fn watch_for_stale_software(sender: &Sender<Event>) {
 }
 
 fn pump_application(
-    stream: &std::os::unix::net::UnixStream,
+    stream: &kobo_protocol::channel::Stream,
     sender: &Sender<Event>,
     id: u64,
     version: u8,

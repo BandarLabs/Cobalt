@@ -25,6 +25,7 @@
 #[cfg(feature = "device-write")]
 use crate::blackbox::trace;
 use kobo_protocol::DeviceError;
+use std::sync::OnceLock;
 
 /// Where the trace goes when there is no device to write one on.
 ///
@@ -63,11 +64,24 @@ fn record_failure(adds: &Path, reason: &str) {
     if !cobalt.is_dir() {
         return;
     }
-    let state = cobalt.join("state");
-    if fs::create_dir_all(&state).is_err() {
+    let record = failure_record(&cobalt);
+    if record
+        .parent()
+        .is_some_and(|state| fs::create_dir_all(state).is_err())
+    {
         return;
     }
-    let _ignored = fs::write(state.join("last-update-error"), format!("{reason}\n"));
+    let _ignored = fs::write(record, format!("{reason}\n"));
+}
+
+/// Where the reason the last update failed is kept, in the installation at
+/// `cobalt`.
+///
+/// Named in one expression, as the runtime's other records are, so that the
+/// test which reads these sources for names kept under the state folder
+/// finds this one too.
+fn failure_record(cobalt: &Path) -> std::path::PathBuf {
+    cobalt.join("state").join("last-update-error")
 }
 use std::fs;
 use std::io::Write;
@@ -112,6 +126,28 @@ const EXPANDED_LIMIT: u32 = 128 * 1024 * 1024;
 
 /// One tar header or payload block.
 const BLOCK: usize = 512;
+
+/// Applies a release an application asked for, once the runtime has checked
+/// it against the signed manifest itself.
+///
+/// [`apply`] trusts its caller to have done that, which the background check
+/// has. A request from the settings screen arrives as an address and a digest
+/// and nothing else, so it comes through here instead. A refusal is recorded
+/// like any other failed update: a release that will not verify is the one an
+/// owner most needs to be able to report.
+///
+/// # Errors
+///
+/// As [`crate::autoupdate::vouched`], then as [`apply`].
+#[cfg(feature = "device-write")]
+pub fn apply_requested(url: &str, sha256: &str) -> Result<(), DeviceError> {
+    crate::autoupdate::vouched(url, sha256).inspect_err(|error| {
+        let reason = format!("the release's signed manifest does not vouch for it: {error}");
+        trace(&format!("platform update: {reason}"));
+        record_failure(Path::new(ADDS), &reason);
+    })?;
+    apply(url, sha256)
+}
 
 /// Downloads a release archive, verifies it, and stages it for the next start.
 ///
@@ -435,7 +471,8 @@ fn unpack_with_bootstrap(
             return Err(DeviceError::InvalidInput);
         }
         if standalone_bootstrap {
-            if launch_bootstrap || &tar[offset + BLOCK..end] != LAUNCH_BOOTSTRAP_CONTENT.as_bytes()
+            if launch_bootstrap
+                || &tar[offset + BLOCK..end] != launch_bootstrap_content().as_bytes()
             {
                 return Err(DeviceError::InvalidInput);
             }
@@ -513,6 +550,15 @@ const STAGED_MARK_TEMPORARY: &str = ".staged-release.new";
 const LAUNCH_BOOTSTRAP: &str = "cobalt-launch.sh";
 const LAUNCH_BOOTSTRAP_TEMPORARY: &str = "cobalt-launch.sh.new";
 const LAUNCH_BOOTSTRAP_CONTENT: &str = include_str!("../../../assets/cobalt-launch.sh");
+
+/// The launch bootstrap the device receives, always with LF line endings.
+/// The embedded asset inherits the host checkout's endings: a Windows
+/// checkout with `core.autocrlf` rewrites it to CRLF, and the reader's
+/// `/bin/sh` refuses CR bytes.
+fn launch_bootstrap_content() -> &'static str {
+    static NORMALIZED: OnceLock<String> = OnceLock::new();
+    NORMALIZED.get_or_init(|| LAUNCH_BOOTSTRAP_CONTENT.replace('\r', ""))
+}
 const LAUNCH_BOOTSTRAP_ARCHIVE_PATH: &str = "mnt/onboard/.adds/cobalt-launch.sh";
 const NICKELMENU_CONFIGS: [&str; 2] = ["nm/cobalt", "nm/menu"];
 const OLD_LAUNCH_PATH: &str = "/mnt/onboard/.adds/cobalt/start.sh";
@@ -800,7 +846,7 @@ fn ensure_launch_bootstrap(adds: &Path) -> Result<(), DeviceError> {
         adds,
         LAUNCH_BOOTSTRAP,
         LAUNCH_BOOTSTRAP_TEMPORARY,
-        LAUNCH_BOOTSTRAP_CONTENT.as_bytes(),
+        launch_bootstrap_content().as_bytes(),
         0o755,
     )?;
 
@@ -887,7 +933,7 @@ fn atomic_file(
         set_file_mode(&temporary, mode)?;
         file.sync_all()?;
         fs::rename(&temporary, &destination)?;
-        fs::File::open(parent)?.sync_all()
+        kobo_protocol::durability::sync_directory(parent)
     })();
     if result.is_err() {
         let _ignored = fs::remove_file(&temporary);
@@ -901,7 +947,10 @@ fn set_file_mode(path: &Path, mode: u32) -> std::io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode))
 }
 
+/// Windows has no mode bits; the signature matches the Unix arm so callers
+/// read the same on both.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn set_file_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
     Ok(())
 }
@@ -962,9 +1011,7 @@ fn clear_journal(
 }
 
 fn sync_directory(path: &Path) -> Result<(), DeviceError> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_directory(path).map_err(|_| DeviceError::Backend)
 }
 
 fn sync_tree(path: &Path) -> Result<(), DeviceError> {
@@ -973,9 +1020,7 @@ fn sync_tree(path: &Path) -> Result<(), DeviceError> {
         return Err(DeviceError::Backend);
     }
     if metadata.is_file() {
-        return fs::File::open(path)
-            .and_then(|file| file.sync_all())
-            .map_err(|_| DeviceError::Backend);
+        return kobo_protocol::durability::sync_file(path).map_err(|_| DeviceError::Backend);
     }
     for entry in fs::read_dir(path).map_err(|_| DeviceError::Backend)? {
         sync_tree(&entry.map_err(|_| DeviceError::Backend)?.path())?;
@@ -1032,7 +1077,7 @@ fn set_mode(path: &Path, field: &[u8]) {
         let _ignored = fs::set_permissions(path, fs::Permissions::from_mode(mode));
     }
     #[cfg(not(unix))]
-    let _ignored = (path, field);
+    let _ = (path, field);
 }
 
 fn verify_checksum(block: &[u8]) -> Result<(), DeviceError> {
@@ -1076,11 +1121,13 @@ fn read_octal(field: &[u8]) -> Result<u64, DeviceError> {
 mod tests {
     use super::{
         already_staged, ensure_launch_bootstrap, install, recover_interrupted_update,
-        settle_before_launch, swap_with_fault, TransactionFailure, TransactionStep, JOURNAL,
-        OWNER_FOLDERS, PREFIX, STAGED_MARK,
+        settle_before_launch, JOURNAL, OWNER_FOLDERS, PREFIX, STAGED_MARK,
     };
+    #[cfg(unix)]
+    use super::{swap_with_fault, TransactionFailure, TransactionStep};
     use kobo_protocol::DeviceError;
     use std::fs;
+    #[cfg(unix)]
     use std::process::Command;
 
     /// A tar member for the archives these tests publish.
@@ -1118,11 +1165,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_launch_bootstrap_has_lf_endings() {
+        assert!(!super::launch_bootstrap_content().contains('\r'));
+    }
+
     fn launch_bootstrap() -> Member<'static> {
         Member {
             path: super::LAUNCH_BOOTSTRAP_ARCHIVE_PATH.to_owned(),
             kind: b'0',
-            payload: super::LAUNCH_BOOTSTRAP_CONTENT.as_bytes(),
+            payload: super::launch_bootstrap_content().as_bytes(),
             mode: 0o755,
         }
     }
@@ -1414,6 +1466,7 @@ mod tests {
     /// A promotion that lost power halfway is finished by the next start, the
     /// same as before staging. That start was made from the old files, so it
     /// has to say the installation changed under it.
+    #[cfg(unix)]
     #[test]
     fn a_start_that_finishes_an_interrupted_promotion_says_the_installation_changed() {
         let adds = scratch("interrupted-promotion");
@@ -1441,6 +1494,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(&adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn incomplete_launch_chain_is_rejected_before_owner_transaction() {
         let cases = [
@@ -1562,7 +1616,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(adds.join("cobalt-launch.sh")).expect("launcher"),
-            super::LAUNCH_BOOTSTRAP_CONTENT
+            super::launch_bootstrap_content()
         );
         fs::remove_dir_all(adds).expect("cleanup");
     }
@@ -1694,7 +1748,7 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(adds.join("cobalt-launch.sh")).expect("bootstrap"),
-            super::LAUNCH_BOOTSTRAP_CONTENT
+            super::launch_bootstrap_content()
         );
         let config = fs::read_to_string(adds.join("nm/cobalt")).expect("migrated entry");
         assert!(config.contains(super::STABLE_LAUNCH_PATH), "{config}");
@@ -1768,10 +1822,16 @@ mod tests {
     }
 
     #[cfg(not(unix))]
+    #[allow(clippy::unnecessary_wraps)]
     fn set_test_executable(_path: &std::path::Path) -> std::io::Result<()> {
         Ok(())
     }
 
+    /// Runs the launch chain for real. The chain being exercised is the
+    /// device's sh script trio (start.sh -> kobod -> kobo-launcher), so the
+    /// tests built on it are Unix-only; on Windows the candidate selection
+    /// and recovery logic above the scripts is what runs.
+    #[cfg(unix)]
     fn assert_launchable(adds: &std::path::Path) {
         let launched = adds.join("launched-release");
         let status = Command::new("/bin/sh")
@@ -1791,6 +1851,7 @@ mod tests {
         fs::remove_file(launched).expect("remove launch marker");
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_quarantines_unusable_current_and_promotes_exact_candidate() {
         let adds = scratch("quarantine-current");
@@ -1815,6 +1876,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_finishes_promotion_after_crash_following_quarantine() {
         let adds = scratch("quarantine-interruption");
@@ -1837,6 +1899,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_ignores_incomplete_candidate_and_selects_complete_one() {
         let adds = scratch("incomplete-candidate");
@@ -1855,6 +1918,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_fails_closed_without_a_complete_candidate() {
         let adds = scratch("no-candidate");
@@ -1878,6 +1942,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn old_quarantines_never_block_candidate_and_current_owner_data_is_restored() {
         let adds = scratch("bounded-quarantine");
@@ -1943,6 +2008,7 @@ mod tests {
         assert!(!adds.join(JOURNAL).exists(), "journal was not cleared");
     }
 
+    #[cfg(unix)]
     #[test]
     fn stable_bootstrap_launches_and_startup_recovers_every_forward_boundary() {
         let trace_root = transaction_fixture("forward-trace");
@@ -1986,6 +2052,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn stable_bootstrap_launches_and_startup_recovers_every_rollback_boundary() {
         let trace_root = transaction_fixture("rollback-trace");

@@ -34,8 +34,7 @@ fn read(path: &Path, maximum: u64) -> Result<Option<String>, String> {
 }
 
 fn flush(directory: &Path) -> Result<(), String> {
-    fs::File::open(directory)
-        .and_then(|file| file.sync_all())
+    kobo_protocol::durability::sync_directory(directory)
         .map_err(|error| format!("Could not finish saving {}: {error}", directory.display()))
 }
 
