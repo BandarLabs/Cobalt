@@ -1177,7 +1177,9 @@ fn a_received_file_is_kept_under_a_safe_name_and_matched_to_the_app_that_opens_i
     assert_eq!(comic["app"]["replaces"], "comic");
     assert_eq!(comic["choices"], Value::Null);
 
-    // A PDF is a score or a pattern, so the page is given the choice.
+    // A PDF is a score, a pattern or a document to read, so the page is
+    // given the choice. Books takes it as a document since kobo send learned
+    // to send books.
     let pdf = page
         .post_bytes("/api/send/file?name=Sonata.pdf", b"%PDF-1.4")
         .json();
@@ -1188,7 +1190,7 @@ fn a_received_file_is_kept_under_a_safe_name_and_matched_to_the_app_that_opens_i
         .iter()
         .filter_map(|choice| choice["name"].as_str())
         .collect();
-    assert_eq!(names, ["musicstand", "needles"]);
+    assert_eq!(names, ["musicstand", "needles", "books"]);
     assert!(pdf["choices"][0]["purpose"].is_string());
     assert_eq!(pdf["choices"][0]["replaces"], Value::Null);
 
