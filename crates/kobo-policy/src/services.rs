@@ -437,6 +437,9 @@ impl DeviceServices {
             },
             DeviceRequest::ListLibrary => self.list_library(),
             DeviceRequest::ReadLibrary { id } => self.read_library(&id),
+            DeviceRequest::ReadLibraryRange { id, offset, length } => {
+                self.read_library_range(&id, offset, length)
+            }
             DeviceRequest::RemoveArticle { id } => self.remove_article(&id),
         }
     }
@@ -496,6 +499,32 @@ impl DeviceServices {
                 id: id.to_owned(),
                 bytes: Vec::new(),
             },
+        }
+    }
+
+    /// One range of a document, with the identifier resolved and checked
+    /// from the start, as [`Self::read_library`] does it, on every call: a
+    /// range is not a continuation of the one before it, and an application
+    /// that edits the identifier between two is refused at the second.
+    fn read_library_range(&self, id: &str, offset: u32, length: u32) -> DeviceResult {
+        use crate::library::RangeFault;
+        if let Some(reason) = self.refusal(Capability::Library) {
+            return DeviceResult::Denied(reason);
+        }
+        let range = match self.library_roots.as_deref() {
+            Some(roots) => crate::library::read_range_with_stock_in(roots, id, offset, length),
+            None => crate::library::read_range(id, offset, length),
+        };
+        match range {
+            Ok(range) => DeviceResult::LibraryRange {
+                id: id.to_owned(),
+                offset,
+                size: range.size,
+                stamp: range.stamp,
+                bytes: range.bytes,
+            },
+            Err(RangeFault::NotADocument) => DeviceResult::Failed(DeviceError::NotFound),
+            Err(RangeFault::Unreadable) => DeviceResult::Failed(DeviceError::Backend),
         }
     }
 
@@ -976,6 +1005,7 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::TypeText { .. } => return None,
         DeviceRequest::ListLibrary
         | DeviceRequest::ReadLibrary { .. }
+        | DeviceRequest::ReadLibraryRange { .. }
         | DeviceRequest::RemoveArticle { .. } => Capability::Library,
     })
 }
@@ -1043,6 +1073,143 @@ mod tests {
                 bytes: b"not really a book".to_vec(),
             }
         );
+        std::fs::remove_dir_all(folder).expect("clean up");
+    }
+
+    #[test]
+    fn a_library_document_is_handed_over_in_ranges_the_wire_can_carry() {
+        let folder =
+            std::env::temp_dir().join(format!("kobo-policy-ranges-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).expect("library folder");
+        let book: Vec<u8> = (0..300_000_u32).map(|at| at.to_le_bytes()[0]).collect();
+        std::fs::write(folder.join("Atlas.epub"), &book).expect("document");
+        let mut services = DeviceServices::simulated().with_library_roots(vec![folder.clone()]);
+        let mut held = Vec::new();
+        for offset in [0, 262_144] {
+            let answer = services.handle(DeviceRequest::ReadLibraryRange {
+                id: "0/Atlas.epub".to_owned(),
+                offset,
+                // More than a piece, which the wire would have refused: the
+                // answer still has to be one the wire carries.
+                length: u32::MAX,
+            });
+            let frame = kobo_protocol::Frame {
+                version: kobo_protocol::VERSION,
+                request_id: 1,
+                message: kobo_protocol::Message::DeviceResult(answer.clone()),
+            };
+            assert!(
+                kobo_protocol::encode(&frame).is_ok(),
+                "an answer the encoder refuses ends the session that asked"
+            );
+            let DeviceResult::LibraryRange {
+                id,
+                offset: from,
+                size,
+                bytes,
+                ..
+            } = answer
+            else {
+                panic!("a range was not answered with a range: {answer:?}");
+            };
+            assert_eq!((id.as_str(), from, size), ("0/Atlas.epub", offset, 300_000));
+            held.extend_from_slice(&bytes);
+        }
+        assert_eq!(held, book);
+        assert_eq!(
+            services.handle(DeviceRequest::ReadLibraryRange {
+                id: "0/Missing.epub".to_owned(),
+                offset: 0,
+                length: 1,
+            }),
+            DeviceResult::Failed(kobo_protocol::DeviceError::NotFound)
+        );
+        std::fs::remove_dir_all(folder).expect("clean up");
+    }
+
+    #[test]
+    fn a_range_is_refused_to_an_application_that_does_not_hold_the_library() {
+        let folder =
+            std::env::temp_dir().join(format!("kobo-policy-ranges-denied-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).expect("library folder");
+        std::fs::write(folder.join("Atlas.epub"), b"a book").expect("document");
+        let ask = || DeviceRequest::ReadLibraryRange {
+            id: "0/Atlas.epub".to_owned(),
+            offset: 0,
+            length: 6,
+        };
+        let mut undeclared = DeviceServices::new(
+            declared(&["network"]),
+            PowerPolicy::DEFAULT,
+            Backends::with(Capability::ALL),
+        )
+        .with_library_roots(vec![folder.clone()]);
+        assert_eq!(
+            undeclared.handle(ask()),
+            DeviceResult::Denied(DenyReason::NotDeclared)
+        );
+        let mut unbacked = DeviceServices::new(
+            declared(&["library"]),
+            PowerPolicy::DEFAULT,
+            Backends::none(),
+        )
+        .with_library_roots(vec![folder.clone()]);
+        assert_eq!(
+            unbacked.handle(ask()),
+            DeviceResult::Denied(DenyReason::Unsupported)
+        );
+        assert_eq!(
+            unbacked.refusal_for(&ask()),
+            Some(DenyReason::Unsupported),
+            "a host that checks before it answers was told a range needs nothing"
+        );
+        std::fs::remove_dir_all(folder).expect("clean up");
+    }
+
+    /// A folder of `count` small books, each a file of its own.
+    fn a_library_of(name: &str, count: usize) -> std::path::PathBuf {
+        let folder =
+            std::env::temp_dir().join(format!("kobo-policy-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("library folder");
+        for place in 0..count {
+            std::fs::write(folder.join(format!("Book {place:04}.txt")), b"words").expect("a book");
+        }
+        folder
+    }
+
+    fn listed(services: &mut DeviceServices) -> (usize, bool) {
+        let answer = services.handle(DeviceRequest::ListLibrary);
+        let frame = kobo_protocol::Frame {
+            version: kobo_protocol::VERSION,
+            request_id: 1,
+            message: kobo_protocol::Message::DeviceResult(answer.clone()),
+        };
+        assert!(
+            kobo_protocol::encode(&frame).is_ok(),
+            "a listing the encoder refuses ends the session that asked"
+        );
+        let DeviceResult::Library { entries, truncated } = answer else {
+            panic!("the library is listed");
+        };
+        (entries.len(), truncated)
+    }
+
+    #[test]
+    fn a_library_of_several_hundred_books_is_listed_whole() {
+        // More than the four hundred a listing used to stop at.
+        let folder = a_library_of("library-hundreds", 650);
+        let mut services = DeviceServices::simulated().with_library_roots(vec![folder.clone()]);
+        assert_eq!(listed(&mut services), (650, false));
+        std::fs::remove_dir_all(folder).expect("clean up");
+    }
+
+    #[test]
+    fn a_library_past_what_the_walk_lists_stops_there_and_says_so() {
+        let most = crate::library::MAX_ENTRIES;
+        let folder = a_library_of("library-thousands", most + 3);
+        let mut services = DeviceServices::simulated().with_library_roots(vec![folder.clone()]);
+        assert_eq!(listed(&mut services), (most, true));
         std::fs::remove_dir_all(folder).expect("clean up");
     }
 

@@ -221,31 +221,98 @@ impl Described {
     }
 }
 
-/// The record of described books, as bytes: one per line, tab-separated.
+/// Store key for what reading each book told the shelf, and the first of
+/// its parts.
+pub const DESCRIBED: &str = "described-v1";
+
+/// How many store values the record of described books may take.
+///
+/// It was one, which was room for the 400 books a listing used to stop at.
+/// A listing now runs to 2,000, and a record of that many is past the 256
+/// KiB a value holds: it was encoded, found too large, and silently not
+/// kept, so every cover was read out of its book again on every start.
+///
+/// A line is usually under 250 bytes and at most about 1,400, an identifier
+/// of 256, a listed name of 96, and a title and an author of
+/// [`MOST_NAME`] characters each. Twelve values hold 2,000 of the longest
+/// lines and several times that many ordinary ones, and leave the store its
+/// room for 200 covers. A record that still does not fit is not kept, which
+/// costs covers read again and never a shelf that fails.
+pub const DESCRIBED_PARTS: usize = 12;
+
+/// The longest title or author kept, in characters. A tile shows a fraction
+/// of this, and a publisher's paragraph in the title field is otherwise a
+/// kilobyte kept for every start.
+const MOST_NAME: usize = 120;
+
+/// The store key of part `index` of the record of described books.
 #[must_use]
-pub fn encode_described(books: &BTreeMap<String, Described>) -> Vec<u8> {
-    let clean = |text: &Option<String>| {
-        text.as_deref()
-            .unwrap_or_default()
-            .replace(['\t', '\n', '\r'], " ")
+pub fn described_key(index: usize) -> String {
+    if index == 0 {
+        DESCRIBED.to_owned()
+    } else {
+        format!("{DESCRIBED}.{index}")
+    }
+}
+
+/// Which part of the record of described books `key` is, if it is one.
+#[must_use]
+pub fn described_part(key: &str) -> Option<usize> {
+    if key == DESCRIBED {
+        return Some(0);
+    }
+    let index: usize = key
+        .strip_prefix(DESCRIBED)?
+        .strip_prefix('.')?
+        .parse()
+        .ok()?;
+    (1..DESCRIBED_PARTS).contains(&index).then_some(index)
+}
+
+/// The record of described books as store values of at most `most` bytes
+/// each: a line a book, tab-separated, never splitting a line. `None` when
+/// it needs more than [`DESCRIBED_PARTS`] of them.
+#[must_use]
+pub fn encode_described(books: &BTreeMap<String, Described>, most: usize) -> Option<Vec<Vec<u8>>> {
+    let clean = |text: Option<&str>| -> String {
+        text.unwrap_or_default()
+            .chars()
+            .take(MOST_NAME)
+            .map(|c| {
+                if matches!(c, '\t' | '\n' | '\r') {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect()
     };
-    let mut out = String::new();
+    let mut parts = vec![Vec::new()];
+    let mut line = String::new();
     for (id, book) in books {
         let cover = match &book.cover {
             Cover::Missing => "!",
             Cover::Unkept => "?",
             Cover::Kept(key) => key.as_str(),
         };
+        line.clear();
         let _ = writeln!(
-            out,
+            line,
             "{id}\t{}\t{}\t{}\t{}\t{cover}",
             book.bytes,
-            clean(&Some(book.listed.clone())),
-            clean(&book.title),
-            clean(&book.author)
+            clean(Some(&book.listed)),
+            clean(book.title.as_deref()),
+            clean(book.author.as_deref())
         );
+        let full = parts
+            .last()
+            .is_some_and(|part| part.len() + line.len() > most);
+        if full {
+            parts.push(Vec::new());
+        }
+        parts.last_mut()?.extend_from_slice(line.as_bytes());
     }
-    out.into_bytes()
+    (parts.len() <= DESCRIBED_PARTS).then_some(parts)
 }
 
 /// The record read back. A line that does not parse is dropped, which costs
@@ -360,7 +427,9 @@ mod tests {
                 cover: Cover::Missing,
             },
         );
-        let read = decode_described(&encode_described(&books));
+        let parts = encode_described(&books, 1 << 20).expect("fits");
+        assert_eq!(parts.len(), 1);
+        let read = decode_described(&parts[0]);
         assert_eq!(
             read["1/gutenbird/book-1a2b3c4d"].title.as_deref(),
             Some("The Time Machine"),
@@ -427,5 +496,68 @@ mod tests {
             first_dark < first_light,
             "the first cover is the one in front, at the left"
         );
+    }
+
+    #[test]
+    fn the_record_of_a_full_library_is_kept_in_parts_and_read_back_whole() {
+        use super::{described_key, described_part, DESCRIBED, DESCRIBED_PARTS};
+        let books: BTreeMap<String, Described> = (0..2_000)
+            .map(|n| {
+                (
+                    format!("0/{}/{n:04}.epub", "a".repeat(240)),
+                    Described {
+                        bytes: 4_000_000,
+                        listed: "l".repeat(96),
+                        title: Some("\u{00e9}".repeat(400)),
+                        author: Some("\u{672c}".repeat(400)),
+                        cover: Cover::Kept(key("0/book.epub", 1, "book")),
+                    },
+                )
+            })
+            .collect();
+        let parts = encode_described(&books, kobo_sdk::MAX_STORE_VALUE)
+            .expect("the longest lines of the largest listing fit");
+        assert!(
+            parts.len() > 1 && parts.len() <= DESCRIBED_PARTS,
+            "{}",
+            parts.len()
+        );
+        assert!(parts
+            .iter()
+            .all(|part| part.len() <= kobo_sdk::MAX_STORE_VALUE));
+        let back: BTreeMap<String, Described> = parts
+            .iter()
+            .flat_map(|part| decode_described(part))
+            .collect();
+        assert_eq!(back.len(), books.len());
+        let first = back.values().next().expect("a book");
+        assert_eq!(
+            first.title.as_ref().map(|title| title.chars().count()),
+            Some(120)
+        );
+        assert_eq!(
+            first.author.as_ref().map(|author| author.chars().count()),
+            Some(120)
+        );
+        assert!(first.is_of(4_000_000, &"l".repeat(96)));
+        assert_eq!(
+            encode_described(&books, 4096),
+            None,
+            "more parts than there are"
+        );
+
+        assert_eq!(described_key(0), DESCRIBED);
+        assert_eq!(described_part(&described_key(0)), Some(0));
+        assert_eq!(
+            described_part(&described_key(DESCRIBED_PARTS - 1)),
+            Some(DESCRIBED_PARTS - 1)
+        );
+        assert_eq!(
+            described_part(&format!("{DESCRIBED}.{DESCRIBED_PARTS}")),
+            None
+        );
+        assert_eq!(described_part(&format!("{DESCRIBED}.0")), None);
+        assert_eq!(described_part("described-v10"), None);
+        assert_eq!(described_part("cover-0123"), None);
     }
 }

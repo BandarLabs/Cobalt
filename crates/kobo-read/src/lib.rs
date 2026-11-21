@@ -34,6 +34,15 @@
 //! passage looks like in a printed book, it needs nothing new from the
 //! renderer, and because the paragraph is *paginated* at that depth as well,
 //! marking one never pushes the foot of the page off the bottom.
+//!
+//! # Why one word can still be held
+//!
+//! A hold needs no cursor. The panel reports which word was under the finger,
+//! whole, so a word can be named without either of its ends being placed by
+//! hand. That is enough to ask a dictionary about it, to highlight it and to
+//! write a note beside it, and it is as fine as marking goes here: a phrase
+//! has two ends, and placing them is the thing the paragraph list exists to
+//! avoid.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,6 +51,12 @@ use kobo_sdk::{BannerLevel, Screen, ScreenBuilder};
 use kobo_ui::TextScale;
 use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, Glyph, ProseArea};
 use unicode_segmentation::UnicodeSegmentation;
+
+mod copy;
+mod find;
+mod goto;
+mod place;
+mod word;
 
 /// Where something is in a book, independent of how the book is set.
 ///
@@ -171,6 +186,19 @@ pub enum Chrome {
     /// finger cannot place a cursor on a display that takes most of a second
     /// to repaint, so the paragraph is picked from a list instead.
     Marking,
+    /// The word a finger was held on: what a dictionary says of it, and the
+    /// ways to keep it.
+    Word,
+    /// The field a note beside a highlighted word is typed into.
+    Note,
+    /// The field the words to find are typed into.
+    Find,
+    /// Where those words are in the book, each place a way to it.
+    Found,
+    /// The stepper through the book, for going somewhere far from here.
+    GoTo,
+    /// The field a page number is typed into.
+    GoToPage,
 }
 
 /// One piece of one block, as it lands on a page.
@@ -535,6 +563,38 @@ pub mod action {
     pub const LIST_BACK: &str = "reader-list-back";
     /// Turns a list drawn over the book on a page.
     pub const LIST_NEXT: &str = "reader-list-next";
+    /// Highlights the word that was held.
+    pub const WORD_HIGHLIGHT: &str = "reader-word-highlight";
+    /// Takes the highlight off the word that was held.
+    pub const WORD_CLEAR: &str = "reader-word-clear";
+    /// Opens the field a note on the held word is typed into.
+    pub const WORD_NOTE: &str = "reader-word-note";
+    /// Turns back to the definition before the one showing.
+    pub const WORD_BACK: &str = "reader-word-back";
+    /// Turns on to the definition after the one showing.
+    pub const WORD_NEXT: &str = "reader-word-next";
+    /// Opens the search of this book: the places last found if there are
+    /// any, the field to type in if not.
+    pub const FIND: &str = "reader-find";
+    /// Opens the field again to look for something else.
+    pub const FIND_AGAIN: &str = "reader-find-again";
+    /// One per place found, suffixed with its position in the results.
+    pub const FOUND: &str = "reader-found-";
+    /// Goes back to the page a link, a search or a jump was made from.
+    pub const RETURN: &str = "reader-return";
+    /// Opens the screen for going to another part of the book.
+    pub const GO_TO: &str = "reader-go-to";
+    /// Moves the place to go to a tenth of the book back.
+    pub const GO_TO_LESS: &str = "reader-go-to-less";
+    /// Moves the place to go to a tenth of the book on.
+    pub const GO_TO_MORE: &str = "reader-go-to-more";
+    /// Goes to the page the stepper names.
+    pub const GO_TO_GO: &str = "reader-go-to-go";
+    /// Opens the field a page number is typed into.
+    pub const GO_TO_TYPE: &str = "reader-go-to-type";
+    /// Asks for a copy of everything kept in this book, to be received on a
+    /// computer. The reader only offers it; whatever owns the store makes it.
+    pub const SAVE_COPY: &str = "reader-save-copy";
 }
 
 /// One bounded in-book search match.
@@ -544,6 +604,9 @@ pub struct SearchHit {
     /// Byte offset of the match in the block's canonical text, on a character
     /// boundary. Lets a result be navigated to and marked exactly.
     pub offset: u32,
+    /// How many bytes of the block the match covers, which is not the length
+    /// of what was typed: folding case can change how long a letter is.
+    pub length: u32,
     pub excerpt: String,
 }
 
@@ -606,7 +669,38 @@ pub struct Reader {
     /// Publisher face installed by the application for this reading session.
     publisher_font: Option<kobo_ui::FontHandle>,
     /// Origins of internal links/search jumps, newest last and session-only.
-    navigation: Vec<Locator>,
+    ///
+    /// Each is the block that was at the top of the page and how far into it
+    /// the page began, the same two numbers a place is kept as. The block
+    /// alone names the page its paragraph started on, so Back from a footnote
+    /// used to land a page before the one that was left whenever that page
+    /// opened part-way through a paragraph.
+    navigation: Vec<(Locator, u32)>,
+    /// The search of this book: what was asked for and where it was found.
+    find: find::Find,
+    /// The words a search has just taken the reader to, as a block and the
+    /// bytes of it they cover, marked on the page until it is turned.
+    found: Option<(Locator, u32, u32)>,
+    /// The room kept at the foot of every page for the line that says where
+    /// the reader is, and nothing when the page has the whole panel.
+    foot: i32,
+    /// How wide that line may be.
+    foot_width: i32,
+    /// The pages a chapter starts on, in order, for counting to the next.
+    chapter_starts: Vec<usize>,
+    /// Where the reader is thinking of going, while that screen is up.
+    go_to: goto::GoTo,
+    /// Whether the notes offer a copy of themselves.
+    ///
+    /// Off until whatever holds this reader says it can make one. Making a
+    /// copy means writing to the application's store and waiting on its
+    /// answers, which the reader cannot do, and a control that started
+    /// something nothing would ever finish is worse than no control.
+    offers_copy: bool,
+    /// The word a finger is being held to account for, while its screen is up.
+    word: Option<word::Held>,
+    /// The field a note on that word is typed into.
+    note: kobo_sdk::keyboard::TextEntry,
 }
 
 impl Reader {
@@ -621,6 +715,15 @@ impl Reader {
             pictures: BTreeMap::new(),
             publisher_font: None,
             navigation: Vec::new(),
+            find: find::Find::default(),
+            found: None,
+            foot: 0,
+            foot_width: 0,
+            chapter_starts: Vec::new(),
+            go_to: goto::GoTo::default(),
+            offers_copy: false,
+            word: None,
+            note: kobo_sdk::keyboard::TextEntry::new(),
             document,
             memory,
             pages: Vec::new(),
@@ -654,12 +757,16 @@ impl Reader {
         // the layout engine drops them without saying anything.
         let mut metrics = *panel;
         metrics.text_scale = self.memory.scale;
-        // Nothing is reserved at the foot. A reading page has no bar, no page
-        // number and no arrows under it: the sides of the page turn it, as on
-        // the stock reader, and the place in the book is in the controls.
-        // Measured without the bar when the bar is out of sight: when it is
-        // called back it is drawn over the page rather than above it.
+        // A reading page has no bar and no arrows under it: the sides of the
+        // page turn it, as on the stock reader. Measured without the bar when
+        // the bar is out of sight: when it is called back it is drawn over
+        // the page rather than above it. A page that keeps its bar keeps a
+        // line at its foot for the place as well, and the room for that line
+        // comes off the page here, before a word of the book is set.
         let mut area = metrics.prose_area_in(!self.memory.full_page, false, Face::Reading);
+        self.foot = self.foot_room(panel, area);
+        self.foot_width = area.width;
+        area.height = area.height.saturating_sub(self.foot).max(1);
         if let Some(problem) = &self.problem {
             let notice = kobo_ui::with_text_scale(panel.text_scale, || {
                 kobo_ui::banner_height(problem, area.width, panel)
@@ -685,6 +792,7 @@ impl Reader {
         });
         decorate_annotation_ranges(&self.document, &self.memory.annotations, &mut pages);
         self.pages = pages;
+        self.chapter_starts = self.chapter_pages();
         self.cut = capped || self.document.truncated;
         self.page = self.page_holding_place(self.memory.at, self.memory.within);
     }
@@ -928,6 +1036,7 @@ impl Reader {
             return false;
         }
         self.page += 1;
+        self.found = None;
         self.remember_position();
         true
     }
@@ -938,6 +1047,7 @@ impl Reader {
             return false;
         }
         self.page -= 1;
+        self.found = None;
         self.remember_position();
         true
     }
@@ -950,26 +1060,66 @@ impl Reader {
     pub fn go_to(&mut self, block: Locator, panel: &DisplayMetrics) {
         self.memory.at = block;
         self.memory.within = 0;
-        self.chrome = Chrome::Hidden;
+        self.found = None;
+        self.set_chrome(Chrome::Hidden, panel);
         self.repaginate(panel);
     }
 
     /// Goes to a linked/search result while preserving an exact logical way
     /// back. Page numbers are deliberately never stored here.
     pub fn follow(&mut self, block: Locator, panel: &DisplayMetrics) {
+        self.leave_a_way_back();
+        self.go_to(block, panel);
+    }
+
+    /// Remembers the page being left, so Back can return to it.
+    fn leave_a_way_back(&mut self) {
         if self.navigation.len() >= MAX_NAVIGATION_HISTORY {
             self.navigation.remove(0);
         }
-        self.navigation.push(self.top());
-        self.go_to(block, panel);
+        let first = self.pages.get(self.page).and_then(|page| page.first());
+        self.navigation.push((
+            first.map_or(0, |piece| piece.block),
+            first.and_then(|piece| piece.source_offset).unwrap_or(0),
+        ));
+    }
+
+    /// Turns to the page holding a place, leaving a way back to this one.
+    ///
+    /// Nothing is measured again: the pages are already cut, and the place
+    /// asked for is on one of them. Only the page shown changes, which is
+    /// what makes a jump across a whole novel cost the same as a page turn.
+    fn jump_to(&mut self, block: Locator, within: u32, panel: &DisplayMetrics) {
+        self.leave_a_way_back();
+        self.turn_to(block, within, panel);
+    }
+
+    /// Turns to the page holding a place and puts away whatever was open.
+    fn turn_to(&mut self, block: Locator, within: u32, panel: &DisplayMetrics) {
+        self.page = self.page_holding_place(block, within);
+        // The place itself is what is remembered, not the top of the page it
+        // happens to be on. A passage found near the foot of a page was kept
+        // as that page's first line, so a larger type size, or the book
+        // opened again, put the reader a page short of what they had gone
+        // to. The next page turn remembers the top of the page as ever.
+        self.memory.at = block;
+        self.memory.within = within;
+        self.set_chrome(Chrome::Hidden, panel);
+    }
+
+    /// The page Back would return to, counted from one, if there is one.
+    fn way_back(&self) -> Option<usize> {
+        let (block, within) = *self.navigation.last()?;
+        Some(self.page_holding_place(block, within) + 1)
     }
 
     /// Returns from the most recent internal jump.
     pub fn return_from_link(&mut self, panel: &DisplayMetrics) -> bool {
-        let Some(origin) = self.navigation.pop() else {
+        let Some((block, within)) = self.navigation.pop() else {
             return false;
         };
-        self.go_to(origin, panel);
+        self.found = None;
+        self.turn_to(block, within, panel);
         true
     }
 
@@ -986,31 +1136,34 @@ impl Reader {
         }
         let limit = limit.min(MAX_SEARCH_RESULTS);
         let mut hits = Vec::new();
-        for (index, block) in self.document.blocks.iter().enumerate() {
-            // A table row has no single string of its own -- that is the
-            // point of it -- but a reader searching for a word does not care
-            // which cell it sat in, so the row is joined for the search and
-            // for the excerpt that names it.
-            let joined = block.row_text();
-            let Some(text) = joined.as_deref().or_else(|| block.text()) else {
-                continue;
-            };
-            let Some((from, to)) = find_folded(text, &query) else {
-                continue;
-            };
-            let Ok(at) = Locator::try_from(index) else {
-                break;
-            };
-            hits.push(SearchHit {
-                at,
-                offset: u32::try_from(from).unwrap_or(u32::MAX),
-                excerpt: search_excerpt(text, from, to),
-            });
-            if hits.len() >= limit {
-                break;
+        for index in 0..self.document.blocks.len() {
+            if let Some(hit) = self.hit_in(index, &query) {
+                hits.push(hit);
+                if hits.len() >= limit {
+                    break;
+                }
             }
         }
         hits
+    }
+
+    /// The first place the already-lowercased `query` is written in one
+    /// block, if it is there.
+    fn hit_in(&self, index: usize, query: &str) -> Option<SearchHit> {
+        let block = self.document.blocks.get(index)?;
+        // A table row has no single string of its own -- that is the point
+        // of it -- but a reader searching for a word does not care which
+        // cell it sat in, so the row is joined for the search and for the
+        // excerpt that names it.
+        let joined = block.row_text();
+        let text = joined.as_deref().or_else(|| block.text())?;
+        let (from, to) = find_folded(text, query)?;
+        Some(SearchHit {
+            at: Locator::try_from(index).ok()?,
+            offset: u32::try_from(from).ok()?,
+            length: u32::try_from(to - from).ok()?,
+            excerpt: search_excerpt(text, from, to),
+        })
     }
 
     #[must_use]
@@ -1281,6 +1434,24 @@ impl Reader {
         // and opening the controls reflowed the book under the reader's
         // finger.
         self.chrome = chrome;
+        if chrome == Chrome::Hidden {
+            // Going back to the page lets go of the held word and of any
+            // field half typed into, whichever way the reader left: a field
+            // still open behind the page would take the next answer the
+            // runtime gave for a field of its own.
+            self.word = None;
+            if self.note.is_open() {
+                self.note.close();
+            }
+            self.find.put_away();
+            self.go_to.put_away();
+        }
+        self.open_list(panel);
+    }
+
+    /// Opens the list for the chrome in force at the page of it the reader
+    /// is on, measuring it once.
+    fn open_list(&mut self, panel: &DisplayMetrics) {
         self.list_page = 0;
         let Some(list) = self.list() else {
             self.list_paging = None;
@@ -1328,6 +1499,14 @@ impl Reader {
         &self.memory
     }
 
+    /// Says whether the notes may offer a copy of themselves.
+    ///
+    /// Called by whatever can make one, which answers
+    /// [`action::SAVE_COPY`] itself: the reader only draws the control.
+    pub const fn offer_copy(&mut self, offered: bool) {
+        self.offers_copy = offered;
+    }
+
     /// Puts a kept memory back into an open book.
     ///
     /// For the case where the book and the place it was left arrive
@@ -1360,6 +1539,9 @@ impl Reader {
                 self.page = self.pages.len().saturating_sub(1);
             }
         }
+        if let Some(outcome) = self.act_beyond_the_page(name, panel) {
+            return outcome;
+        }
         match name {
             action::FORWARD => {
                 if self.forward() {
@@ -1369,6 +1551,13 @@ impl Reader {
                     // papers and feed items, and reaching the end of any of
                     // them is not a problem.
                     self.tell(BannerLevel::Info, "This is the end.");
+                    // The notice takes room from the page, and a page with
+                    // less room can spill its last lines onto a new one. The
+                    // end is the last page as it stands now, so that is the
+                    // one shown. The notice used to sit on the page before
+                    // it, under a sentence cut short, and the next turn took
+                    // it away again.
+                    self.page = self.pages.len().saturating_sub(1);
                     Outcome::Repaint
                 }
             }
@@ -1459,6 +1648,37 @@ impl Reader {
         }
     }
 
+    /// Applies an action that belongs to one of the screens drawn in place
+    /// of the page: a held word, a search and the places it found.
+    ///
+    /// Apart from [`Self::act`] because each of those screens keeps its own
+    /// state and answers its own names, and the one list of every name the
+    /// reader knows had grown past what could be read in a sitting.
+    fn act_beyond_the_page(&mut self, name: &str, panel: &DisplayMetrics) -> Option<Outcome> {
+        Some(match name {
+            action::WORD_HIGHLIGHT
+            | action::WORD_CLEAR
+            | action::WORD_NOTE
+            | action::WORD_BACK
+            | action::WORD_NEXT => self.word_action(name, panel),
+            action::FIND | action::FIND_AGAIN => self.find_action(name, panel),
+            action::GO_TO
+            | action::GO_TO_LESS
+            | action::GO_TO_MORE
+            | action::GO_TO_GO
+            | action::GO_TO_TYPE => self.go_to_action(name, panel),
+            action::RETURN => {
+                if self.return_from_link(panel) {
+                    Outcome::Save
+                } else {
+                    Outcome::Repaint
+                }
+            }
+            _ if name.starts_with(action::FOUND) => self.go_to_found(name, panel),
+            _ => return None,
+        })
+    }
+
     /// Turns the list in front of the book a page, stopping at either end.
     fn turn_list(&mut self, forward: bool, panel: &DisplayMetrics) -> Outcome {
         let Some(list) = self.list() else {
@@ -1504,11 +1724,23 @@ impl Reader {
     /// would have to keep its own copy of that list in step, and the failure
     /// when it drifted would be a control that silently did nothing.
     pub fn act_on(&mut self, action: kobo_ui::ActionId, panel: &DisplayMetrics) -> Outcome {
+        // An open field is the runtime's while it is up, and what comes back
+        // from it is an answer rather than a tap on anything drawn here.
+        if let Some(outcome) = self.note_typed(action, panel) {
+            return outcome;
+        }
+        if let Some(outcome) = self.find_typed(action, panel) {
+            return outcome;
+        }
+        if let Some(outcome) = self.go_to_typed(action, panel) {
+            return outcome;
+        }
         // A tap off an open panel arrives as Back from the scrim, and puts
         // the panel away. Passed on, it closed the book under the reader.
-        if action == kobo_ui::ActionId::BACK
-            && matches!(self.chrome, Chrome::Controls | Chrome::Light)
-        {
+        // Back from anything else drawn over the page does the same: a
+        // definition, a list or a field is somewhere the reader went from the
+        // page, and the page is where Back from it leads.
+        if action == kobo_ui::ActionId::BACK && self.chrome != Chrome::Hidden {
             self.set_chrome(Chrome::Hidden, panel);
             return Outcome::Repaint;
         }
@@ -1535,7 +1767,25 @@ impl Reader {
             action::LINKS.into(),
             action::LIST_BACK.into(),
             action::LIST_NEXT.into(),
+            action::WORD_HIGHLIGHT.into(),
+            action::WORD_CLEAR.into(),
+            action::WORD_NOTE.into(),
+            action::WORD_BACK.into(),
+            action::WORD_NEXT.into(),
+            action::FIND.into(),
+            action::FIND_AGAIN.into(),
+            action::RETURN.into(),
+            action::GO_TO.into(),
+            action::GO_TO_LESS.into(),
+            action::GO_TO_MORE.into(),
+            action::GO_TO_GO.into(),
+            action::GO_TO_TYPE.into(),
         ];
+        if self.chrome == Chrome::Found {
+            for index in 0..self.find.count() {
+                names.push(format!("{}{index}", action::FOUND));
+            }
+        }
         // Every size there is, rather than a hard-coded three. The stepper's
         // ends name the size either side of the one in force, so a range that
         // grew without this list growing with it left the two controls tapping
@@ -1587,6 +1837,15 @@ impl Reader {
     /// Draws whatever the reader should be looking at.
     #[must_use]
     pub fn screen(&self, title: &str) -> Screen {
+        match self.chrome {
+            Chrome::Word => return self.word_screen(title),
+            Chrome::Note => return self.note_screen(title),
+            Chrome::Find => return self.find_screen(title),
+            Chrome::GoTo => return self.go_to_screen(title),
+            Chrome::GoToPage => return self.go_to_page_screen(title),
+            Chrome::Found if self.is_searching() => return self.searching_screen(title),
+            _ => {}
+        }
         match self.list() {
             Some(list) => list.screen(title, self.list_page, &self.paging_of(&list, &self.panel)),
             None => self.book_screen(title),
@@ -1600,18 +1859,28 @@ impl Reader {
             Chrome::Contents => Some(self.contents_list()),
             Chrome::Links => Some(self.links_list()),
             Chrome::Marking => Some(self.marking_list()),
-            Chrome::Controls | Chrome::Light | Chrome::Hidden => None,
+            Chrome::Found if !self.is_searching() => Some(self.found_list()),
+            Chrome::Controls
+            | Chrome::Light
+            | Chrome::Hidden
+            | Chrome::Word
+            | Chrome::Note
+            | Chrome::Find
+            | Chrome::Found
+            | Chrome::GoTo
+            | Chrome::GoToPage => None,
         }
     }
 
-    /// Which page of how many, said in the controls rather than under the
-    /// page.
+    /// Which page of how many, for the controls and for the foot of a page
+    /// that keeps one.
     ///
     /// It used to sit at the foot with an arrow either side, a strip of the
-    /// panel taken from every page to repeat what the sides of the page
-    /// already do. The stock reader keeps the page to the words and gives the
-    /// place when its menu is opened, and so does this. One page has no place
-    /// worth stating, so it says nothing rather than "1 of 1".
+    /// panel a finger tall taken from every page to repeat what the sides of
+    /// the page already do. The arrows are gone for good. What a page that
+    /// keeps its bar carries now is one quiet line and no control, which the
+    /// `place` module sets. One page has no place worth stating, so it says
+    /// nothing rather than "1 of 1".
     fn place_in_book(&self) -> Option<(u16, u16)> {
         let pages = self.page_count();
         if pages <= 1 {
@@ -1627,9 +1896,9 @@ impl Reader {
             .reading(true)
             .owns_back(!self.navigation.is_empty())
             .text_scale(self.memory.scale)
-            // The book's name, ellipsised if it must be. The place it used to
-            // hold moved to the foot, where a Kobo reader looks for it, which
-            // freed the bar for the one thing a top bar is for.
+            // The book's name, ellipsised if it must be. The place is said at
+            // the foot, where a Kobo reader looks for it, which leaves the bar
+            // for the one thing a top bar is for.
             .top_bar(title.to_owned())
             // A visible way in, as well as the middle column. A gesture nobody
             // is told about is a feature nobody has: every setting behind this
@@ -1710,7 +1979,9 @@ impl Reader {
             };
         }
         if let Some(problem) = &self.problem {
-            screen = screen.banner(self.problem_level, problem.clone());
+            // Room was taken off the page for this notice when it was raised,
+            // so the place keeps its own under it.
+            screen = self.with_place(screen.banner(self.problem_level, problem.clone()));
         } else if self.pending && self.near_downloaded_end() {
             // The next chunk was asked for and has not landed yet. Said here,
             // at the foot, so a page turn that runs out of downloaded book
@@ -1729,6 +2000,12 @@ impl Reader {
                 BannerLevel::Attention,
                 "This copy stops here rather than ending. Some of the book is missing.",
             );
+        } else {
+            // Not under either of the two notices above. Nothing was kept
+            // back for those, so on a page that keeps a line for the place
+            // they are drawn in that line's room, and the place gives way to
+            // the one thing on the page that matters more than it does.
+            screen = self.with_place(screen);
         }
         // The gesture is what gets used; the bar is how anyone learns the
         // gesture is there. Tapping the side of the panel turns the page on
@@ -1739,18 +2016,20 @@ impl Reader {
             .page_turns(action::BACK, action::FORWARD)
             .reading_menu(action::CONTROLS);
         // Holding a finger on the page asks to mark something on it, which is
-        // what a hold does in every reader anyone has used. It opens the list
-        // of this page's paragraphs rather than dropping a caret into the
-        // text: a selection dragged out by hand on E Ink means chasing a
-        // handle that redraws a third of a second behind the finger, and a
-        // paragraph is the unit this reader marks in anyway.
+        // what a hold does in every reader anyone has used. Held on a word of
+        // the prose, it is that word that is looked up and can be kept; held
+        // anywhere else, it opens the list of this page's paragraphs rather
+        // than dropping a caret into the text: a selection dragged out by
+        // hand on E Ink means chasing a handle that redraws a third of a
+        // second behind the finger, and a paragraph is the unit a passage is
+        // marked in anyway.
         if !self.markable().is_empty() {
             screen = screen.hold(action::MARKING);
         }
         if self.chrome == Chrome::Hidden {
-            // No panel and no bar over the page: a book, the reader's own
-            // hands, and the muted place at the foot. This is the point of the
-            // reading screen.
+            // No panel over the page: a book, the reader's own hands, and the
+            // muted place at the foot when the bar is kept. This is the point
+            // of the reading screen.
             return screen
                 .build()
                 .with_auto_hidden_top_bar(self.memory.full_page);
@@ -1811,8 +2090,34 @@ impl Reader {
         let scale = self.memory.scale;
         let smaller = scale.smaller().unwrap_or(scale);
         let larger = scale.larger().unwrap_or(scale);
+        // The place is said on a line that is also the way to change it: a
+        // reader who opens this panel to see how far in they are is the one
+        // who then wants to be somewhere else, and the two belong together.
+        // In words, because there is no picture for going to a page that
+        // anybody would know without being told.
         let panel = match self.place_in_book() {
-            Some((page, total)) => panel.secondary(format!("Page {page} of {total}")),
+            Some((page, total)) => {
+                type Slot = Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>;
+                let place: Slot =
+                    Box::new(move |slot| slot.secondary(format!("Page {page} of {total}")));
+                let go: Slot = Box::new(|slot| slot.button(action::GO_TO, "Go to"));
+                panel.band(
+                    kobo_ui::BandAlign::Middle,
+                    [
+                        (kobo_ui::SlotWidth::Fill, place),
+                        (kobo_ui::SlotWidth::Natural, go),
+                    ],
+                )
+            }
+            None => panel,
+        };
+        // After a jump, the way back is said here in words as well as being
+        // what Back does. A reader who followed a search across the book and
+        // read on for a page has no bar in front of them to say Back still
+        // leads to where they were, and this panel is where they look to find
+        // out where they are.
+        let panel = match self.way_back() {
+            Some(page) => panel.button(action::RETURN, format!("Back to page {page}")),
             None => panel,
         };
         let mut panel = panel
@@ -1860,6 +2165,10 @@ impl Reader {
             row.push((action::LINKS.to_owned(), "Links", Glyph::Globe));
         }
         row.push((action::HIGHLIGHTS.to_owned(), "Notes", Glyph::Note));
+        // A lens, which is what every search anywhere is drawn as. The words
+        // to look for are typed, so this is the one control here that leads
+        // to a keyboard, and it says nothing until it has been asked.
+        row.push((action::FIND.to_owned(), "Find", Glyph::Search));
         // Named rather than gestured. The bar is what teaches the tap that
         // opens this panel, so the reader who gives it up should be one who
         // has already found their way here and can read what they are turning
@@ -1876,8 +2185,12 @@ impl Reader {
             Glyph::Reader,
         ));
         // Four across at most: a fifth control on this panel would be narrower
-        // than a fingertip, and the row wraps rather than shrinking.
-        let columns = u8::try_from(row.len().min(4)).unwrap_or(4);
+        // than a fingertip, and the row wraps rather than shrinking. When it
+        // wraps, the rows are made as even as they can be: five controls set
+        // four and one leave the last of them alone under the others, where
+        // it reads as an afterthought.
+        let lines = row.len().div_ceil(4).max(1);
+        let columns = u8::try_from(row.len().div_ceil(lines)).unwrap_or(4);
         // The ribbon is drawn filled on a bookmarked page. Its label changes
         // too, but the cell shows the picture alone.
         panel
@@ -1904,9 +2217,10 @@ impl Reader {
             name: "reader-links",
             intro: entries
                 .is_empty()
-                .then_some("Nothing on this page points anywhere else in the book."),
+                .then_some("Nothing on this page points anywhere else in the book.".into()),
             entries,
             bar: Vec::new(),
+            top: None,
             current: 0,
         }
     }
@@ -2001,6 +2315,7 @@ impl Reader {
                 })
                 .collect(),
             bar: Vec::new(),
+            top: None,
             // The chapter being read is the last one to start at or before
             // the top of the page.
             current: self
@@ -2022,11 +2337,14 @@ impl Reader {
                 || "Unavailable passage".to_owned(),
                 |text| first_words(&text),
             );
+            // The note follows its words after a colon, the way a line in a
+            // commonplace book reads, so the two are told apart without a
+            // second row for every highlight.
             let label = annotation.note.as_ref().map_or(selected.clone(), |note| {
-                format!("{selected} — {}", first_words(note))
+                format!("{selected}: {}", first_words(note))
             });
             entries.push(Entry::new(
-                Some("Highlights & marginalia"),
+                Some("Highlights and notes"),
                 format!("{}{}", action::GO, annotation.range.start.block),
                 &label,
             ));
@@ -2076,10 +2394,15 @@ impl Reader {
         List {
             name: "reader-marks",
             intro: entries.is_empty().then_some(
-                "Nothing is marked in this book yet. Mark a paragraph to keep the words, or bookmark a page to keep your place.",
+                "Nothing is marked in this book yet. Mark a paragraph to keep the words, or bookmark a page to keep your place.".into(),
             ),
             entries,
             bar,
+            // Offered where the reader is looking at what would be copied,
+            // and only when there is something to copy and somebody able to
+            // make the copy.
+            top: (self.offers_copy && self.has_notes())
+                .then_some((action::SAVE_COPY, "Save a copy")),
             current: 0,
         }
     }
@@ -2108,12 +2431,13 @@ impl Reader {
             .collect();
         List {
             name: "reader-marking",
-            intro: Some("Tap a paragraph to mark it, or to take the mark off."),
+            intro: Some("Tap a paragraph to mark it, or to take the mark off.".into()),
             entries,
             bar: vec![
                 (action::BOOK, "Back to the book"),
                 (action::HIGHLIGHTS, "Notes"),
             ],
+            top: None,
             current: 0,
         }
     }
@@ -2129,9 +2453,12 @@ impl Reader {
 struct List {
     name: &'static str,
     /// Said above the entries, on every page of them.
-    intro: Option<&'static str>,
+    intro: Option<std::borrow::Cow<'static, str>>,
     entries: Vec<Entry>,
     bar: Vec<(&'static str, &'static str)>,
+    /// One more thing to do with the whole list, set in the bar above it
+    /// because the band below holds three and those are taken.
+    top: Option<(&'static str, &'static str)>,
     /// The entry the list opens showing.
     current: usize,
 }
@@ -2144,6 +2471,13 @@ struct Entry {
     section: Option<&'static str>,
     action: String,
     label: String,
+    /// What is said under the label, and the number the entry is known by.
+    ///
+    /// An entry with these is drawn as a row rather than a boxed button: a
+    /// row sets its words from the left margin and has a second line for
+    /// where they came from, which is what a passage quoted out of the book
+    /// needs and a chapter title does not.
+    row: Option<(String, u16)>,
 }
 
 impl Entry {
@@ -2154,6 +2488,15 @@ impl Entry {
             section,
             action,
             label: kobo_ui::drawable_in(label, Face::Text).into_owned(),
+            row: None,
+        }
+    }
+
+    /// An entry drawn as a numbered row with `under` set beneath its label.
+    fn row(action: String, label: &str, under: &str, number: u16) -> Self {
+        Self {
+            row: Some((kobo_ui::drawable_in(under, Face::Text).into_owned(), number)),
+            ..Self::new(None, action, label)
         }
     }
 }
@@ -2200,10 +2543,12 @@ impl List {
         self.name.hash(&mut hasher);
         self.intro.hash(&mut hasher);
         self.bar.hash(&mut hasher);
+        self.top.hash(&mut hasher);
         for entry in &self.entries {
             entry.section.hash(&mut hasher);
             entry.action.hash(&mut hasher);
             entry.label.hash(&mut hasher);
+            entry.row.hash(&mut hasher);
         }
         panel.hash(&mut hasher);
         hasher.finish()
@@ -2219,18 +2564,34 @@ impl List {
         // The book's title is the book's words too.
         let mut screen =
             ScreenBuilder::new(self.name).top_bar(kobo_ui::drawable_in(title, Face::Text));
-        if let Some(intro) = self.intro {
-            screen = screen.secondary(intro);
+        if let Some((name, label)) = self.top {
+            screen = screen.top_bar_action(name, label);
+        }
+        if let Some(intro) = &self.intro {
+            screen = screen.secondary(intro.as_ref());
         }
         let mut section = None;
+        // Rows that follow one another are one list on the screen, ruled
+        // between, so they are gathered and handed over together.
+        let mut rows: Vec<(&str, &str, &str, u16)> = Vec::new();
         for index in shown {
             let entry = &self.entries[index];
+            let label = shortened.get(&index).unwrap_or(&entry.label);
+            if let Some((under, number)) = &entry.row {
+                rows.push((&entry.action, label, under, *number));
+                continue;
+            }
+            if !rows.is_empty() {
+                screen = screen.rows(std::mem::take(&mut rows));
+            }
             if let Some(heading) = entry.section.filter(|_| entry.section != section) {
                 screen = screen.heading(heading);
             }
             section = entry.section;
-            let label = shortened.get(&index).unwrap_or(&entry.label);
             screen = screen.button(&entry.action, label.as_str());
+        }
+        if !rows.is_empty() {
+            screen = screen.rows(rows);
         }
         if let Some((page, of)) = position {
             screen = screen
@@ -2345,21 +2706,33 @@ impl List {
         panel: &DisplayMetrics,
         shortened: &BTreeMap<usize, String>,
     ) -> bool {
-        let screen = self.build("", shown, position, shortened);
-        kobo_ui::with_text_scale(panel.text_scale, || {
-            screen.diagnostics(panel, &kobo_ui::Chrome::measuring(true))
-        })
-        .issues
-        .iter()
-        .all(|issue| {
-            !matches!(
-                issue.kind,
-                kobo_ui::LayoutIssueKind::ContentOverflow { .. }
-                    | kobo_ui::LayoutIssueKind::InteractiveOffscreen
-                    | kobo_ui::LayoutIssueKind::Clipped
-            )
-        })
+        shows_whole(&self.build("", shown, position, shortened), panel)
     }
+}
+
+/// Whether `screen` is drawn on `panel` with nothing cut, clipped or pushed
+/// where a finger cannot reach it.
+///
+/// Asked of the layout itself rather than worked out from heights, because
+/// the layout is what drops a line that does not fit and it does so without
+/// a word. A paragraph that lost its last lines counts: the node is still on
+/// the panel, so nothing else reports it, and a definition that stops in the
+/// middle of a clause was drawn that way before this asked.
+fn shows_whole(screen: &Screen, panel: &DisplayMetrics) -> bool {
+    kobo_ui::with_text_scale(panel.text_scale, || {
+        screen.diagnostics(panel, &kobo_ui::Chrome::measuring(true))
+    })
+    .issues
+    .iter()
+    .all(|issue| {
+        !matches!(
+            issue.kind,
+            kobo_ui::LayoutIssueKind::ContentOverflow { .. }
+                | kobo_ui::LayoutIssueKind::InteractiveOffscreen
+                | kobo_ui::LayoutIssueKind::Clipped
+                | kobo_ui::LayoutIssueKind::TextOverflow
+        )
+    })
 }
 
 /// The panel a list action opens, and none for Back to the book.
@@ -2649,7 +3022,7 @@ impl Reader {
             screen
                 .selectable_rich_text_linking(
                     piece.text.clone(),
-                    piece.spans.clone(),
+                    self.spans_showing_found(piece, offset),
                     piece.presentation,
                     u64::from(piece.block),
                     offset,
@@ -3155,7 +3528,7 @@ fn highlighted_spans(
             .iter()
             .find(|span| span.start <= start && start < span.end)
             .map_or_else(kobo_ui::TextPresentation::default, |span| span.presentation);
-        presentation.highlighted = highlights
+        presentation.highlighted |= highlights
             .iter()
             .any(|&(from, to)| from < end && start < to);
         if presentation == kobo_ui::TextPresentation::default() {
@@ -6871,6 +7244,85 @@ mod tests {
         // same guess pagination made: a page that agrees with its own wrong
         // arithmetic still pours words off the panel.
         no_cell_falls_off_a_page(&reader);
+    }
+
+    #[test]
+    fn a_place_jumped_to_is_still_on_the_page_when_the_type_grows() {
+        let panel = kobo_ui::CLARA_BW_METRICS;
+        let sentence = "Saturn disappears from view when the Moon moves in front. ".repeat(3);
+        let mut html = String::new();
+        for number in 0..80 {
+            html.push_str("<p>Paragraph ");
+            html.push_str(&number.to_string());
+            html.push_str(". ");
+            html.push_str(&sentence);
+            html.push_str("</p>");
+        }
+        let mut reader = Reader::open(kobo_doc::html::parse(&html), Memory::default(), &panel);
+        // A paragraph that is not the first on its page, and well into the
+        // book: the top of its page is some other paragraph.
+        let target = (20..80)
+            .find(|block| {
+                let page = reader.page_holding_place(*block, 0);
+                reader.pages[page].first().map(|piece| piece.block) != Some(*block)
+            })
+            .expect("a paragraph below the top of its page");
+        reader.jump_to(target, 0, &panel);
+        assert_eq!((reader.memory().at, reader.memory().within), (target, 0));
+        let holds = |reader: &Reader| {
+            reader.pages[reader.page]
+                .iter()
+                .any(|piece| piece.block == target)
+        };
+        assert!(holds(&reader));
+        // Twice larger: every page holds fewer paragraphs, and the page the
+        // reader is put back on has to be the one with the place on it.
+        reader.act(action::LARGER, &panel);
+        reader.act(action::LARGER, &panel);
+        assert!(holds(&reader), "the place jumped to left the page");
+    }
+
+    /// Turning past the end again and again, as a thumb resting on the edge
+    /// does. With the bar kept, the notice costs the last page enough room
+    /// to spill a line onto a new page, and the reader stayed where it was:
+    /// "This is the end." under a paragraph that was not the last one.
+    #[test]
+    fn the_end_is_said_on_the_last_page_however_often_the_page_is_turned_past_it() {
+        let panel = kobo_ui::CLARA_BW_METRICS;
+        let paragraph =
+            "Saturn disappears from view when the Moon moves in front of it. ".repeat(12);
+        let html = format!(
+            "<h2>Saturn</h2>{}<p>The last words of all.</p>",
+            format!("<p>{paragraph}</p>").repeat(14)
+        );
+        for full_page in [true, false] {
+            let memory = Memory {
+                full_page,
+                ..Memory::default()
+            };
+            let mut reader = Reader::open(kobo_doc::html::parse(&html), memory, &panel);
+            while reader.forward() {}
+            for turn in 0..6 {
+                reader.act(action::FORWARD, &panel);
+                assert_eq!(
+                    reader.page + 1,
+                    reader.page_count(),
+                    "full page {full_page}, turn {turn}: not on the last page"
+                );
+                let screen = reader.screen("Article");
+                assert_eq!(
+                    banners(&screen),
+                    vec![(BannerLevel::Info, "This is the end.".to_owned())],
+                    "full page {full_page}, turn {turn}"
+                );
+                assert!(
+                    format!("{screen:?}").contains("The last words of all."),
+                    "full page {full_page}, turn {turn}: the end of the text is not on the page"
+                );
+                let problems = screen.validate(&panel);
+                assert!(problems.is_empty(), "{problems:?}");
+            }
+        }
     }
 
     /// The facts under a NASA picture of the day: a table whose every row is

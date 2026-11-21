@@ -1,0 +1,61 @@
+# A finger held on a word of River.epub looks the word up. The simulator has
+# no dictionary installed, so the screen says so and shows the command that
+# adds one. From there the word is highlighted and given a note, and both are
+# still in the book after a restart.
+wait-for River
+tap River
+wait-for Marker 1
+# A hold is a finger kept down, which the tap steps cannot do, so it is
+# replayed as the panel's own touch records: down on "move" in the first
+# paragraph, most of a second, then up.
+input touch 3 47 0;3 57 9;3 53 520;3 54 771;0 0 0
+wait 700
+input touch 3 57 -1;0 0 0
+wait-for No dictionary on this reader has this word.
+expect move
+expect kobo dict install FILE
+shot books-word
+tap Highlight
+wait-for Marker 1
+expect-missing No dictionary
+shot books-word-highlighted
+# Held again, the same word offers to take its highlight off, and a note.
+input touch 3 47 0;3 57 9;3 53 520;3 54 771;0 0 0
+wait 700
+input touch 3 57 -1;0 0 0
+wait-for Remove highlight
+tap Add note
+wait-for-id kb.enter
+shot books-word-note
+type seen at dusk
+tap-id kb.enter
+wait-for Marker 1
+# The note is listed with its word, and the row goes back to the page.
+tap-id reader-controls
+wait-for Page 1 of
+tap-id reader-highlights
+wait-for Highlights and notes
+expect move: seen at dusk
+shot books-word-notes
+tap move: seen at dusk
+wait-for Marker 1
+# Back from a definition goes back to the page, not out of the book.
+input touch 3 47 0;3 57 9;3 53 520;3 54 771;0 0 0
+wait 700
+input touch 3 57 -1;0 0 0
+wait-for Edit note
+tap-id 4294967295
+wait-for Marker 1
+expect-missing Continue reading
+# The highlight and its note come back after a restart.
+tap-id 4294967295
+wait-for Continue reading
+restart
+wait-for Continue reading
+tap Continue reading
+wait-for Marker 1
+tap-id reader-controls
+wait-for Page 1 of
+tap-id reader-highlights
+wait-for Highlights and notes
+expect move: seen at dusk

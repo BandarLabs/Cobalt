@@ -85,3 +85,42 @@ the main workspace version matches the artifact being promoted.
 `.github/workflows/pages.yml` then builds the site from `docs/` on main and
 serves `docs/install.sh` at `https://bandarlabs.github.io/Cobalt/install.sh`.
 Beta has no public install script. Owners switch to Beta in Cobalt Settings.
+
+## The Send to Kobo browser extension
+
+The extension in `extensions/clip` is in no browser store. Owners load it
+unpacked after `kobo clip install`, which is why its manifest pins a
+Chromium ID with a `key`.
+
+`node tools/pack-clip-extension.mjs --out DIR` writes one zip per browser
+family, ready to upload:
+
+- `send-to-kobo-X.Y.Z-chromium.zip`. Its manifest leaves out `key`, because
+  the Chromium store assigns the ID itself and rejects a manifest that
+  carries one, and leaves out `browser_specific_settings`, which only
+  Firefox reads.
+- `send-to-kobo-X.Y.Z-firefox.zip`. Its manifest keeps
+  `browser_specific_settings`, the ID Firefox knows the extension by, and
+  leaves out `key`.
+
+Both hold the manifest, `background.js` and the icons, the same files
+install copies out, and the same tree always packs to the same bytes. The
+script submits nothing, and neither zip has been through a store's review.
+What is left for the owner:
+
+1. A developer account with each store, and each store's listing: the
+   description, screenshots, and its questions about permissions and data.
+   `extensions/clip/README.md` has the answers on permissions.
+2. For a Chromium store build, a release of `kobo` that knows its ID. The
+   store gives the extension a new ID, not the pinned one, and each
+   Chromium store gives its own. The native host manifest that
+   `kobo clip install` writes lets in only the origins it lists, so until
+   the store-assigned ID is added to the allowed origins in
+   `crates/kobo-cli/src/clip_install.rs`, beside `CHROMIUM_ID`, a store
+   build cannot start `kobo` and every send ends in "not set up".
+3. For Firefox, nothing in `kobo`: a signed build keeps the ID the host
+   manifest already allows.
+4. Once a listing is live, the step `kobo clip install` prints for that
+   browser, and the same step in `docs/companion-cli.md` and the
+   extension's README, should point at the store instead of at loading the
+   folder by hand.

@@ -16,6 +16,7 @@ mod apps;
 mod authorize;
 mod beta_store_smoke;
 mod birds;
+mod books;
 mod bootstrap;
 mod clip;
 mod clip_delivery;
@@ -26,6 +27,7 @@ mod console;
 mod deck;
 mod detect;
 mod devsession;
+mod dict;
 mod drive;
 mod exports;
 mod feeds;
@@ -62,6 +64,7 @@ mod panel;
 mod setup;
 mod sha256;
 mod sidekick;
+mod stardict;
 mod steps;
 mod sync;
 mod targets;
@@ -255,6 +258,15 @@ fi
 if ! grep -q ' /dev/pts ' /proc/mounts 2>/dev/null; then
   mkdir -p /dev/pts 2>/dev/null &&
     mount -t devpts devpts /dev/pts -o mode=0620,ptmxmode=0666 || true
+fi
+# A start begins the log. The one start that does not is the runtime starting
+# itself again after an update has been put in place: that is the same
+# session carrying on, and what was written before it, about the update, is
+# the part somebody reading the log afterwards came for. So it adds to the
+# log, where beginning it again would wipe that.
+if [ \"${KOBOD_UPDATE_SETTLED:-}\" = 1 ]; then
+  KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION \\
+    exec \"$root/bin/kobod\" --present \"$root/bin/kobo-launcher\" >> /mnt/onboard/kobod.txt 2>&1
 fi
 KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION \\
   exec \"$root/bin/kobod\" --present \"$root/bin/kobo-launcher\" > /mnt/onboard/kobod.txt 2>&1
@@ -550,8 +562,11 @@ const SEND_USAGE: &str = concat!(
     "\n",
     "Sends a file or folder to the app on the reader that opens it, adds it to\n",
     "what is already there, and says which app received it:\n",
+    "  EPUB books, text and HTML files,    Books, in the Books folder on the\n",
+    "    or a folder of them               reader's card\n",
     "  photos, or a folder of them         Frame\n",
-    "  a PDF                               Music Stand or Needles: you are asked\n",
+    "  a PDF                               Music Stand, Needles or Books: you\n",
+    "                                      are asked\n",
     "  a folder of PDF scores              Music Stand\n",
     "  Markdown notes, or a folder of them Vault\n",
     "  OPML lists                          Feeds\n",
@@ -560,6 +575,8 @@ const SEND_USAGE: &str = concat!(
     "  APKG/COLPKG decks                   Flashcards, which imports them first\n",
     "\n",
     "--to APP chooses the app yourself, for a file more than one app opens.\n",
+    "--to books sends a PDF or a Markdown file to Books as a document. Books\n",
+    "lists a PDF or a Kobo EPUB, and the Kobo's own reader opens it.\n",
     "--replace sends to an app that keeps one thing at a time (Panels keeps\n",
     "one comic) without asking first.\n",
     "--preview renders or checks the file on this computer; nothing is sent.\n",
@@ -667,7 +684,7 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    send_dispatch(
+    let shelved = send_dispatch(
         chosen,
         &file,
         &device_flags,
@@ -677,7 +694,12 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
         &receipts_path,
         sha,
     )?;
-    println!("Sent {file} to {} on {reader_label}.", chosen.title());
+    // Books answers for itself: it is the one app that can find it already
+    // holds the file, and "Sent" would then be untrue.
+    match shelved {
+        Some(outcome) => println!("{}", outcome.said(&file, &reader_label)),
+        None => println!("Sent {file} to {} on {reader_label}.", chosen.title()),
+    }
     Ok(())
 }
 
@@ -711,7 +733,9 @@ fn send_target(resolved: &targets::Target) -> Result<(String, Vec<String>, Strin
 ///
 /// Decks are a two-step import and Fanshelf fetches its own books. Each says
 /// how it is done instead of pretending a push happened, and neither claims
-/// success: nothing reached the reader.
+/// success: nothing reached the reader. Fanshelf is only ever reached by
+/// naming it, now that a book goes to Books, so its answer says where the
+/// file can go.
 fn not_a_push(chosen: detect::Companion, file: &str) -> Option<Result<(), String>> {
     let advice = match chosen {
         detect::Companion::Flashcards => format!(
@@ -720,8 +744,9 @@ fn not_a_push(chosen: detect::Companion, file: &str) -> Option<Result<(), String
              kobo flashcards stage COLLECTION.cobfc --kobo-root MOUNT"
         ),
         detect::Companion::Fanshelf => format!(
-            "{file} is an EPUB book. Fanshelf downloads the works on its shelf itself: add \
-             the work from the app on the reader."
+            "Fanshelf downloads the works on its shelf itself and takes no files: add the \
+             work from the app on the reader. To read {file} on the reader, send it to \
+             Books:\n  kobo send {file} --to books"
         ),
         _ => return None,
     };
@@ -771,6 +796,11 @@ fn replacing_is_agreed(
 /// only past its acknowledgement clear the pending send and write the
 /// receipt. An interrupted transfer keeps the one and never gains the other,
 /// which is what makes the next send a resume rather than a duplicate.
+///
+/// Returns what Books did with the file when Books took it, for the line
+/// that ends the send. A book the reader already held is acknowledged like
+/// one that was copied, so it earns its receipt too and the next send of the
+/// same file is answered without waking the reader.
 #[allow(clippy::too_many_arguments)]
 fn send_dispatch(
     chosen: detect::Companion,
@@ -781,7 +811,7 @@ fn send_dispatch(
     ledger: &mut receipts::Receipts,
     receipts_path: &std::path::Path,
     sha: Option<String>,
-) -> Result<(), String> {
+) -> Result<Option<books::Outcome>, String> {
     let pending_path = receipts::pending_path();
     let pending = receipts::Pending {
         file: file.to_owned(),
@@ -793,7 +823,15 @@ fn send_dispatch(
     }
     let mut forwarded = vec!["push".to_owned(), file.to_owned()];
     forwarded.extend(device_flags.iter().cloned());
+    let mut shelved = None;
     let sent = match chosen {
+        detect::Companion::Books => {
+            let reader = match device_flags {
+                [_, host] => clip_delivery::Reader::Device(host.clone()),
+                _ => clip_delivery::Reader::Simulator,
+            };
+            books::send(Path::new(file), &reader).map(|outcome| shelved = Some(outcome))
+        }
         detect::Companion::Frame => frame::command(&forwarded),
         detect::Companion::Feeds => feeds::command(&forwarded),
         detect::Companion::Panels => panels::command(&forwarded),
@@ -805,7 +843,7 @@ fn send_dispatch(
             // Answered by not_a_push before anything is resolved, so these
             // never reach a transfer.
             receipts::Pending::clear(&pending_path);
-            return Ok(());
+            return Ok(None);
         }
     };
     if let Err(error) = sent {
@@ -820,7 +858,7 @@ fn send_dispatch(
     }
     receipts::Pending::clear(&pending_path);
     let Some(sha) = sha else {
-        return Ok(());
+        return Ok(shelved);
     };
     ledger.record(receipts::Receipt {
         file: file.to_owned(),
@@ -834,7 +872,7 @@ fn send_dispatch(
             "note: the send's receipt could not be written ({error}); the send itself finished"
         );
     }
-    Ok(())
+    Ok(shelved)
 }
 
 /// Sends a notes folder, or one note, to Vault.
@@ -1037,7 +1075,7 @@ fn pick_companion(
     }
     let names: Vec<String> = candidates
         .iter()
-        .map(|companion| format!("{}, for {}", companion.title(), companion.purpose()))
+        .map(|companion| companion.offer())
         .collect();
     println!("{question}");
     let stdin = std::io::stdin();
@@ -1079,6 +1117,7 @@ fn send_preview(
                 panels::command(&forwarded)
             }
         }
+        detect::Companion::Books => books::preview(file),
         detect::Companion::Feeds => feeds::command(&["check".to_owned(), file.to_owned()]),
         detect::Companion::Parser => parser_command(&["inspect".to_owned(), file.to_owned()]),
         detect::Companion::Vault => vault::command(&["preview".to_owned(), file.to_owned()]),
@@ -1108,7 +1147,7 @@ fn send_preview(
         }
         detect::Companion::Fanshelf => {
             println!(
-                "{file} is an EPUB book. Fanshelf shelves works it downloads itself: add the work from the app on the reader."
+                "Fanshelf shelves works it downloads itself and takes no files: add the work from the app on the reader. To read {file} on the reader, send it to Books: kobo send {file} --to books"
             );
             Ok(())
         }
@@ -1166,6 +1205,7 @@ fn run_command(arguments: &[String]) -> Result<(), String> {
         "connect" => account::command(&arguments[1..]),
         "birds" => birds::command(&arguments[1..]),
         "clip" => clip::command(&arguments[1..]),
+        "dict" => dict::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "sidekick" => sidekick::command(&arguments[1..]),
@@ -1246,10 +1286,7 @@ fn run_command(arguments: &[String]) -> Result<(), String> {
             Err("device execution is safety-gated; use 'kobo run --sim' on the host".to_owned())
         }
 
-        "help" | "--help" | "-h" => {
-            print_help();
-            Ok(())
-        }
+        "help" | "--help" | "-h" => print_help(),
         "version" | "--version" | "-V" => version_command(&arguments[1..]),
         unknown => Err(format!("unknown command '{unknown}'")),
     }
@@ -4947,10 +4984,35 @@ fn run_remote_shell(
     run_shell_session(remote_shell_command(remote), script, timeout)
 }
 
+/// [`run_remote_shell`] for a script too large to build as one string.
+///
+/// `feed` writes the script to the reader's shell a piece at a time. A book
+/// of a few hundred megabytes travels as base64 inside its script, and held
+/// whole it would be in memory three times over: as the file, as its
+/// encoding, and as the copy the writer thread takes. Fed in pieces it is
+/// there once.
+fn run_remote_shell_fed(
+    remote: &str,
+    feed: impl FnOnce(&mut dyn Write) -> std::io::Result<()> + Send + 'static,
+    timeout: Duration,
+) -> Result<RemoteShellOutput, String> {
+    run_fed_session(remote_shell_command(remote), feed, timeout)
+}
+
 /// [`run_remote_shell`] over an `ssh` command the caller has already shaped.
 fn run_shell_session(
-    mut command: Command,
+    command: Command,
     script: &str,
+    timeout: Duration,
+) -> Result<RemoteShellOutput, String> {
+    let script = script.as_bytes().to_vec();
+    run_fed_session(command, move |stdin| stdin.write_all(&script), timeout)
+}
+
+/// One shell session on the reader, its script written by `feed`.
+fn run_fed_session(
+    mut command: Command,
+    feed: impl FnOnce(&mut dyn Write) -> std::io::Result<()> + Send + 'static,
     timeout: Duration,
 ) -> Result<RemoteShellOutput, String> {
     command
@@ -4966,10 +5028,9 @@ fn run_shell_session(
     let stdout = take_remote_pipe(&mut child, stdout_handle, "stdout")?;
     let stderr_handle = child.stderr.take();
     let stderr = take_remote_pipe(&mut child, stderr_handle, "stderr")?;
-    let script = script.as_bytes().to_vec();
     let writer = thread::spawn(move || -> std::io::Result<()> {
         let mut stdin = stdin;
-        stdin.write_all(&script)?;
+        feed(&mut stdin)?;
         stdin.flush()
     });
     let stdout_reader = thread::spawn(move || read_remote_pipe(stdout));
@@ -5066,6 +5127,56 @@ fn wait_for_remote_child(
         }
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+/// How much of a file goes to the reader in one piece.
+///
+/// The reader's shell reads a here-document into memory before it runs the
+/// command the document feeds, which costs nothing for an article and would
+/// cost a five hundred megabyte reader a three hundred megabyte book: the
+/// shell, or whatever the kernel chose to kill in its place, would not
+/// survive it. So a large file is appended a slice at a time, each its own
+/// small here-document, and the shell never holds more than this. A whole
+/// number of base64 lines, fifty-seven bytes to the line, so slices join
+/// without a seam.
+const UPLOAD_SLICE: usize = 57 * 16 * 1024;
+
+/// The line that appends one slice to `$partial`, and the line that ends it.
+const SLICE_OPENS: &str = "base64 -d >> \"$partial\" <<'KOBO_SLICE'\n";
+const SLICE_CLOSES: &str = "KOBO_SLICE\n";
+
+/// Writes the commands that append `bytes` to the file a reader's script
+/// calls `$partial`.
+///
+/// Each slice is encoded as it is written, so the encoding of a large file
+/// is never in memory beside the file.
+fn append_in_slices(shell: &mut dyn Write, bytes: &[u8]) -> std::io::Result<()> {
+    for slice in bytes.chunks(UPLOAD_SLICE) {
+        let mut lines = base64_encode(slice);
+        if !lines.ends_with('\n') {
+            lines.push('\n');
+        }
+        shell.write_all(SLICE_OPENS.as_bytes())?;
+        shell.write_all(lines.as_bytes())?;
+        shell.write_all(SLICE_CLOSES.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// The lines of a reader's script that end it, saying `full=` and the
+/// kilobytes free, when the card holding `$dir` has fewer than
+/// `needed_kilobytes`.
+///
+/// Asked before anything is written, because a card filled half way through
+/// a copy has already cost the Kobo's own library the room it needed. A card
+/// that will not say how much it has free is taken to have room, as the
+/// runtime's shelves take it: not knowing is not a reason to refuse.
+fn room_script(needed_kilobytes: u64) -> String {
+    format!(
+        "free=$(df -Pk \"$dir\" 2>/dev/null | awk 'END {{ print $4 }}')\n\
+         case \"$free\" in ''|*[!0-9]*) free='' ;; esac\n\
+         if [ -n \"$free\" ] && [ \"$free\" -lt {needed_kilobytes} ]; then printf 'full=%s\\n' \"$free\"; exit 0; fi\n"
+    )
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -8684,11 +8795,19 @@ fn report_trust_names<'a>(names: impl Iterator<Item = &'a str>) {
     }
 }
 
-fn print_help() {
+// A Result it can never fail to produce, as print_command_help's is, so the
+// dispatch arm that prints the list is one line of a function at the length
+// the lints allow.
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the Result is the dispatch arm's value, not a failure channel"
+)]
+fn print_help() -> Result<(), String> {
     let console = console::Console::detect();
     println!("{}", console.wrap(COMMAND_REFERENCE));
     print_output_contract();
     print_other_names();
+    Ok(())
 }
 
 /// Every command, one line each, in the order an owner meets them.
@@ -8742,6 +8861,9 @@ Send things to your apps. These go to the reader kobo setup saved; add
 Send a web article to the reader:
   clip URL | clip PAGE.html --url URL [--out FILE.epub] [--colour]  Send it, or save it with --out
   clip sync | install --browser NAME | uninstall  Send what waits; add Send to Kobo to a browser
+
+A dictionary for looking words up while reading:
+  dict install FILE [--name NAME] | list | remove NAME | check FILE  A TSV or StarDict dictionary
 
 Credentials an app asks for by name:
   connect APP            Connect an account app: asks for the server and
@@ -8805,6 +8927,7 @@ const ANSWERS_ITS_OWN_HELP: &[&str] = &[
     "birds",
     "clip",
     "deck",
+    "dict",
     "export",
     "feeds",
     "fieldbook",

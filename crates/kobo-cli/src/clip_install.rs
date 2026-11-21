@@ -1,5 +1,5 @@
-//! `kobo clip install` and `uninstall`: Send to Kobo in a browser's
-//! right-click menu.
+//! `kobo clip install` and `uninstall`: Send to Kobo in a browser's toolbar
+//! and right-click menu.
 //!
 //! A browser extension cannot run `kobo` by itself. It can only talk to a
 //! program the browser was told about, through a small manifest in a place
@@ -25,6 +25,11 @@ pub const CHROMIUM_ID: &str = "oddgeegniblkiahbnpjbgjoafeanokgi";
 
 /// The extension's Firefox ID, from its manifest.
 pub const FIREFOX_ID: &str = "send-to-kobo@cobalt.bandarlabs.github.io";
+
+/// The keys the extension suggests for its toolbar button, from its
+/// manifest. Named in what install prints, because a shortcut nobody was
+/// told about is one nobody uses.
+pub const SHORTCUT: &str = "Alt+Shift+K";
 
 /// The extension as it is copied out, file by file. Built into this binary,
 /// so an installed `kobo` needs no source tree beside it.
@@ -601,10 +606,27 @@ pub fn install(arguments: &[String]) -> Result<(), String> {
     for step in said {
         println!("{step}\n");
     }
+    if let Some(using) = using(&browsers) {
+        println!("{using}\n");
+    }
     println!(
         "Articles go to the reader kobo setup saved, or wait on this computer while it is asleep."
     );
     Ok(())
+}
+
+/// How the page in front of the owner is sent once the extension is loaded.
+/// Nothing for Safari alone, which has the Services menu and no extension.
+pub fn using(browsers: &[Browser]) -> Option<String> {
+    browsers
+        .iter()
+        .any(|browser| *browser != Browser::Safari)
+        .then(|| {
+            format!(
+                "Then the Send to Kobo button in the toolbar, {SHORTCUT}, or the right-click menu sends the page you are on.\n\
+                 The button may sit in the browser's extensions menu until you pin it."
+            )
+        })
 }
 
 /// `kobo clip uninstall`: takes away what install added, for the browsers
@@ -841,6 +863,22 @@ mod tests {
             .and_then(|gecko| gecko.get("id"))
             .and_then(kobo_json::Value::as_str);
         assert_eq!(gecko, Some(FIREFOX_ID));
+    }
+
+    #[test]
+    fn install_names_the_shortcut_the_extension_manifest_suggests() {
+        let manifest = parsed(std::str::from_utf8(EXTENSION[0].1).expect("text"));
+        let suggested = manifest
+            .get("commands")
+            .and_then(|commands| commands.get("_execute_action"))
+            .and_then(|command| command.get("suggested_key"))
+            .and_then(|keys| keys.get("default"))
+            .and_then(kobo_json::Value::as_str);
+        assert_eq!(suggested, Some(SHORTCUT));
+        let said = using(&[Browser::Safari, Browser::Firefox]).expect("an extension was set up");
+        assert!(said.contains("button in the toolbar"), "{said}");
+        assert!(said.contains(SHORTCUT), "{said}");
+        assert_eq!(using(&[Browser::Safari]), None);
     }
 
     #[test]

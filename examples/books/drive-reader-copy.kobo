@@ -1,0 +1,38 @@
+# sweep: --seed-root examples/books/fixtures/chapters
+# A copy of what was kept in The Lock Keeper's Year. With nothing kept the
+# notes offer no copy. After a paragraph is marked and a page bookmarked they
+# do: the copy is saved on the reader, says when it is ready, and the paired
+# computer receives it as a Markdown file.
+wait-for Lock Keeper
+tap The Lock Keeper
+wait-for Spring
+tap-id reader-controls
+wait-for Page 1 of
+tap-id reader-highlights
+wait-for Nothing is marked in this book yet.
+expect-missing Save a copy
+tap Mark a paragraph
+wait-for Tap a paragraph to mark it
+tap-id reader-mark-2
+wait-for Marked:
+tap Back to the book
+wait-idle
+tap-id reader-controls
+tap-id reader-bookmark
+wait-for Bookmarked
+tap-id reader-highlights
+wait-for Marked passages
+expect Bookmarks
+expect Save a copy
+shot books-copy-notes
+tap Save a copy
+wait-for Ready for your computer.
+expect The Lock Keeper's Year notes
+shot books-copy-ready
+companion export --app books --sim --out target/sim-check/books-notes
+# Back from the copy returns to the notes it was asked for from.
+tap-id 4294967295
+wait-for Marked passages
+expect Save a copy
+tap Back to the book
+wait-for Spring

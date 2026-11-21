@@ -1,14 +1,19 @@
 //! Which companion a file belongs to, chosen by what the file is.
 //!
 //! A photo goes to Frame, a subscription list to Feeds, a comic archive to
-//! Panels, a story file to Parser, a study deck to Flashcards, an ebook to
-//! Fanshelf and a Markdown note to Vault. A PDF is either a score for Music
-//! Stand or a knitting pattern for Needles, and nothing in the file says
-//! which, so it is offered as a choice. The owner names the file; this module
-//! names the companion. Detection reads the extension first and the file's
-//! own magic bytes when the extension says nothing, and it says so plainly
-//! when more than one companion could take the file: `send` asks, or `--to`
-//! answers, but nothing guesses.
+//! Panels, a story file to Parser, a study deck to Flashcards, a book or a
+//! plain document to Books and a Markdown note to Vault. A PDF is a score for
+//! Music Stand, a knitting pattern for Needles or a document to read, and
+//! nothing in the file says which, so it is offered as a choice. The owner
+//! names the file; this module names the companion. Detection reads the
+//! extension first and the file's own magic bytes when the extension says
+//! nothing, and it says so plainly when more than one companion could take
+//! the file: `send` asks, or `--to` answers, but nothing guesses.
+//!
+//! An EPUB used to be routed to Fanshelf, which downloads its own works and
+//! takes no files, so the one thing an owner most often has to send was the
+//! one thing send refused. Books lists whatever sits in an ordinary folder on
+//! the card, so a book is sent there.
 //!
 //! The table used to send every PDF and every Markdown file to Needles, so a
 //! score and a note both replaced the owner's knitting pattern. Routing by
@@ -34,12 +39,14 @@ pub enum Companion {
     Needles,
     MusicStand,
     Vault,
+    Books,
 }
 
 impl Companion {
     /// Every companion, in the order help and errors list them.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Frame,
+        Self::Books,
         Self::MusicStand,
         Self::Vault,
         Self::Feeds,
@@ -64,6 +71,7 @@ impl Companion {
             Self::Needles => "needles",
             Self::MusicStand => "musicstand",
             Self::Vault => "vault",
+            Self::Books => "books",
         }
     }
 
@@ -80,6 +88,7 @@ impl Companion {
             Self::Needles => "Needles",
             Self::MusicStand => "Music Stand",
             Self::Vault => "Vault",
+            Self::Books => "Books",
         }
     }
 
@@ -96,6 +105,24 @@ impl Companion {
             Self::Needles => "knitting patterns",
             Self::MusicStand => "sheet music",
             Self::Vault => "Markdown notes",
+            Self::Books => "books and documents",
+        }
+    }
+
+    /// What choosing this app means, for a file several apps open.
+    ///
+    /// Books is only ever one of several when a PDF is involved, and there
+    /// the plain "for books and documents" would promise more than happens:
+    /// Books shows the PDF on its shelf and sends the owner to the Kobo's own
+    /// reader to turn its pages. The choice says that before it is made, not
+    /// after the file has landed.
+    #[must_use]
+    pub fn offer(self) -> String {
+        match self {
+            Self::Books => "Books, to read as a document: Books lists a PDF and the Kobo's own \
+                            reader opens it"
+                .to_owned(),
+            _ => format!("{}, for {}", self.title(), self.purpose()),
         }
     }
 
@@ -121,7 +148,10 @@ impl Companion {
     /// anything.
     #[must_use]
     pub fn takes_folders(self) -> bool {
-        matches!(self, Self::Frame | Self::MusicStand | Self::Vault)
+        matches!(
+            self,
+            Self::Frame | Self::MusicStand | Self::Vault | Self::Books
+        )
     }
 
     /// The companion behind a typed name, when there is one.
@@ -157,9 +187,9 @@ pub enum ChooseError {
 /// Every companion that could take `path`, most specific first.
 ///
 /// Empty means nothing we know wants it. More than one means the file is a
-/// format more than one companion reads (a PDF score or pattern, a zip that
-/// could be a comic or a deck) which the caller resolves by asking, never by
-/// picking the first.
+/// format more than one companion reads (a PDF score, pattern or document, a
+/// zip that could be a comic or a deck) which the caller resolves by asking,
+/// never by picking the first.
 #[must_use]
 pub fn candidates(path: &Path) -> Vec<Companion> {
     if let Some(extension) = path.extension() {
@@ -172,9 +202,11 @@ pub fn candidates(path: &Path) -> Vec<Companion> {
                 &[Companion::Parser]
             }
             Some("apkg" | "colpkg") => &[Companion::Flashcards],
-            Some("epub") => &[Companion::Fanshelf],
+            // `.kepub.epub` ends in `.epub` too, and goes the same way: Books
+            // lists it and the Kobo's own reader opens it.
+            Some("epub" | "txt" | "html" | "htm" | "xhtml") => &[Companion::Books],
             Some("md" | "markdown") => &[Companion::Vault],
-            Some("pdf") => &[Companion::MusicStand, Companion::Needles],
+            Some("pdf") => &PDF,
             _ => &[],
         };
         if !companions.is_empty() {
@@ -184,16 +216,25 @@ pub fn candidates(path: &Path) -> Vec<Companion> {
     magic_candidates(path)
 }
 
+/// The apps a PDF could be for. Music Stand and Needles each keep it and draw
+/// its pages; Books lists it for the Kobo's own reader.
+const PDF: [Companion; 3] = [Companion::MusicStand, Companion::Needles, Companion::Books];
+
 /// The companions a folder could go to, from what it holds.
 ///
-/// Notes make it a Vault folder, even with pictures beside them, because an
-/// Obsidian vault keeps its attachments there. PDFs make it a set of scores.
-/// Pictures with neither make it an album. A folder with notes and PDFs is a
-/// question for the owner. Only the first few hundred entries are looked at:
-/// enough to tell what a folder is, without walking a whole home directory.
+/// Notes make it a Vault folder, even with pictures or books beside them,
+/// because an Obsidian vault keeps its attachments there. PDFs make it a set
+/// of scores. EPUBs with no notes make it a folder of books, and with PDFs
+/// beside them it is a question for the owner, as notes and PDFs are.
+/// Pictures with none of those make it an album. Text and HTML files decide
+/// only when nothing else does: a stray `README.txt` in an album or beside a
+/// set of scores is not a library. Only the first few hundred entries are
+/// looked at: enough to tell what a folder is, without walking a whole home
+/// directory.
 #[must_use]
 pub fn folder_candidates(folder: &Path) -> Vec<Companion> {
     let (mut notes, mut scores, mut pictures) = (false, false, false);
+    let (mut books, mut texts) = (false, false);
     let mut pending = vec![folder.to_path_buf()];
     let mut looked = 0;
     while let Some(directory) = pending.pop() {
@@ -217,7 +258,9 @@ pub fn folder_candidates(folder: &Path) -> Vec<Companion> {
             match candidates(&path).as_slice() {
                 [Companion::Vault] => notes = true,
                 [Companion::Frame] => pictures = true,
-                [Companion::MusicStand, Companion::Needles] => scores = true,
+                [Companion::MusicStand, Companion::Needles, Companion::Books] => scores = true,
+                [Companion::Books] if is_page(&path) => texts = true,
+                [Companion::Books] => books = true,
                 _ => {}
             }
         }
@@ -229,10 +272,28 @@ pub fn folder_candidates(folder: &Path) -> Vec<Companion> {
     if scores {
         found.push(Companion::MusicStand);
     }
+    if books && !notes {
+        found.push(Companion::Books);
+    }
     if pictures && found.is_empty() {
         found.push(Companion::Frame);
     }
+    if texts && found.is_empty() {
+        found.push(Companion::Books);
+    }
     found
+}
+
+/// Whether a file Books takes is a text or HTML page rather than a book.
+///
+/// Anything else that reached Books is an EPUB, by its name or by its bytes,
+/// and an EPUB says what a folder is in a way a text file cannot.
+fn is_page(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        ["txt", "html", "htm", "xhtml"]
+            .iter()
+            .any(|page| extension.eq_ignore_ascii_case(page))
+    })
 }
 
 /// What the first bytes say, when the name did not.
@@ -256,10 +317,10 @@ fn magic_candidates(path: &Path) -> Vec<Companion> {
     } else if head.starts_with(b"Glul") {
         vec![Companion::Parser]
     } else if head.starts_with(b"%PDF-") {
-        vec![Companion::MusicStand, Companion::Needles]
+        PDF.to_vec()
     } else if head.starts_with(b"PK\x03\x04") {
         if is_epub(head) {
-            vec![Companion::Fanshelf]
+            vec![Companion::Books]
         } else {
             // A zip container: comic archives and deck packages are both zips.
             vec![Companion::Panels, Companion::Flashcards]
@@ -271,7 +332,7 @@ fn magic_candidates(path: &Path) -> Vec<Companion> {
 
 /// An EPUB is a zip whose first entry is an uncompressed `mimetype` file
 /// holding exactly `application/epub+zip`, both at fixed offsets.
-fn is_epub(head: &[u8]) -> bool {
+pub(crate) fn is_epub(head: &[u8]) -> bool {
     head.len() >= 58 && &head[30..38] == b"mimetype" && &head[38..58] == b"application/epub+zip"
 }
 
@@ -286,14 +347,7 @@ pub fn choices(offered: &[Companion]) -> String {
         .unwrap_or(0);
     offered
         .iter()
-        .map(|companion| {
-            format!(
-                "  --to {:width$}  {}, for {}",
-                companion.name(),
-                companion.title(),
-                companion.purpose()
-            )
-        })
+        .map(|companion| format!("  --to {:width$}  {}", companion.name(), companion.offer()))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -322,9 +376,9 @@ pub fn choose(candidates: &[Companion], app: Option<&str>) -> Result<Companion, 
     match candidates {
         [only] => Ok(*only),
         [] => Err(ChooseError::Message(crate::console::unsupported(
-            "No app opens this kind of file. Send understands photos, PDF scores and \
-             patterns, Markdown notes, OPML subscription lists, CBZ comics, story files, \
-             EPUB books and APKG or COLPKG decks. If you know which app should open it, \
+            "No app opens this kind of file. Send understands EPUB books, text and HTML \
+             documents, photos, PDFs, Markdown notes, OPML subscription lists, CBZ comics, \
+             story files and APKG or COLPKG decks. If you know which app should open it, \
              name it with --to APP.",
         ))),
         several => Err(ChooseError::Ambiguous(several.to_vec())),
@@ -353,7 +407,6 @@ mod tests {
             candidates(&named_path("deck.colpkg")),
             [Companion::Flashcards]
         );
-        assert_eq!(candidates(&named_path("novel.epub")), [Companion::Fanshelf]);
         assert_eq!(candidates(&named_path("groceries.md")), [Companion::Vault]);
         assert_eq!(
             candidates(&named_path("Notes.Markdown")),
@@ -362,10 +415,31 @@ mod tests {
     }
 
     #[test]
-    fn a_pdf_is_a_score_or_a_pattern_and_the_owner_is_asked_which() {
+    fn a_book_or_a_plain_document_goes_to_books_and_fanshelf_no_longer_claims_it() {
+        for name in [
+            "novel.epub",
+            "Novel.EPUB",
+            "purchase.kepub.epub",
+            "letter.txt",
+            "streets.html",
+            "streets.htm",
+            "chapter.xhtml",
+        ] {
+            assert_eq!(candidates(&named_path(name)), [Companion::Books], "{name}");
+        }
+        assert!(matches!(
+            choose(&candidates(&named_path("novel.epub")), None),
+            Ok(Companion::Books)
+        ));
+        assert!(Companion::Books.takes_folders());
+        assert_eq!(Companion::Books.replaces(), None);
+    }
+
+    #[test]
+    fn a_pdf_is_a_score_a_pattern_or_a_document_and_the_owner_is_asked_which() {
         assert_eq!(
             candidates(&named_path("nocturne.pdf")),
-            [Companion::MusicStand, Companion::Needles]
+            [Companion::MusicStand, Companion::Needles, Companion::Books]
         );
         match choose(&candidates(&named_path("nocturne.pdf")), None) {
             Err(ChooseError::Ambiguous(offered)) => {
@@ -377,9 +451,27 @@ mod tests {
                     listed.contains("Needles, for knitting patterns"),
                     "{listed}"
                 );
+                assert!(listed.contains("--to books"), "{listed}");
+                assert!(
+                    listed.contains("Books lists a PDF and the Kobo's own reader opens it"),
+                    "the Books choice has to say who turns the pages: {listed}"
+                );
             }
             other => panic!("a PDF must not be guessed, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_markdown_note_still_goes_to_vault_and_to_books_only_when_asked() {
+        assert_eq!(candidates(&named_path("note.md")), [Companion::Vault]);
+        assert!(matches!(
+            choose(&candidates(&named_path("note.md")), Some("books")),
+            Ok(Companion::Books)
+        ));
+        assert!(matches!(
+            choose(&candidates(&named_path("nocturne.pdf")), Some("Books")),
+            Ok(Companion::Books)
+        ));
     }
 
     #[test]
@@ -392,8 +484,8 @@ mod tests {
     }
 
     #[test]
-    fn plain_text_is_not_guessed_at() {
-        assert!(candidates(&named_path("kobo-detect-unknown.txt")).is_empty());
+    fn a_file_nothing_opens_is_not_guessed_at() {
+        assert!(candidates(&named_path("kobo-detect-unknown.docx")).is_empty());
     }
 
     #[test]
@@ -439,6 +531,41 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_of_books_goes_to_books_without_taking_folders_other_apps_had() {
+        let root = std::env::temp_dir().join(format!("kobo-detect-books-{}", std::process::id()));
+        let make = |name: &str, files: &[&str]| {
+            let folder = root.join(name);
+            std::fs::create_dir_all(folder.join("inner")).expect("folder");
+            for file in files {
+                std::fs::write(folder.join(file), b"x").expect("file");
+            }
+            folder
+        };
+        let shelf = make(
+            "shelf",
+            &["novel.epub", "inner/sequel.kepub.epub", "cover.jpg"],
+        );
+        assert_eq!(folder_candidates(&shelf), [Companion::Books]);
+        let pages = make("pages", &["letter.txt", "inner/streets.html"]);
+        assert_eq!(folder_candidates(&pages), [Companion::Books]);
+        // A book beside PDFs could be a library or a set of scores.
+        let library = make("library", &["novel.epub", "manual.pdf"]);
+        assert_eq!(
+            folder_candidates(&library),
+            [Companion::MusicStand, Companion::Books]
+        );
+        // What these folders were before a text file sat in them is what they
+        // still are: a stray README is not a library.
+        let album = make("album", &["a.jpg", "README.txt"]);
+        assert_eq!(folder_candidates(&album), [Companion::Frame]);
+        let scores = make("scores", &["nocturne.pdf", "setlist.txt"]);
+        assert_eq!(folder_candidates(&scores), [Companion::MusicStand]);
+        let vault = make("vault", &["today.md", "inner/attached.epub", "export.html"]);
+        assert_eq!(folder_candidates(&vault), [Companion::Vault]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn the_apps_that_keep_one_thing_say_what_a_send_replaces() {
         assert_eq!(Companion::Needles.replaces(), None);
         assert_eq!(Companion::Panels.replaces(), Some("comic"));
@@ -455,7 +582,7 @@ mod tests {
         std::fs::write(&pattern, b"%PDF-1.4 rest").expect("a pattern");
         assert_eq!(
             candidates(&pattern),
-            [Companion::MusicStand, Companion::Needles]
+            [Companion::MusicStand, Companion::Needles, Companion::Books]
         );
     }
 
@@ -467,7 +594,7 @@ mod tests {
         bytes.extend_from_slice(b"application/epub+zip");
         let book = named_path("kobo-detect-book");
         std::fs::write(&book, &bytes).expect("a book");
-        assert_eq!(candidates(&book), [Companion::Fanshelf]);
+        assert_eq!(candidates(&book), [Companion::Books]);
         // The same container without the EPUB mimetype stays ambiguous.
         let mut zip = b"PK\x03\x04".to_vec();
         zip.resize(64, 0);

@@ -1,5 +1,6 @@
-// Send to Kobo: the right-click menu, and the hand-off to Cobalt's kobo
-// command on this computer, which makes the article and sends it.
+// Send to Kobo: the toolbar button, its keyboard shortcut and the
+// right-click menu, and the hand-off to Cobalt's kobo command on this
+// computer, which makes the article and sends it.
 //
 // The extension reads the page as the owner sees it and nothing else. It
 // has no network access of its own and keeps no record of what was sent.
@@ -129,6 +130,34 @@ function isWebPage(url) {
   return /^https?:\/\//i.test(url || "");
 }
 
+// Reads the page in `tab` as the owner sees it and sends it. The browser
+// lets the extension into a tab only for the moment the owner asks, by the
+// button, the shortcut or the menu, so this is called from nowhere else.
+function sendPage(tab, url, wantSelection) {
+  if (!tab || !isWebPage(url)) {
+    notify(`send-to-kobo-${Date.now()}`, "Could not send to your Kobo", "Only web pages can be sent.");
+    return;
+  }
+  api.scripting
+    .executeScript({
+      target: { tabId: tab.id },
+      func: capturePage,
+      args: [wantSelection]
+    })
+    .then(results => {
+      const page = results && results[0] && results[0].result;
+      // A page the browser will not let extensions read is fetched by the
+      // computer instead, as a link would be.
+      send(page || { url, title: tab.title || "" });
+    })
+    .catch(() => send({ url, title: tab.title || "" }));
+}
+
+// One click on the toolbar button. The keyboard shortcut arrives here too:
+// the manifest binds it to the button, so there is one way in and the
+// browser's own shortcuts page is where the owner changes the keys.
+api.action.onClicked.addListener(tab => sendPage(tab, tab && tab.url, false));
+
 api.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "send-link") {
     if (!isWebPage(info.linkUrl)) {
@@ -138,22 +167,5 @@ api.contextMenus.onClicked.addListener((info, tab) => {
     send({ url: info.linkUrl, title: info.linkText || info.selectionText || "" });
     return;
   }
-  const url = info.pageUrl || (tab && tab.url);
-  if (!tab || !isWebPage(url)) {
-    notify(`send-to-kobo-${Date.now()}`, "Could not send to your Kobo", "Only web pages can be sent.");
-    return;
-  }
-  api.scripting
-    .executeScript({
-      target: { tabId: tab.id },
-      func: capturePage,
-      args: [info.menuItemId === "send-selection"]
-    })
-    .then(results => {
-      const page = results && results[0] && results[0].result;
-      // A page the browser will not let extensions read is fetched by the
-      // computer instead, as a link would be.
-      send(page || { url, title: tab.title || "" });
-    })
-    .catch(() => send({ url, title: tab.title || "" }));
+  sendPage(tab, info.pageUrl || (tab && tab.url), info.menuItemId === "send-selection");
 });

@@ -1,0 +1,59 @@
+# sweep: --seed-root examples/books/fixtures/chapters
+# Go to, on The Lock Keeper's Year. The controls say the place beside the way
+# to change it. The stepper moves a tenth of the book at a tap and names the
+# page it comes to, a page can be typed on the digits instead, and Back, or
+# the control that names the page that was left, returns to it.
+wait-for Lock Keeper
+tap The Lock Keeper
+wait-for Spring
+tap-id reader-controls
+wait-for Page 1 of 8
+expect Go to
+shot books-goto-controls
+tap Go to
+wait-for You are on page 1 of 8.
+expect Go to page 1
+shot books-goto
+tap-id reader-go-to-more
+wait-for 10%
+tap-id reader-go-to-more
+tap-id reader-go-to-more
+tap-id reader-go-to-more
+tap-id reader-go-to-more
+wait-for 50%
+expect Go to page 5
+shot books-goto-stepped
+tap Go to page 5
+wait-for Autumn
+expect-missing You are on page
+# The controls name the page that was left, and go back to it.
+tap-id reader-controls
+wait-for Page 5 of 8
+expect Back to page 1
+shot books-goto-return
+tap Back to page 1
+wait-for Spring
+tap-id reader-controls
+wait-for Page 1 of 8
+expect-missing Back to page
+# A typed page: one the book does not have is said not to be one, and one it
+# has is turned to.
+tap Go to
+wait-for You are on page 1 of 8.
+tap Type a page
+wait-for-id kb.enter
+expect A number from 1 to 8.
+shot books-goto-type
+type 99
+tap-id kb.enter
+wait-for The pages run from 1 to 8.
+shot books-goto-refused
+tap Type a page
+wait-for-id kb.enter
+type 7
+tap-id kb.enter
+wait-for Winter
+# Back from the page returns to the one that was left.
+tap-id 4294967295
+wait-for Spring
+expect-missing Continue reading

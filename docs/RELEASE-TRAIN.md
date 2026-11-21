@@ -76,6 +76,10 @@ gh workflow run "Publish beta platform" --ref beta
    platform bump does not republish `app-catalog-beta`.
 3. Install the beta release through **Settings ▸ Software update** and record
    the tested commit and archive SHA-256.
+   From 0.3.38 an update is staged beside the installation and takes over the
+   next time Cobalt opens. Before closing Cobalt after an update, open two
+   apps and confirm they still run on the old release; after reopening,
+   confirm Settings names the new version.
    For a protocol bump, update over the air from an installation on the
    previous protocol before installing apps built for the new one. Confirm old
    apps retain their state, secrets and preferences, keep their layout, can

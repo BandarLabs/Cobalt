@@ -176,6 +176,11 @@ fn every_device_request_round_trips() {
         DeviceRequest::ReadLibrary {
             id: "0/Bleak-House.epub".to_owned(),
         },
+        DeviceRequest::ReadLibraryRange {
+            id: "0/Bleak-House.epub".to_owned(),
+            offset: 262_144,
+            length: 262_144,
+        },
         DeviceRequest::MarkNoticesRead,
         DeviceRequest::ClearNotices,
         DeviceRequest::OpenNotice { id: 7 },
@@ -366,6 +371,13 @@ fn every_device_result_round_trips() {
         DeviceResult::LibraryDocument {
             id: "0/notes.md".to_owned(),
             bytes: b"hello".to_vec(),
+        },
+        DeviceResult::LibraryRange {
+            id: "0/notes.md".to_owned(),
+            offset: 2,
+            size: 5,
+            stamp: 1_763_600_000,
+            bytes: b"llo".to_vec(),
         },
     ];
     for result in results {
