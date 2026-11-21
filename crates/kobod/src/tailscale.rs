@@ -66,8 +66,9 @@
 //!   reachable from the tailnet, which is why [`exposure`] is asked before
 //!   the reader joins one.
 //!
-//! No reader has run this yet. The evidence bar in docs/DEVICES.md applies
-//! before any of it is called tested.
+//! One reader has run this, as far as the approval code: a Clara BW on
+//! firmware 4.46.23852. docs/DEVICES.md says what that showed, and its
+//! evidence bar applies before any of the rest is called tested.
 
 mod door;
 mod hosts;

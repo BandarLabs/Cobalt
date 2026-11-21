@@ -12,8 +12,10 @@ the reader can reach your own servers by name.
 </tr>
 </table>
 
-No Kobo has run this yet. Everything below has been tested against stand-ins
-for the Tailscale programs, not on a reader. The evidence bar in
+One reader has run this as far as the approval code: a Clara BW on firmware
+4.46.23852. [First run on a reader](#first-run-on-a-reader) says what that
+showed and what nobody has seen yet. The rest has been tested against
+stand-ins for the Tailscale programs. The evidence bar in
 [docs/DEVICES.md](../../docs/DEVICES.md) applies before it is called tested.
 
 ## Features
@@ -315,9 +317,29 @@ Files sent to the reader with Taildrop are not accepted.
 
 ## First run on a reader
 
-Nobody has done this yet, so a first run is evidence as well as a test. With
-the reader at `READER` on your Wi-Fi, capture these before switching
-Tailscale on, once it says **Connected**, and after leaving Cobalt:
+A Clara BW (N365, firmware 4.46.23852, kernel 4.9.77) has run this as far as
+the approval code. What that showed:
+
+- The kernel has the tunnel driver, and the daemon brought `tailscale0` up
+  on it.
+- The reader closed password login for root itself, and logging in with the
+  key went on working, through the server's restart.
+- The download arrived and matched its digests, and the programs ran from
+  system storage, which had 719 MB free.
+- With the programs already downloaded, the approval code was ready about
+  fifteen seconds after Cobalt opened.
+- The daemon held 30 MB while it waited for approval, with its
+  `oom_score_adj` at 800 and the default route still on Wi-Fi.
+- Leaving Cobalt stopped the daemon and removed its interface, and Wi-Fi
+  went on working in the Kobo software.
+- A program left listening on a port was refused by name, once.
+
+Nobody has yet seen, on a reader: approval and the connected screen, traffic
+over the tailnet, staying connected outside Cobalt, the exit node, the shared
+network, or the key outliving a restart. So a run that gets further is
+evidence as well as a test. With the reader at `READER` on your Wi-Fi,
+capture these before switching Tailscale on, once it says **Connected**, and
+after leaving Cobalt:
 
 ```sh
 kobo doctor --device READER

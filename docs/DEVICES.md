@@ -529,15 +529,27 @@ its passive soak has completed.
 
 ### Tailscale across a session
 
-No reader has run the Tailscale service yet. Everything about it has been
-tested against stand-ins for the two Tailscale programs, so every claim below
-about a kernel is a question, not an answer.
+One reader has run the Tailscale service, as far as the approval code: a
+Clara BW (N365) on firmware 4.46.23852, kernel 4.9.77. Everything past that
+point, and everything on any other reader, has been tested against stand-ins
+for the two Tailscale programs, so a claim below about a kernel is a question
+unless it says it was seen.
+
+What that reader showed. Its kernel has the tunnel driver, registered in
+`/proc/misc` with `/dev/net/tun` already made, and the daemon brought its
+interface up on it. The firmware mounts a RAM disk of sixteen kilobytes over
+`/var/lib` at every start, so nothing kept there survives a restart or has
+room to begin with, which is why the daemon's home is under
+`/usr/local/cobalt`. Its SSH server was at the firmware's stock settings
+with a computer's key beside them, and the runtime closed password login
+itself before joining. Ending the session stopped the daemon, removed the
+interface and left Wi-Fi working under the stock reader.
 
 The service needs the kernel's tunnel driver, and nothing in the repository
-says which firmware builds have it. The two kernels in the support matrix,
-4.9.77 on the MediaTek readers and 4.1.15 on the i.MX6 ones, are both recent
-enough for the Tailscale programs themselves, which need 3.2. Whether either
-was built with the driver is unknown. `kobo doctor` reads what it can without
+says which other firmware builds have it. The two kernels in the support
+matrix, 4.9.77 on the MediaTek readers and 4.1.15 on the i.MX6 ones, are both
+recent enough for the Tailscale programs themselves, which need 3.2. Whether
+the i.MX6 kernel was built with the driver is unknown. `kobo doctor` reads what it can without
 touching anything: the driver being registered in `/proc/misc` is certain,
 and its absence there is not proof, because a module would only load when the
 device node is first opened. The supervisor opens the node before it does
@@ -563,9 +575,10 @@ The exit node and the shared network do not depend on the kernel's packet
 filter: the daemon carries that traffic itself. `kobo doctor` still reports
 what each kernel offers for it, the forwarding switch, connection tracking
 and the packet filter, because a kernel that has them could do the forwarding
-faster and nobody has looked. What has not been
-measured on any reader: the daemon's memory beside a running app, whether its
-link monitoring disturbs the hand-back, how long a reconnect takes after the
+faster and nobody has looked. The daemon held 30 MB on the Clara BW while it
+waited to be approved. What has not been measured on any reader: its memory
+once connected and beside a running app, whether its link monitoring disturbs
+the hand-back when it stays connected, how long a reconnect takes after the
 radio returns, and whether the daemon's routing works without the packet
 filter tools the firmware lacks. The app's README lists the evidence to
 capture on a first run.
