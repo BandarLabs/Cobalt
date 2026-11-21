@@ -14,6 +14,8 @@ import shutil
 import subprocess
 import tempfile
 import time
+import urllib.error
+import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -148,7 +150,7 @@ def route_directive(route):
     first = route.read_text().splitlines()[:1]
     match = re.match(r'#\s*sweep:\s*(.*)$', first[0]) if first else None
     options = dict(bare=False, seed_root=None, after_main=False, skip=False,
-                   articles=False, paired=False, computer=False)
+                   articles=False, paired=False, computer=False, needs=[])
     if match is None:
         return options
     words = shlex.split(match.group(1))
@@ -164,6 +166,12 @@ def route_directive(route):
             options['after_main'] = True
         elif word == 'skip':
             options['skip'] = True
+        # A site the route reads live, by the address it reads.
+        elif word == 'needs' and index + 1 < len(words):
+            if not words[index + 1].startswith('https://'):
+                raise ValueError(f'{route}: needs takes an https address, not {words[index + 1]!r}')
+            options['needs'].append(words[index + 1])
+            index += 1
         # Books' Articles shelf: articles on the card, a pairing with a
         # computer that is not there, or a Sidekick helper that is.
         elif word in ('articles', 'paired', 'computer'):
@@ -256,10 +264,61 @@ def app_directory(app):
                  if (ROOT / group / app).is_dir()), None)
 
 
+ANSWERED = {}
+
+
+def answering(address, patience=15):
+    """Whether a site a route reads live is there to be read.
+
+    A route that browses somebody else's catalog is a check of this code
+    only while that catalog is up. When the site is down for maintenance the
+    route fails on its first screen, and with it every pull request and the
+    release that waits on this sweep, for a reason nothing here can mend.
+    So the address is asked first, once a run. An answer of any kind short
+    of a server fault counts: a site that refuses this script is still one
+    the app can reach.
+    """
+    if address not in ANSWERED:
+        request = urllib.request.Request(address, headers={'User-Agent': 'Mozilla/5.0 (Cobalt simulator sweep)'})
+        try:
+            with urllib.request.urlopen(request, timeout=patience) as answer:
+                ANSWERED[address] = answer.status < 500
+        except urllib.error.HTTPError as error:
+            ANSWERED[address] = error.code < 500
+        except (OSError, urllib.error.URLError):
+            ANSWERED[address] = False
+    return ANSWERED[address]
+
+
+def absent(options):
+    """The first site the route needs that is not answering, or None."""
+    return next((address for address in options['needs'] if not answering(address)), None)
+
+
+def without(label, route, address):
+    """The result for a route left out because a site it reads is down."""
+    return dict(app=label, launched=False, status='skipped', route=str(route.relative_to(ROOT)),
+                reason=f'{address} is not answering')
+
+
 def run_routes(app, kobo, out, environment, timeout):
     """The main route, then every `drive-*.kobo` beside it as it asks."""
-    results = [run_app(app, kobo, out, environment, timeout)]
     directory = app_directory(app)
+    # The main route always starts from the seeded state, so the one thing
+    # its first line may ask for is a site.
+    main = directory / 'drive.kobo' if directory else None
+    down = None
+    if main is not None and main.is_file():
+        try:
+            asked = route_directive(main)
+        except ValueError as error:
+            return [dict(app=app, launched=False, status='fail', error=str(error))]
+        if any(asked[word] for word in ('bare', 'seed_root', 'after_main', 'skip',
+                                        'articles', 'paired', 'computer')):
+            return [dict(app=app, launched=False, status='fail',
+                         error=f'{main}: a main route may only say what it needs')]
+        down = absent(asked)
+    results = [without(app, main, down) if down else run_app(app, kobo, out, environment, timeout)]
     for route in sorted(directory.glob('drive-*.kobo')) if directory else []:
         label = f'{app}:{route.stem}'
         try:
@@ -270,6 +329,10 @@ def run_routes(app, kobo, out, environment, timeout):
         if options['skip']:
             results.append(dict(app=label, launched=False, status='skipped',
                                 route=str(route.relative_to(ROOT))))
+            continue
+        down = absent(options)
+        if down:
+            results.append(without(label, route, down))
             continue
         if options['after_main']:
             with tempfile.TemporaryDirectory(prefix='cb-', dir='/tmp') as state:
@@ -446,6 +509,11 @@ def main():
     routes = sum(r.get('route') is not None for r in runs)
     print(f"{len(runs) - len(failed)}/{len(runs)} runs passed across {len(apps)} apps; "
           f"{routes} committed routes; report: {out / 'results.json'}")
+    # Said last and by name, so a route that was not run is never mistaken
+    # for one that passed.
+    for result in report['results']:
+        if result.get('reason'):
+            print(f"not run: {result['app']} ({result['reason']})")
     return 1 if failed else 0
 
 
