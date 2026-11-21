@@ -123,7 +123,7 @@ fn send_choice(
     let Some(file) = answer(
         input,
         output,
-        "File or folder to send: a photo, score, note, comic or story (blank cancels): ",
+        "File or folder to send: a book, photo, score, note, comic or story (blank cancels): ",
     )?
     else {
         return Ok(None);

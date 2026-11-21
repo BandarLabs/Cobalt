@@ -30,6 +30,62 @@ pub struct Article {
     /// The address the page says it lives at, when that is on the same site
     /// as the address it was read from.
     pub canonical: Option<String>,
+    /// How much of the whole page's text is link text.
+    pub page_text: PageText,
+}
+
+/// A page's text weighed against its links, measured on the page as it
+/// arrived, before extraction takes it apart.
+///
+/// An article page says most of what it says in plain text. A section
+/// front, an archive or a list of threads says it in links, and the
+/// extractor, finding no article, hands back whichever scrap of such a page
+/// scored best. The scrap alone cannot be told from a short post; the page
+/// around it can.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PageText {
+    /// Letters of text in the page's body, ignoring whitespace.
+    pub letters: usize,
+    /// Those of them that sit inside links.
+    pub linked: usize,
+}
+
+/// Elements left out of [`PageText`]: the site's own menus and small print,
+/// which are links on every page of a site and say nothing about this one,
+/// and elements whose text is not words on the page at all.
+const NOT_PAGE_TEXT: [&str; 9] = [
+    "nav", "footer", "aside", "script", "style", "noscript", "template", "svg", "select",
+];
+
+/// Measures [`PageText`]. Walked with a stack rather than by recursion,
+/// since a page nests as deep as it likes.
+fn page_text(document: &Document) -> PageText {
+    let mut measured = PageText::default();
+    let Some(body) = document.select("body").nodes().first().copied() else {
+        return measured;
+    };
+    let mut pending = vec![(body, false)];
+    while let Some((node, in_link)) = pending.pop() {
+        if node.is_text() {
+            let letters = letters(&node);
+            measured.letters += letters;
+            if in_link {
+                measured.linked += letters;
+            }
+            continue;
+        }
+        if !node.is_element() {
+            continue;
+        }
+        let name = node.node_name().unwrap_or_default();
+        let hidden = node.has_attr("hidden") || node.attr("aria-hidden").as_deref() == Some("true");
+        if hidden || NOT_PAGE_TEXT.contains(&&*name) {
+            continue;
+        }
+        let in_link = in_link || &*name == "a";
+        pending.extend(node.children().into_iter().map(|child| (child, in_link)));
+    }
+    measured
 }
 
 /// Marks the figure found by [`find_lead_figure`], so that whether it
@@ -367,6 +423,7 @@ pub fn extract(html: &str, page: &str) -> Result<Article, Refusal> {
     };
     let document = Document::from(html);
     let labels = labels(&document);
+    let page_text = page_text(&document);
     lift_headings(&document);
     let lead_figure = find_lead_figure(&document);
     let mut readability = Readability::with_document(document, Some(page), Some(config))
@@ -404,6 +461,7 @@ pub fn extract(html: &str, page: &str) -> Result<Article, Refusal> {
         lead_figure: lead_figure.filter(|_| !article.content.contains(LEAD_MARK)),
         content: article.content.to_string(),
         canonical: canonical_of(labels.canonical.as_deref(), page),
+        page_text,
     })
 }
 
@@ -594,6 +652,27 @@ mod tests {
             article.content.contains("Spring tides"),
             "{}",
             article.content
+        );
+    }
+
+    #[test]
+    fn a_pages_links_are_weighed_against_its_text_outside_its_menus_and_hidden_parts() {
+        let document = Document::from(
+            r#"<html><head><title>Not text</title><style>p { color: red }</style></head><body>
+            <nav><a href="/">Home</a> <a href="/news">News</a></nav>
+            <div class="menu"><a href="/a">abcd</a></div>
+            <p>efgh <a href="/b"><strong>ij</strong></a> kl</p>
+            <p hidden>mnop <a href="/c">qrst</a></p>
+            <script>var uvwx = 1;</script>
+            <footer><a href="/terms">Terms</a></footer>
+            </body></html>"#,
+        );
+        assert_eq!(
+            page_text(&document),
+            PageText {
+                letters: 12,
+                linked: 6
+            }
         );
     }
 

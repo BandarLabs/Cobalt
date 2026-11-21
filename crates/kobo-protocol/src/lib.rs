@@ -212,6 +212,22 @@ pub const TIME_ZONE_VERSION: u8 = 18;
 /// `America/Argentina/Buenos_Aires`.
 pub const MAX_TIME_ZONE_LEN: usize = 64;
 
+/// The protocol whose runtime hands over a library document a range at a
+/// time, [`DeviceRequest::ReadLibraryRange`], answered with
+/// [`DeviceResult::LibraryRange`].
+///
+/// On tags of their own, so the version did not move. Only an application
+/// granted `library` is answered at all, and the one that holds it is Books,
+/// which ships with the runtime, so the two only disagree between an update
+/// applied mid-session and the next start. That window is wider here than
+/// for the time zone, because opening a book is the first thing anybody does
+/// in Books, and a runtime from before these tags ends the session of an
+/// application that sends one. So Books does not send one on trust: it asks
+/// the runtime which release it is, uses ranges only under the release it
+/// shipped with, and under any other reads a book whole with
+/// [`DeviceRequest::ReadLibrary`], as it always has.
+pub const LIBRARY_RANGE_VERSION: u8 = 18;
+
 pub const VERSION: u8 = 18;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
@@ -1512,6 +1528,23 @@ pub enum DeviceRequest {
     ListLibrary,
     /// Read one library document by the identifier a listing returned.
     ReadLibrary { id: String },
+    /// Read part of one library document: at most `length` bytes of it,
+    /// starting `offset` bytes in.
+    ///
+    /// A document handed over whole has to fit the frame it travels in, which
+    /// kept every book over [`MAX_LIBRARY_DOCUMENT_BYTES`] closed. A range is
+    /// read by seeking, so the runtime never holds more of a book than it was
+    /// asked for, and a book of any size the library lists can be had in
+    /// pieces. Each range is a request of its own: the identifier is resolved
+    /// and checked again for every one, and nothing is held open between
+    /// them. Answered with [`DeviceResult::LibraryRange`]. Requires
+    /// [`LIBRARY_RANGE_VERSION`].
+    ReadLibraryRange {
+        id: String,
+        offset: u32,
+        /// From one byte to [`MAX_LIBRARY_RANGE_BYTES`].
+        length: u32,
+    },
     /// List the audiobooks on the reader: every file the runtime can play,
     /// and every folder of them that reads as one book, under the same
     /// roots the library is listed from. Requires [`AUDIOBOOK_VERSION`].
@@ -1996,6 +2029,29 @@ pub enum DeviceResult {
     /// The bytes of one library document, or empty when it is listed but not
     /// on the card (a Kobo Store title that has not been downloaded).
     LibraryDocument { id: String, bytes: Vec<u8> },
+    /// Part of one library document: the bytes from `offset`, and what the
+    /// file was when they were read.
+    ///
+    /// `size` is the whole file's length, so a reader knows when to stop
+    /// asking without a round trip to find out. Fewer bytes than were asked
+    /// for means the file ends there, and none means `offset` is at or past
+    /// its end.
+    ///
+    /// Nothing holds the file still between one range and the next, and a
+    /// book can be replaced while it is being read: a sync delivers a newer
+    /// copy, or the owner saves over it. `stamp` is the same for as long as
+    /// the file has not been written again, so a reader that sees `stamp` or
+    /// `size` differ from the first range it was given is holding pieces of
+    /// two different files, and has to throw them away. It means nothing
+    /// else and is not a time to show anybody. Requires
+    /// [`LIBRARY_RANGE_VERSION`].
+    LibraryRange {
+        id: String,
+        offset: u32,
+        size: u32,
+        stamp: u64,
+        bytes: Vec<u8>,
+    },
     /// The audiobooks on the reader, and whether a bound cut the walk short.
     /// Requires [`AUDIOBOOK_VERSION`].
     AudioLibrary {
@@ -2014,8 +2070,21 @@ pub enum DeviceResult {
     Text(TextOutcome),
 }
 
-/// The largest library listing one result may carry.
-pub const MAX_LIBRARY_ENTRIES: usize = 400;
+/// The most documents one library listing may carry.
+///
+/// As many as the runtime's walk of the card will find before it stops. It
+/// was 400, a fifth of that, so a reader holding a few hundred more books
+/// than this listed the first 400 and said the rest could not be shown, on
+/// a card the runtime had already read to the end. An entry is at most 362
+/// bytes, an identifier of [`MAX_LIBRARY_ID_LEN`] and a title of
+/// [`MAX_LIBRARY_TITLE_LEN`] with their lengths and three small fields, so
+/// the fullest listing is under three quarters of a megabyte in a frame
+/// that may be eight.
+///
+/// The count is checked on both sides, and a listing past it is refused
+/// rather than cut, which ends the session that asked. So the runtime's
+/// own bound must never be raised past this one without it.
+pub const MAX_LIBRARY_ENTRIES: usize = 2_000;
 /// How many audiobooks one listing may name. A collection past this is
 /// listed as far as this and said to be cut short.
 pub const MAX_AUDIO_ENTRIES: usize = 2_000;
@@ -2037,6 +2106,23 @@ pub const MAX_LIBRARY_ID_LEN: usize = 256;
 pub const MAX_LIBRARY_TITLE_LEN: usize = 96;
 /// The largest document handed over as one device result.
 pub const MAX_LIBRARY_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
+/// The most bytes one range of a library document may carry.
+///
+/// The piece a shelf blob moves in, [`MAX_SHELF_CHUNK`], for the same
+/// reasons: a book is tens of megabytes and arrives in a hundred round trips
+/// rather than a thousand, and neither side holds a frame near the limit
+/// while it also holds the book being put together. It is also what the
+/// runtime reads from the card in one go, on the one thread that draws the
+/// panel and reads touches, so a larger piece is a longer moment in which the
+/// reader does neither.
+pub const MAX_LIBRARY_RANGE_BYTES: usize = MAX_SHELF_CHUNK;
+/// The largest document Books opens, a range at a time.
+///
+/// Books decides this and keeps its reasons beside its own use of it. The
+/// number stands here as well because the computer has to say, before a copy
+/// that may take minutes, whether the book being sent will open when it
+/// lands, and two copies of one number would one day disagree.
+pub const MAX_LIBRARY_OPENABLE_BYTES: usize = 32 * 1024 * 1024;
 
 /// One document the owner already has, as far as a shelf is concerned.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3499,6 +3585,21 @@ fn encode_device_request(
         DeviceRequest::ReadLibrary { .. } | DeviceRequest::RemoveArticle { .. } => {
             return Err(ProtocolError::InvalidValue("library id"));
         }
+        DeviceRequest::ReadLibraryRange { .. } if version < LIBRARY_RANGE_VERSION => {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceRequest::ReadLibraryRange { id, offset, length } => {
+            if !valid_library_id(id) {
+                return Err(ProtocolError::InvalidValue("library id"));
+            }
+            if !valid_library_range_length(*length) {
+                return Err(ProtocolError::InvalidValue("library range"));
+            }
+            output.push(63);
+            push_string(output, id)?;
+            push_u32(output, *offset);
+            push_u32(output, *length);
+        }
         DeviceRequest::ListAudio => output.push(53),
         DeviceRequest::MarkNoticesRead
         | DeviceRequest::ClearNotices
@@ -3975,6 +4076,18 @@ fn decode_device_request(
             }
             Ok(DeviceRequest::SetTimeZone { zone })
         }
+        63 if version >= LIBRARY_RANGE_VERSION => {
+            let id = reader.string()?;
+            if !valid_library_id(&id) {
+                return Err(ProtocolError::InvalidValue("library id"));
+            }
+            let offset = reader.u32()?;
+            let length = reader.u32()?;
+            if !valid_library_range_length(length) {
+                return Err(ProtocolError::InvalidValue("library range"));
+            }
+            Ok(DeviceRequest::ReadLibraryRange { id, offset, length })
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -4245,6 +4358,30 @@ fn encode_device_result(
             }
             output.push(20);
             push_string(output, id)?;
+            push_u32(
+                output,
+                u32::try_from(bytes.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            output.extend_from_slice(bytes);
+        }
+        DeviceResult::LibraryRange { .. } if version < LIBRARY_RANGE_VERSION => {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceResult::LibraryRange {
+            id,
+            offset,
+            size,
+            stamp,
+            bytes,
+        } => {
+            if !valid_library_id(id) || !valid_library_range(*offset, *size, bytes.len()) {
+                return Err(ProtocolError::InvalidValue("library range"));
+            }
+            output.push(26);
+            push_string(output, id)?;
+            push_u32(output, *offset);
+            push_u32(output, *size);
+            push_u64(output, *stamp);
             push_u32(
                 output,
                 u32::try_from(bytes.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
@@ -4567,6 +4704,7 @@ fn decode_device_result(
                 offset_minutes,
             })
         }
+        26 if version >= LIBRARY_RANGE_VERSION => decode_library_range(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
 }
@@ -4721,6 +4859,42 @@ fn decode_library_document(reader: &mut Reader<'_>) -> Result<DeviceResult, Prot
     }
     let bytes = reader.take(length)?.to_vec();
     Ok(DeviceResult::LibraryDocument { id, bytes })
+}
+
+/// Whether a range request asks for a piece the wire can carry. A request for
+/// nothing is refused as well: it could only be answered with nothing, which
+/// is also how the end of the file is answered, and a reader that cannot tell
+/// the two apart asks for the same nothing for ever.
+fn valid_library_range_length(length: u32) -> bool {
+    usize::try_from(length).is_ok_and(|length| (1..=MAX_LIBRARY_RANGE_BYTES).contains(&length))
+}
+
+/// Whether a range answer describes bytes that are inside the file it says
+/// they came from. Checked at both ends, because a reader copies each piece
+/// to `offset` in a buffer it sized from `size`, and an answer that claimed a
+/// megabyte of a ten-byte file would be believed.
+fn valid_library_range(offset: u32, size: u32, length: usize) -> bool {
+    let left = u64::from(size).saturating_sub(u64::from(offset));
+    length <= MAX_LIBRARY_RANGE_BYTES && u64::try_from(length).is_ok_and(|length| length <= left)
+}
+
+fn decode_library_range(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let id = reader.string()?;
+    let offset = reader.u32()?;
+    let size = reader.u32()?;
+    let stamp = reader.u64()?;
+    let length = usize::try_from(reader.u32()?).unwrap_or(usize::MAX);
+    if !valid_library_id(&id) || !valid_library_range(offset, size, length) {
+        return Err(ProtocolError::InvalidValue("library range"));
+    }
+    let bytes = reader.take(length)?.to_vec();
+    Ok(DeviceResult::LibraryRange {
+        id,
+        offset,
+        size,
+        stamp,
+        bytes,
+    })
 }
 
 fn decode_auto_update(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -9113,6 +9287,9 @@ mod update_task_tests;
 
 #[cfg(test)]
 mod text_entry_tests;
+
+#[cfg(test)]
+mod library_range_tests;
 
 #[cfg(test)]
 mod accent_wire_tests;

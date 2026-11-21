@@ -1107,6 +1107,7 @@ dependencies = [
  "kobo-article",
  "kobo-catalog",
  "kobo-comic",
+ "kobo-dict",
  "kobo-doc",
  "kobo-frame-host",
  "kobo-html",

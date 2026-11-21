@@ -111,7 +111,7 @@ pub fn asked(bytes: &[u8]) -> Result<Asked, String> {
 pub(crate) fn source_of(asked: &Asked) -> super::clip::Source {
     if let Some(selection) = &asked.selection {
         let title = escape(asked.title.as_deref().unwrap_or("Selection"));
-        return super::clip::Source::Html {
+        return super::clip::Source::Selection {
             html: format!(
                 "<!DOCTYPE html><html><head><title>{title}</title></head>\
                  <body><article><h1>{title}</h1>{selection}</article></body></html>"
@@ -309,7 +309,7 @@ mod tests {
             br#"{"url":"https://a.example/x","title":"Tides <and> moons","html":"<p>all</p>","selection":"<p>chosen</p>"}"#,
         )
         .expect("a selection");
-        let super::super::clip::Source::Html { html, url } = source_of(&selection) else {
+        let super::super::clip::Source::Selection { html, url } = source_of(&selection) else {
             panic!("a selection is a page of its own");
         };
         assert_eq!(url, "https://a.example/x");

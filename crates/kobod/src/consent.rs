@@ -155,6 +155,18 @@ pub fn notice(standing: Standing, profile: &DeviceProfile, firmware: &str) -> Op
 #[cfg(test)]
 mod tests {
     use super::{already_accepted, key, notice, record, Decision, Standing};
+
+    #[test]
+    fn acceptances_are_kept_under_a_name_no_application_can_take() {
+        // An application that owned this record could accept an untested
+        // reader on its owner's behalf.
+        let ledger = super::ledger(std::path::Path::new(""));
+        let name = ledger
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("a name");
+        assert!(kobo_app_store::is_public_reserved_app_id(name), "{name}");
+    }
     use kobo_profile::CLARA_BW_391;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU32, Ordering};

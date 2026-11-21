@@ -51,16 +51,38 @@ and keeps looking for a minute.
 ## Sending a file
 
 `kobo send FILE` sends a file or folder to the app that opens it and says
-which app received it: photos to Frame, Markdown notes to Vault, OPML lists to
-Feeds, CBZ comics to Panels, story files to Parser, and Anki APKG or COLPKG
-decks to Flashcards, which imports them first. A folder of PDF scores goes to
-Music Stand. A single PDF could be a score for Music Stand or a pattern for
-Needles, so you are asked which, or you name it with `--to musicstand` or
-`--to needles`. Panels keeps one comic, so a send to it asks before it
-replaces the one there; `--replace` answers yes in a script.
+which app received it: books and documents to Books, photos to Frame,
+Markdown notes to Vault, OPML lists to Feeds, CBZ comics to Panels, story
+files to Parser, and Anki APKG or COLPKG decks to Flashcards, which imports
+them first. A folder of PDF scores goes to Music Stand. A single PDF could be
+a score for Music Stand, a pattern for Needles or a document to read, so you
+are asked which, or you name it with `--to musicstand`, `--to needles` or
+`--to books`. Panels keeps one comic, so a send to it asks before it replaces
+the one there; `--replace` answers yes in a script.
 `kobo send --preview FILE --out DIR` checks or renders the file on this
 computer without sending it, and `kobo send --retry` repeats the last send
 that failed.
+
+### Books and documents
+
+`kobo send novel.epub` copies the book over Wi-Fi into a `Books` folder on
+the reader's card, where Books lists it, and the reader shows a notice that it
+arrived. Text and HTML files (`.txt`, `.html`, `.htm`, `.xhtml`) and Kobo
+EPUBs (`.kepub.epub`) go the same way, and so does a folder of any of these,
+one file at a time. A Markdown file goes to Vault unless you say
+`--to books`.
+
+Books opens EPUB, text, HTML and Markdown itself. It lists a PDF or a Kobo
+EPUB, and the Kobo's own reader opens those. A file larger than Books opens
+is sent all the same, and the command says so; `kobo send --preview FILE`
+says it before anything is sent. One send copies a file of up to 512 MB.
+
+A book never replaces another. A different file with the same name is saved
+beside it as `novel (2).epub`, and a book the reader already has in its
+`Books` folder, under any name, is recognised and not copied again. The card
+is asked for room first: a send leaves 64 MB free for the Kobo's own library
+and says how much there is when a book does not fit. A name with characters
+the card refuses, such as `?` or `:`, is saved without them.
 
 ## Sending a web article
 
@@ -75,11 +97,17 @@ For a page you saved from the browser, such as one you had to sign in to
 read, give the file and the address it came from:
 `kobo clip page.html --url https://...`.
 
+An arXiv abstract page (`https://arxiv.org/abs/...`) becomes a book of the
+paper itself where arXiv serves the paper as a web page. Where it does not,
+the book is the abstract page and the command says so.
+
 Pictures are fitted to the reader's screen and turned grey. `--colour`
 keeps their colour and `--no-pictures` leaves them out. At most 40 pictures
-are fetched and a book that goes to the reader is kept under the 4 MB Books
-opens; pictures past either limit are left out, and the command says how
-many. A page with no article on it is refused with the reason.
+are fetched and an article that goes to the reader is kept under 4 MB, the
+size Books opens at once; pictures past either limit are left out, and the
+command says how many. A page with no article on it, such as a section front, an archive or
+a list of threads, is refused with the reason. So is a page whose article
+could not be kept whole: a clip either holds the article or says why not.
 
 The article goes to the reader `kobo setup` saved, or to `--reader NAME`,
 `--device IP` or `--sim`, over the connection `kobo send` uses, into the
@@ -104,11 +132,14 @@ also asks, without a word unless something arrives, each time it opens.
 ### From the browser
 
 `kobo clip install --browser chrome` (or `edge`, `brave`, `chromium`,
-`firefox`, `safari`, or `--all` for every one found here) adds Send page to
-Kobo, Send link to Kobo and Send selection to Kobo to the browser's
-right-click menu. The extension sends the page as you see it, so a page you
-signed in to read clips as it reads, and a notification says Sending to
-your Kobo, then Landed on your Kobo or Waiting for your Kobo.
+`firefox`, `safari`, or `--all` for every one found here) adds a Send to
+Kobo button to the browser's toolbar, which sends the page you are on with
+one click or with Alt+Shift+K, and adds Send page to Kobo, Send link to Kobo
+and Send selection to Kobo to the right-click menu. The extension sends the
+page as you see it, so a page you signed in to read clips as it reads, and a
+notification says Sending to your Kobo, then Landed on your Kobo or Waiting
+for your Kobo. A browser may keep the button in its extensions menu until
+you pin it, and its shortcuts page is where to change the keys.
 
 Install writes the small manifest each browser reads to find `kobo` (in your
 own profile folders, or under `HKEY_CURRENT_USER` on Windows) and copies the
@@ -138,6 +169,7 @@ unless you name another target.
 | App | Command | What it does |
 | --- | --- | --- |
 | [Birds](../apps/birds/README.md) | `kobo birds listen`, `status`, `stop`, `push` | Sends Fugleramme collages to the reader |
+| Books | `kobo send FILE`, `kobo dict install`, `list`, `remove`, `check` | Sends books and documents, and installs [offline dictionaries](DICTIONARIES.md) |
 | [Deck](../apps/deck/README.md) | `kobo deck init`, `set`, `ls`, `show`, `push` | Builds and sends the pad layout |
 | [Feeds](../examples/rss/README.md) | `kobo feeds check`, `push` | Checks and sends an OPML subscription list |
 | [Fieldbook](../apps/fieldbook/README.md) | `kobo fieldbook new`, `inspect`, `photos`, `push`, `ls`, `export` | Prepares field packs and fetches checklists |

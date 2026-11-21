@@ -3,10 +3,10 @@
   "display_name": "Hacker News",
   "short_label": "Hacker News",
   "summary": "Read Top, New, Ask, and Show stories with complete comment threads.",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "glyph": "news",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The page arrows in the top bar now point the right way on every page. A tab that cannot load says it is not on Wi-Fi the same way a discussion does, with a Join Wi-Fi button."
+  "release_notes": "Find words in an article and go to any page from the reading controls. Links to newsletter posts open as the article instead of an empty page."
 }

@@ -65,6 +65,19 @@ mod tests {
     }
 
     #[test]
+    fn the_choice_is_kept_under_a_name_no_application_can_take() {
+        // An application's state folder is named after its identifier, in
+        // the same folder as this file. One published as time-zone would
+        // have been handed the owner's choice as its own state.
+        let name = state_file(std::path::Path::new(""));
+        let name = name
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("a name");
+        assert!(kobo_app_store::is_public_reserved_app_id(name), "{name}");
+    }
+
+    #[test]
     fn a_choice_is_kept_read_back_and_forgotten() {
         let root = scratch("kept");
         assert_eq!(chosen(&root), None);

@@ -419,6 +419,7 @@ const ACTS_ON_A_READER: &[ReaderCommand] = &[
     ReaderCommand::sends("feeds", &["push"]),
     ReaderCommand::sends("deck", &["push"]),
     ReaderCommand::sends("clip", &["sync"]),
+    ReaderCommand::sends("dict", &["install", "list", "remove"]),
     ReaderCommand::sends("secret", &["set", "list", "remove"]),
     ReaderCommand::sends("trust", &["set", "list", "remove"]),
     ReaderCommand::sends("sync", &["setup"]),

@@ -272,46 +272,97 @@ pub enum Said {
     NotPaired,
 }
 
+/// What the shelf says about a sync: one line, and where the next step is a
+/// command on the computer, that command on its own.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Line {
+    /// What happened, in the owner's terms.
+    pub words: String,
+    /// Whether it reports something that went wrong.
+    pub trouble: bool,
+    /// What to do about it, when that is something to type: the sentence
+    /// that leads up to the command, and the command.
+    ///
+    /// Apart from the sentence because a command inside one is a command
+    /// nobody can copy: the line breaker wrapped `kobo sidekick init` after
+    /// its first word, and the full stop that ended the sentence read as
+    /// part of what to type.
+    pub next: Option<(&'static str, &'static str)>,
+}
+
 impl Said {
-    /// The line itself, and whether it reports a failure.
+    /// The line the shelf shows for this.
     #[must_use]
-    pub fn text(&self) -> (String, bool) {
+    pub fn line(&self) -> Line {
+        let said = |words: &str| Line {
+            words: words.to_owned(),
+            trouble: false,
+            next: None,
+        };
+        let failed = |words: String, next: Option<(&'static str, &'static str)>| Line {
+            words,
+            trouble: true,
+            next,
+        };
         match self {
-            Self::Checking => ("Checking your computer".to_owned(), false),
-            Self::Arrived(1) => ("1 article arrived".to_owned(), false),
-            Self::Arrived(count) => (format!("{count} articles arrived"), false),
-            Self::NothingNew => ("Nothing new".to_owned(), false),
-            Self::Waiting(count) => (
-                format!(
-                    "{} waiting on your computer could not be copied to this reader. Run kobo clip sync on the computer to see why.",
-                    if *count == 1 {
-                        "1 article".to_owned()
-                    } else {
-                        format!("{count} articles")
-                    }
-                ),
-                true,
+            Self::Checking => said("Checking your computer"),
+            Self::Arrived(1) => said("1 article arrived"),
+            Self::Arrived(count) => said(&format!("{count} articles arrived")),
+            Self::NothingNew => said("Nothing new"),
+            Self::Waiting(count) => failed(
+                if *count == 1 {
+                    "1 article is waiting on your computer, and it could not send it to this reader."
+                        .to_owned()
+                } else {
+                    format!(
+                        "{count} articles are waiting on your computer, and it could not send them to this reader."
+                    )
+                },
+                Some((
+                    "To see what stopped it, run this on the computer:",
+                    "kobo clip sync",
+                )),
             ),
-            Self::NotAnswering => (
-                "Your computer is not answering. Start kobo sidekick run on it, then try again.".to_owned(),
-                true,
+            Self::NotAnswering => failed(
+                "Your computer is not answering. It may be asleep, switched off or on another network."
+                    .to_owned(),
+                Some((
+                    "If it is awake and on this Wi-Fi, start its helper again:",
+                    "kobo sidekick run",
+                )),
             ),
-            Self::Offline => ("This reader is not on Wi-Fi.".to_owned(), true),
-            Self::ComputerTrouble => (
-                "Your computer could not send articles just now. Run kobo clip sync on it to see why.".to_owned(),
-                true,
+            Self::Offline => failed(
+                "This reader is not on Wi-Fi. Connect in Settings, then tap Sync.".to_owned(),
+                None,
             ),
-            Self::Refused => (
-                "Your computer did not accept this reader. Run kobo sidekick init on it again.".to_owned(),
-                true,
+            Self::ComputerTrouble => failed(
+                "Your computer answered, but could not look for articles to send.".to_owned(),
+                Some((
+                    "To see what went wrong, run this on the computer:",
+                    "kobo clip sync",
+                )),
             ),
-            Self::Outdated => (
-                "Your computer's kobo command is older than Sync. Update it, then try again.".to_owned(),
-                true,
+            Self::Refused => failed(
+                "Your computer no longer recognises this reader, so it sent nothing.".to_owned(),
+                Some((
+                    "Pair them again by running this on the computer:",
+                    "kobo sidekick init",
+                )),
             ),
-            Self::NotPaired => (
-                "Sync asks your computer for articles. Run kobo sidekick init on it once to pair this reader.".to_owned(),
-                true,
+            Self::Outdated => failed(
+                "Cobalt on your computer is too old to answer Sync.".to_owned(),
+                Some((
+                    "Update it by running this on the computer:",
+                    "kobo update",
+                )),
+            ),
+            Self::NotPaired => failed(
+                "Sync is not set up. It fetches articles your computer saved while this reader was away."
+                    .to_owned(),
+                Some((
+                    "Set it up by running this once on the computer:",
+                    "kobo sidekick init",
+                )),
             ),
         }
     }
@@ -451,13 +502,82 @@ mod tests {
             Some(Said::ComputerTrouble)
         );
         assert_eq!(read("<html>"), None);
-        assert_eq!(Said::Arrived(2).text().0, "2 articles arrived");
-        assert_eq!(Said::Arrived(1).text().0, "1 article arrived");
-        assert_eq!(Said::Checking.text().0, "Checking your computer");
+        assert_eq!(Said::Arrived(2).line().words, "2 articles arrived");
+        assert_eq!(Said::Arrived(1).line().words, "1 article arrived");
+        assert_eq!(Said::Checking.line().words, "Checking your computer");
         assert!(Said::NotAnswering
-            .text()
-            .0
+            .line()
+            .words
             .starts_with("Your computer is not answering"));
+    }
+
+    fn every_line() -> Vec<Said> {
+        vec![
+            Said::Checking,
+            Said::Arrived(1),
+            Said::Arrived(12),
+            Said::NothingNew,
+            Said::Waiting(1),
+            Said::Waiting(3),
+            Said::NotAnswering,
+            Said::Offline,
+            Said::Refused,
+            Said::Outdated,
+            Said::ComputerTrouble,
+            Said::NotPaired,
+        ]
+    }
+
+    #[test]
+    fn a_command_is_never_inside_the_sentence_about_it() {
+        for said in every_line() {
+            let line = said.line();
+            for sentence in [Some(line.words.as_str()), line.next.map(|(lead, _)| lead)]
+                .into_iter()
+                .flatten()
+            {
+                assert!(
+                    !sentence.contains("kobo "),
+                    "{said:?} tells the owner to type something from inside a sentence: {sentence}"
+                );
+                assert!(
+                    !sentence.contains('!') && !sentence.contains('\u{2014}'),
+                    "{said:?}: {sentence}"
+                );
+            }
+            if let Some((lead, command)) = line.next {
+                assert!(line.trouble, "{said:?} offers a fix for nothing wrong");
+                assert!(lead.ends_with(':'), "{said:?}: {lead}");
+                assert!(command.starts_with("kobo "), "{said:?}: {command}");
+                assert!(!command.ends_with('.'), "{said:?}: {command}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_failure_names_the_command_that_mends_it_and_good_news_names_none() {
+        let command = |said: Said| said.line().next.map(|(_, command)| command);
+        assert_eq!(command(Said::Waiting(2)), Some("kobo clip sync"));
+        assert_eq!(command(Said::ComputerTrouble), Some("kobo clip sync"));
+        assert_eq!(command(Said::NotAnswering), Some("kobo sidekick run"));
+        assert_eq!(command(Said::Refused), Some("kobo sidekick init"));
+        assert_eq!(command(Said::NotPaired), Some("kobo sidekick init"));
+        assert_eq!(command(Said::Outdated), Some("kobo update"));
+        // Wi-Fi is mended on the reader, not at a terminal.
+        assert_eq!(command(Said::Offline), None);
+        assert!(Said::Offline.line().words.contains("Settings"));
+        for good in [Said::Checking, Said::Arrived(2), Said::NothingNew] {
+            let line = good.line();
+            assert!(!line.trouble && line.next.is_none(), "{good:?}");
+        }
+        assert!(Said::Waiting(1)
+            .line()
+            .words
+            .starts_with("1 article is waiting"));
+        assert!(Said::Waiting(4)
+            .line()
+            .words
+            .starts_with("4 articles are waiting"));
     }
 
     #[test]

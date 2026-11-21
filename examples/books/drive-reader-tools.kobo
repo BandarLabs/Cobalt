@@ -48,18 +48,22 @@ expect-state /device#/frontlightPercent 20
 tap-id 4294967295
 wait-idle
 expect-missing 20%
-# Show bar keeps the bar over the page while reading, and turns off again.
+# Show bar keeps the bar over the page while reading, with the place said at
+# the foot of the page under it, and both go when it is turned off again.
 expect-missing Aa
+expect-missing Page 1 of
 tap-id reader-controls
 tap-id reader-full-page
 wait-idle
 expect Aa
-expect-missing Page 1 of
+expect-missing 100%
+expect Page 1 of
 shot books-bar-kept
 tap-id reader-controls
 tap-id reader-full-page
 wait-idle
 expect-missing Aa
+expect-missing Page 1 of
 # Marks and bookmarks come back after a restart.
 tap-id 4294967295
 wait-for Continue reading

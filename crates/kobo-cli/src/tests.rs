@@ -1299,6 +1299,59 @@ fn the_start_script_installs_the_staged_public_key_once() {
     assert!(script.contains("rm -f \"$staged_key\""));
 }
 
+/// The runtime starts itself again through this script once an update is in
+/// place, and says so in the environment. That start has to keep the log the
+/// first one began: everything written about the update is in it.
+#[cfg(unix)]
+#[test]
+fn the_start_script_begins_the_log_and_a_start_after_an_update_adds_to_it() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let scratch = std::env::temp_dir().join(format!("kobo-start-log-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let root = scratch.join("cobalt");
+    fs::create_dir_all(root.join("bin")).expect("an installation");
+    // A runtime that says what it was started with and whether it was told
+    // an update had settled, which is all the log is asked to keep here.
+    fs::write(
+        root.join("bin/kobod"),
+        "#!/bin/sh\necho \"started $1 settled=${KOBOD_UPDATE_SETTLED:-no}\"\n",
+    )
+    .expect("a runtime");
+    fs::set_permissions(root.join("bin/kobod"), fs::Permissions::from_mode(0o755))
+        .expect("executable");
+    let log = scratch.join("kobod.txt");
+    // The script as shipped, pointed at the scratch installation and log.
+    let script = super::START_SCRIPT
+        .replace("/mnt/onboard/.adds/cobalt", &root.to_string_lossy())
+        .replace("/mnt/onboard/kobod.txt", &log.to_string_lossy());
+    assert!(
+        !script.contains("/mnt/onboard"),
+        "a device path was left in"
+    );
+    let path = scratch.join("start.sh");
+    fs::write(&path, script).expect("the script");
+    let start = |settled: bool| {
+        let mut command = Command::new("/bin/sh");
+        command.arg(&path).env_remove("KOBOD_UPDATE_SETTLED");
+        if settled {
+            command.env("KOBOD_UPDATE_SETTLED", "1");
+        }
+        assert!(command.status().expect("sh runs").success());
+        fs::read_to_string(&log).expect("the log")
+    };
+
+    assert_eq!(start(false), "started --present settled=no\n");
+    // The start after an update keeps what the first one wrote.
+    assert_eq!(
+        start(true),
+        "started --present settled=no\nstarted --present settled=1\n"
+    );
+    // And the next ordinary start begins the log again, so it does not grow
+    // without end.
+    assert_eq!(start(false), "started --present settled=no\n");
+    let _ = fs::remove_dir_all(&scratch);
+}
+
 #[test]
 fn package_options_are_parsed_and_unknown_ones_refused() {
     let (tarball, folder) = super::parse_package(&[]).expect("defaults");
@@ -2810,5 +2863,44 @@ fn app_link_maintenance_accepts_only_fixed_actions_and_safe_hosts() {
         vec!["status".to_owned()],
     ] {
         assert!(super::parse_app_link(&invalid).is_err());
+    }
+}
+
+#[test]
+fn a_large_upload_travels_in_slices_the_readers_shell_can_hold() {
+    let slice = super::UPLOAD_SLICE;
+    let (begin, end) = (
+        super::SLICE_OPENS.trim_end(),
+        super::SLICE_CLOSES.trim_end(),
+    );
+    for length in [1, 56, 57, 58, slice - 1, slice, slice + 1, 3 * slice] {
+        let bytes = vec![b'k'; length];
+        let mut script = Vec::new();
+        super::append_in_slices(&mut script, &bytes).expect("written");
+        let script = String::from_utf8(script).expect("text");
+        let lines: Vec<&str> = script.lines().collect();
+        let started = lines.iter().filter(|line| **line == begin).count();
+        let finished = lines.iter().filter(|line| **line == end).count();
+        assert_eq!(started, length.div_ceil(slice), "{length}");
+        assert_eq!(started, finished, "every slice is finished");
+        assert_eq!(lines.first(), Some(&begin));
+        assert_eq!(lines.last(), Some(&end), "{length}");
+        let encoded: usize = lines
+            .iter()
+            .filter(|line| **line != begin && **line != end)
+            .map(|line| {
+                assert!(!line.is_empty() && line.len() <= 76, "{length}");
+                line.len()
+            })
+            .sum();
+        assert_eq!(encoded, length.div_ceil(3) * 4, "{length}");
+        // One slice is as much as the shell is ever asked to hold.
+        let longest = script
+            .split(super::SLICE_OPENS)
+            .skip(1)
+            .map(|part| part.split(super::SLICE_CLOSES).next().map_or(0, str::len))
+            .max()
+            .unwrap_or(0);
+        assert!(longest <= slice.div_ceil(57) * 77, "{longest}");
     }
 }

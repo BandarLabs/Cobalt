@@ -15,6 +15,7 @@
 //! the ones that failed taken out before anything is written: a picture that
 //! could not be fetched leaves no broken reference and no orphaned caption.
 
+use std::cell::Cell;
 use std::fmt::Write as _;
 
 use dom_query::NodeRef;
@@ -29,13 +30,28 @@ const DROPPED: [&str; 31] = [
     "fieldset",
 ];
 
-/// Words that, as a whole word of an element's class or id, only ever name
+/// The dropped elements that hold words a reader saw on the page: menus,
+/// side notes, forms and their labels. The rest of [`DROPPED`] is scripts,
+/// styles and embedded media, whose text was never the page's prose. Kept
+/// apart so that a book can say how much of the page went with them.
+const DROPPED_WORDS: [&str; 9] = [
+    "nav", "aside", "footer", "form", "fieldset", "label", "button", "dialog", "menu",
+];
+
+/// Words that, as a whole word of an element's class or id, usually name
 /// furniture: the share bars, sign-up boxes, advertisements and lists of
 /// other stories that a page sets inside the article as well as around it.
 ///
 /// Matched as whole words, so `ad` catches `ad-slot` but not `header` or
 /// `download`. Not applied inside code, where a highlighter's `comment`
 /// class is part of the listing.
+///
+/// A word is where the judgement starts, not the judgement. The same words
+/// are hung on the story itself: a metered magazine marks every paragraph
+/// it may one day withhold `paywall`, and a manual with a chapter called
+/// "Sharing" gives that chapter the id `sharing`. So what a word may take
+/// out depends on what the element is and holds, which [`Walk::furniture`]
+/// decides.
 const FURNITURE_WORDS: [&str; 31] = [
     "ad",
     "ads",
@@ -142,6 +158,28 @@ const ICON_SIDE: u32 = 48;
 /// deep; past this, the text is kept and its structure is not.
 const MAX_DEPTH: usize = 160;
 
+/// How many paragraphs of running prose a furniture word has to be found on
+/// before the page is taken to mean something else by it. One paragraph
+/// called `newsletter` is a sign-up line that happens to be a paragraph;
+/// several paragraphs of prose called `paywall` are the article.
+const PROSE_PARAGRAPHS: usize = 3;
+
+/// The fewest letters in a paragraph counted as running prose: about two
+/// lines of a column. A label, a credit or a call to subscribe is shorter.
+const PROSE_LETTERS: usize = 120;
+
+/// How far an element's class and id are believed.
+///
+/// A name is a guess about what a box is for. The article is first rebuilt
+/// believing the names; if that would throw away most of what the extractor
+/// found, the guess is wrong about this page, and it is rebuilt with the
+/// names ignored, leaving only the rules that go by what an element is.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Names {
+    Trusted,
+    Ignored,
+}
+
 /// One node of the rebuilt body.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Node {
@@ -180,6 +218,10 @@ pub struct Picture {
 pub struct Body {
     pub nodes: Vec<Node>,
     pub pictures: Vec<Picture>,
+    /// Letters left out because a class or an id named them furniture.
+    pub left_to_names: usize,
+    /// Letters left out because they sat in a menu, a side note or a form.
+    pub left_to_kind: usize,
 }
 
 struct Walk<'a> {
@@ -192,6 +234,15 @@ struct Walk<'a> {
     /// Inside `pre` or `code`, where whitespace is the content and class
     /// names belong to a highlighter.
     code: usize,
+    names: Names,
+    /// Furniture words this page hangs on its own running prose, which
+    /// therefore say nothing about the paragraphs, headings and lists that
+    /// carry them here.
+    prose_words: Vec<&'static str>,
+    /// Letters left out so far, by what took them. Counted where an element
+    /// is dropped, which the walk does through a shared reference.
+    left_to_names: Cell<usize>,
+    left_to_kind: Cell<usize>,
 }
 
 /// Rebuilds the article at `root` for a book.
@@ -199,20 +250,32 @@ struct Walk<'a> {
 /// `page` is the address the page came from, which relative sources are
 /// resolved against. `title` and `byline` are what the title page will say,
 /// so that a heading or a credit line that only repeats them is not printed
-/// twice.
+/// twice. `names` says whether classes and ids are believed.
 #[must_use]
-pub fn rebuild(root: &NodeRef<'_>, page: &str, title: &str, byline: Option<&str>) -> Body {
+pub fn rebuild(
+    root: &NodeRef<'_>,
+    page: &str,
+    title: &str,
+    byline: Option<&str>,
+    names: Names,
+) -> Body {
     let mut walk = Walk {
         page,
         title: comparable(title),
         letters: letters(root),
         pictures: Vec::new(),
         code: 0,
+        names,
+        prose_words: words_on_prose(root),
+        left_to_names: Cell::new(0),
+        left_to_kind: Cell::new(0),
     };
     let nodes = walk.flow(&root.children(), 0);
     let mut body = Body {
         nodes,
         pictures: walk.pictures,
+        left_to_names: walk.left_to_names.get(),
+        left_to_kind: walk.left_to_kind.get(),
     };
     tidy(&mut body.nodes);
     drop_header_lines(&mut body.nodes, byline);
@@ -382,16 +445,137 @@ fn words_of(value: &str) -> impl Iterator<Item = String> + '_ {
         .map(str::to_ascii_lowercase)
 }
 
-/// Whether the element's class or id names furniture.
+/// The furniture words in a class or an id.
+fn furniture_words(value: &str) -> impl Iterator<Item = &'static str> + '_ {
+    words_of(value).filter_map(|word| FURNITURE_WORDS.iter().copied().find(|known| *known == word))
+}
+
+fn is_cookie_notice(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    COOKIE_NOTICES.iter().any(|notice| lower.contains(notice))
+}
+
+/// Whether the element's class or id names furniture. Only what the name
+/// says: whether the element is furniture is [`Walk::furniture`]'s to judge.
 pub(crate) fn names_furniture(node: &NodeRef<'_>) -> bool {
-    let named = |value: Option<&str>| {
-        value.is_some_and(|value| {
-            let lower = value.to_ascii_lowercase();
-            words_of(value).any(|word| FURNITURE_WORDS.contains(&word.as_str()))
-                || COOKIE_NOTICES.iter().any(|notice| lower.contains(notice))
-        })
+    [node.attr("class"), node.attr("id")]
+        .iter()
+        .flatten()
+        .any(|value| furniture_words(value).next().is_some() || is_cookie_notice(value))
+}
+
+/// Elements an article is written in, as against the boxes a page is laid
+/// out with. A class on one of these says how the page treats the words
+/// more often than what the words are.
+fn is_written_in(name: &str) -> bool {
+    name == "p"
+        || is_heading(name)
+        || matches!(
+            name,
+            "blockquote"
+                | "ul"
+                | "ol"
+                | "li"
+                | "dl"
+                | "dt"
+                | "dd"
+                | "figure"
+                | "figcaption"
+                | "pre"
+                | "table"
+        )
+}
+
+/// Letters of an element's text that sit inside links.
+fn linked_letters(node: &NodeRef<'_>) -> usize {
+    node.descendants_it()
+        .filter(|inner| inner.node_name().as_deref() == Some("a"))
+        .map(|link| letters(&link))
+        .sum()
+}
+
+/// Whether a paragraph reads as the story rather than as a label or a line
+/// pointing somewhere else: long enough to be a couple of sentences, and
+/// mostly not link.
+fn is_running_prose(node: &NodeRef<'_>) -> bool {
+    let all = letters(node);
+    all >= PROSE_LETTERS && linked_letters(node) * 4 <= all
+}
+
+/// The furniture words this article hangs on its own prose.
+///
+/// Found before the walk, because the first paragraph so marked has to be
+/// kept as surely as the fortieth.
+fn words_on_prose(root: &NodeRef<'_>) -> Vec<&'static str> {
+    let mut counted: Vec<(&'static str, usize)> = Vec::new();
+    for node in root.descendants_it() {
+        if node.node_name().as_deref() != Some("p") {
+            continue;
+        }
+        let Some(class) = node.attr("class") else {
+            continue;
+        };
+        let mut words: Vec<&'static str> = furniture_words(&class).collect();
+        if words.is_empty() || !is_running_prose(&node) {
+            continue;
+        }
+        words.sort_unstable();
+        words.dedup();
+        for word in words {
+            match counted.iter_mut().find(|(known, _)| *known == word) {
+                Some((_, paragraphs)) => *paragraphs += 1,
+                None => counted.push((word, 1)),
+            }
+        }
+    }
+    counted
+        .into_iter()
+        .filter(|(_, paragraphs)| *paragraphs >= PROSE_PARAGRAPHS)
+        .map(|(word, _)| word)
+        .collect()
+}
+
+/// The letters and digits of text, lowercased, for comparing an id with the
+/// heading it was made from whatever the generator did with the rest.
+fn squashed(text: &str) -> String {
+    text.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// Whether an id only spells the element's own heading.
+///
+/// Site generators give every heading, or the section around it, an id made
+/// from its title so that it can be linked to. A chapter called "Comments"
+/// in a style guide then has the id `comments`, which names nothing but the
+/// chapter. The heading's number in front and a counter the generator added
+/// behind are allowed for.
+fn is_own_anchor(node: &NodeRef<'_>, name: &str, id: &str) -> bool {
+    let heading = if is_heading(name) {
+        Some(*node)
+    } else if matches!(name, "section" | "div" | "article") {
+        node.element_children()
+            .into_iter()
+            .next()
+            .filter(|first| first.node_name().as_deref().is_some_and(is_heading))
+    } else {
+        None
     };
-    named(node.attr("class").as_deref()) || named(node.attr("id").as_deref())
+    let Some(heading) = heading else {
+        return false;
+    };
+    let spelled = squashed(id);
+    let said = squashed(&heading.text());
+    if spelled.is_empty() {
+        return false;
+    }
+    let digit = |c: char| c.is_ascii_digit();
+    let (bare_spelled, bare_said) = (
+        spelled.trim_end_matches(digit),
+        said.trim_start_matches(digit),
+    );
+    spelled == said || (!bare_spelled.is_empty() && bare_spelled == bare_said)
 }
 
 /// Letters in an element's text, ignoring whitespace.
@@ -571,12 +755,61 @@ impl Walk<'_> {
 
     fn dropped(&self, node: &NodeRef<'_>, name: &str) -> bool {
         if DROPPED.contains(&name) {
+            if DROPPED_WORDS.contains(&name) {
+                self.left_to_kind
+                    .set(self.left_to_kind.get() + letters(node));
+            }
             return true;
         }
+        // Not counted as lost: what a page hides, the reader never saw.
         if node.has_attr("hidden") || node.attr("aria-hidden").as_deref() == Some("true") {
             return true;
         }
-        self.code == 0 && names_furniture(node) && letters(node) * 2 <= self.letters
+        if self.code == 0 && self.furniture(node, name) {
+            self.left_to_names
+                .set(self.left_to_names.get() + letters(node));
+            return true;
+        }
+        false
+    }
+
+    /// Whether an element whose class or id names furniture is furniture.
+    ///
+    /// The name alone used to decide, and a magazine that marks each of its
+    /// forty body paragraphs `paywall` came out as a book of one paragraph
+    /// and some captions. So the name is weighed against the element:
+    ///
+    /// - a wrapper that holds most of the article is the story, whatever it
+    ///   is called;
+    /// - an id that only spells the element's own heading is an anchor, and
+    ///   the section under it is judged part by part;
+    /// - a word this page hangs on its own running prose says nothing about
+    ///   the paragraphs, headings, lists and figures that carry it, though
+    ///   on a `div` it still names a box: the same page that writes its
+    ///   story in `p class="paywall"` puts its subscribe prompt in
+    ///   `div class="paywall-barrier"`.
+    fn furniture(&self, node: &NodeRef<'_>, name: &str) -> bool {
+        if self.names == Names::Ignored {
+            return false;
+        }
+        let class = node.attr("class");
+        let id = node.attr("id").filter(|id| !is_own_anchor(node, name, id));
+        let mut named = false;
+        let mut only_prose_words = true;
+        for value in [class.as_deref(), id.as_deref()].into_iter().flatten() {
+            if is_cookie_notice(value) {
+                named = true;
+                only_prose_words = false;
+            }
+            for word in furniture_words(value) {
+                named = true;
+                only_prose_words &= self.prose_words.contains(&word);
+            }
+        }
+        if !named || letters(node) * 2 > self.letters {
+            return false;
+        }
+        !(only_prose_words && is_written_in(name))
     }
 
     fn text(&self, node: &NodeRef<'_>) -> Node {
@@ -1254,6 +1487,33 @@ pub fn settle(nodes: &mut Vec<Node>, usable: &[Option<String>]) {
     });
 }
 
+/// Letters of text the rebuilt body holds, ignoring whitespace, for weighing
+/// what was kept against what was left out.
+#[must_use]
+pub fn letters_kept(nodes: &[Node]) -> usize {
+    nodes
+        .iter()
+        .map(|node| match node {
+            Node::Text(text) => text.chars().filter(|c| !c.is_whitespace()).count(),
+            Node::Element(element) => letters_kept(&element.children),
+            Node::Picture(_) => 0,
+        })
+        .sum()
+}
+
+/// Letters of the rebuilt body's text that sit inside links.
+#[must_use]
+pub fn letters_linked(nodes: &[Node]) -> usize {
+    nodes
+        .iter()
+        .map(|node| match node {
+            Node::Element(element) if element.name == "a" => letters_kept(&element.children),
+            Node::Element(element) => letters_linked(&element.children),
+            Node::Text(_) | Node::Picture(_) => 0,
+        })
+        .sum()
+}
+
 /// Whether the body still holds a picture.
 #[must_use]
 pub fn has_picture(nodes: &[Node]) -> bool {
@@ -1350,17 +1610,114 @@ mod tests {
         let document = dom_query::Document::from(html);
         let root = document.select("body");
         let root = *root.nodes().first().expect("a body");
-        rebuild(&root, PAGE, "The Story", Some("Jane Doe"))
+        rebuild(&root, PAGE, "The Story", Some("Jane Doe"), Names::Trusted)
     }
 
     fn written(html: &str) -> String {
-        let body = rebuilt(html);
+        written_from(&rebuilt(html))
+    }
+
+    fn written_ignoring_names(html: &str) -> String {
+        let document = dom_query::Document::from(html);
+        let root = document.select("body");
+        let root = *root.nodes().first().expect("a body");
+        written_from(&rebuild(&root, PAGE, "The Story", None, Names::Ignored))
+    }
+
+    fn written_from(body: &Body) -> String {
         let names: Vec<Option<String>> = (0..body.pictures.len())
             .map(|index| Some(format!("images/{index}.jpg")))
             .collect();
         let mut out = String::new();
-        render_body(&body, &names, &mut out);
+        render_body(body, &names, &mut out);
         out
+    }
+
+    /// A paragraph long enough to be taken for the story.
+    const PROSE: &str = "The tide comes in twice a day, pulled by the moon and, to a lesser \
+                         degree, by the sun, and the harbour fills and empties with it, which is \
+                         why the boats sit on the mud for half of every afternoon in spring.";
+
+    #[test]
+    fn a_word_hung_on_the_storys_own_paragraphs_keeps_them_and_still_takes_out_a_box() {
+        let out = written(&format!(
+            r#"<body>
+            <p>First paragraph, free to all.</p>
+            <p class="paywall">One. {PROSE}</p>
+            <div class="paywall-barrier"><p>Keep reading with a subscription.</p><a href="/subscribe">Subscribe</a></div>
+            <p class="paywall">Two. {PROSE}</p>
+            <p class="body paywall">"No," she said.</p>
+            <h2 class="paywall">Neaps</h2>
+            <ul class="paywall"><li>Springs at new and full moon.</li></ul>
+            <p class="paywall">Three. {PROSE}</p>
+            </body>"#
+        ));
+        assert_eq!(
+            out,
+            format!(
+                "<p>First paragraph, free to all.</p>\n<p>One. {PROSE}</p>\n<p>Two. {PROSE}</p>\n\
+                 <p>&quot;No,&quot; she said.</p>\n<h2>Neaps</h2>\n\
+                 <ul><li>Springs at new and full moon.</li>\n</ul>\n<p>Three. {PROSE}</p>\n"
+            )
+        );
+    }
+
+    #[test]
+    fn a_furniture_word_on_one_or_two_paragraphs_still_names_furniture_however_long_they_run() {
+        let out = written(&format!(
+            r#"<body>
+            <p>{PROSE}</p>
+            <p class="newsletter-pitch">Enjoying this? Our weekly letter carries one long story about the coast and three short ones, with tide tables for the month ahead and a note from the harbour office, sent every Friday before breakfast to anyone who asks for it.</p>
+            <p>{PROSE}</p>
+            <p class="newsletter-pitch">It is free, and it is written by the people who write the stories you have been reading here, and you can stop it whenever you like by answering any one of them with the single word stop.</p>
+            <p>{PROSE}</p>
+            <p class="sponsored">Paid for by the harbour board.</p>
+            </body>"#
+        ));
+        assert_eq!(out, format!("<p>{PROSE}</p>\n").repeat(3));
+    }
+
+    #[test]
+    fn paragraphs_that_are_mostly_link_do_not_make_a_word_the_storys() {
+        let item = r#"<p class="related">Related: <a href="/a">a much longer headline about the harbour wall, the winter storms, the council vote and what the fishing fleet made of all three when it was asked</a></p>"#;
+        let out = written(&format!(
+            "<body><p>{PROSE}</p>{item}{item}{item}<p>{PROSE}</p><p>{PROSE}</p></body>"
+        ));
+        assert_eq!(out, format!("<p>{PROSE}</p>\n").repeat(3));
+    }
+
+    #[test]
+    fn a_chapter_whose_id_only_spells_its_own_heading_is_kept_and_judged_by_its_parts() {
+        let out = written(&format!(
+            r##"<body>
+            <p>{PROSE}</p>
+            <section id="sharing"><h2>Sharing<a class="headerlink" href="#sharing">¶</a></h2><p>Two boats may share a mooring.</p><div class="share-bar"><a href="/x">Share on X</a></div></section>
+            <div id="recommended-reading" class="section level2"><h2>2. Recommended reading</h2><p>The pilot book, every year.</p></div>
+            <h2 id="comments-1">Comments</h2><p>The log has a column for them.</p>
+            <section id="comments"><h2>Comments (2)</h2><p>About time.</p></section>
+            <section class="sharing"><h2>Sharing</h2><p>Tell a friend.</p></section>
+            <p>{PROSE}</p><p>{PROSE}</p>
+            </body>"##
+        ));
+        assert_eq!(
+            out,
+            format!(
+                "<p>{PROSE}</p>\n<h2>Sharing</h2>\n<p>Two boats may share a mooring.</p>\n\
+                 <h2>2. Recommended reading</h2>\n<p>The pilot book, every year.</p>\n\
+                 <h2>Comments</h2>\n<p>The log has a column for them.</p>\n\
+                 <p>{PROSE}</p>\n<p>{PROSE}</p>\n"
+            )
+        );
+    }
+
+    #[test]
+    fn with_names_ignored_only_what_an_element_is_takes_it_out() {
+        let html = r#"<body><p>Kept.</p><div class="comment"><p>Also kept.</p></div><aside>Pull quote</aside><form><button>Sign up</button></form><p>Advertisement</p></body>"#;
+        assert_eq!(written(html), "<p>Kept.</p>\n");
+        assert_eq!(
+            written_ignoring_names(html),
+            "<p>Kept.</p>\n<p>Also kept.</p>\n"
+        );
     }
 
     #[test]
