@@ -1,3 +1,7 @@
+# sweep: needs https://science.nasa.gov/feed/
+# This route follows NASA Science as it is today, so the sweep runs it only
+# while that feed is answering.
+#
 # An empty library points at the directory; Browse lists the bundled feeds.
 wait-for Feeds
 expect No feeds yet
