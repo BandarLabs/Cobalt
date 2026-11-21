@@ -1,4 +1,4 @@
-# sweep: after-main
+# sweep: after-main needs https://science.nasa.gov/feed/
 # The feed the main route followed: its list pages, an article reads to its
 # end and counts as read, search narrows the list, and everything opens again
 # with the network gone and after a restart.
