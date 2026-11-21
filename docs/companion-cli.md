@@ -58,6 +58,19 @@ type them. See [The companion window](#the-companion-window).
 - **Send** sends a file or a web article to the saved reader and lists the
   articles waiting for it.
 
+These are the four places in the Mac app, and an app's page, with sample
+data:
+
+![The Reader place: a Kobo Clara BW with its firmware, the Cobalt on it, free space, and two saved readers](media/desktop/mac-reader.png)
+
+![The Apps place: the apps on the reader, each by a picture of its first screen](media/desktop/mac-apps.png)
+
+![An app's page: Chess, with its first screen, what it does, its version and size, what it needs and an Install button](media/desktop/mac-app-page.png)
+
+![The Browser place: Chrome and Safari set up for Send to Kobo, Firefox not yet](media/desktop/mac-browser.png)
+
+![The Send place: a comic on its way to the reader, a field for a web article, and two articles waiting](media/desktop/mac-send.png)
+
 The window says what it finds when things are not as expected: a reader that
 is plugged in but has not been told to connect, a drive macOS will not let
 `kobo` read, storage that is full or mounted read-only, a catalog that
