@@ -69,6 +69,7 @@
 //! No reader has run this yet. The evidence bar in docs/DEVICES.md applies
 //! before any of it is called tested.
 
+mod door;
 mod hosts;
 #[cfg(test)]
 mod tests;
@@ -259,6 +260,12 @@ struct Layout {
     /// `/sys/class/net`, for loopback and for the tunnel's interface.
     interfaces: PathBuf,
     sshd: PathBuf,
+    /// The SSH server's settings file, which [`door::close`] adds a block to.
+    sshd_config: PathBuf,
+    /// The reader's list of accounts, for where root's home is.
+    passwd: PathBuf,
+    /// What root's home and the server's key files are found under.
+    system: PathBuf,
     /// The Sync engine, whose listening port is its own business and is
     /// allowed for as long as it is that program holding it.
     sync_engine: PathBuf,
@@ -291,6 +298,15 @@ impl Layout {
                 .map(PathBuf::from)
                 .find(|path| path.is_file())
                 .unwrap_or_else(|| PathBuf::from("/usr/sbin/sshd")),
+            // The firmware keeps its server's files in `/etc/ssh`; the bare
+            // `/etc` spelling is the other place the server is built to look.
+            sshd_config: ["/etc/ssh/sshd_config", "/etc/sshd_config"]
+                .iter()
+                .map(PathBuf::from)
+                .find(|path| path.is_file())
+                .unwrap_or_else(|| PathBuf::from("/etc/ssh/sshd_config")),
+            passwd: PathBuf::from("/etc/passwd"),
+            system: PathBuf::from("/"),
             sync_engine: PathBuf::from(crate::syncthing::ENGINE),
             engine: PINNED,
             card_room: ROOM_NEEDED,
@@ -599,6 +615,7 @@ const LEFT_COBALT: &str =
 const SIGNED_OUT: &str =
     "Signed out. If this reader is still listed in your Tailscale admin console, remove it there.";
 const STOPPED: &str = "Tailscale stopped. It starts again the next time you open Cobalt.";
+const CLOSING_PASSWORD_LOGIN: &str = "Closing password login to this reader over SSH.";
 const CANNOT_ROUTE: &str =
     "Tailscale on this reader could not carry traffic for other devices, so \
      it is not an exit node and does not share its network.";
@@ -1522,7 +1539,7 @@ fn new_claim() -> String {
 
 fn supervise(supervisor: &Supervisor) -> End {
     let layout = supervisor.layout;
-    if let Some(refusal) = preflight(layout) {
+    if let Some(refusal) = preflight(supervisor) {
         supervisor.say(&refusal);
         return End::Settled;
     }
@@ -1571,7 +1588,13 @@ fn supervise(supervisor: &Supervisor) -> End {
 
 /// The reasons not to join a tailnet at all, checked before anything is
 /// downloaded or started, in words the owner can act on.
-fn preflight(layout: &Layout) -> Option<Status> {
+///
+/// One of them the reader can put right by itself. Root getting in with a
+/// password is closed here, where a key is already on the reader to keep its
+/// owner in, so switching Tailscale on does not send them to a computer for
+/// something the reader can do. See [`door`].
+fn preflight(supervisor: &Supervisor) -> Option<Status> {
+    let layout = supervisor.layout;
     if let Err(why) = ensure_tun(layout) {
         eprintln!("kobod: tailscale tunnel device: {why}");
         return Some(Status::quiet(
@@ -1579,7 +1602,18 @@ fn preflight(layout: &Layout) -> Option<Status> {
             "This reader's software has no tunnel support, so Tailscale cannot run on it.",
         ));
     }
-    refusal(layout, exposure(layout, None))
+    let mut found = exposure(layout, None);
+    if found == Exposure::PasswordLogin {
+        supervisor.say(&Status::quiet("starting", CLOSING_PASSWORD_LOGIN));
+        match door::close(layout) {
+            Ok(()) => {
+                eprintln!("kobod: tailscale: closed password login for root over SSH");
+                found = exposure(layout, None);
+            }
+            Err(why) => eprintln!("kobod: tailscale: password login left as it is: {why}"),
+        }
+    }
+    refusal(layout, found)
 }
 
 /// The words for a reader that should not be on a tailnet as it stands.

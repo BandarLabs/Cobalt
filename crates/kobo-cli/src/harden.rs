@@ -32,19 +32,13 @@
 
 use std::time::Duration;
 
-/// What every script greps for to decide whether a block is present.
+/// The block's markers and its second line.
 ///
-/// A prefix rather than the whole line, because a hardening applied by hand
-/// carries whatever note its author left on the marker line, and failing to
-/// recognise it would append a second block.
-pub const SENTINEL_FAMILY: &str = "# cobalt-hardening:";
-
-/// First line of the appended block.
-pub const SENTINEL_BEGIN: &str = "# cobalt-hardening: key-only SSH for root.";
-
-/// Last line of the appended block, so a removal by hand is a bounded range,
-/// not a guess at how many lines the block had.
-pub const SENTINEL_END: &str = "# cobalt-hardening: end.";
+/// Shared with the runtime, which writes the same block on the reader before
+/// it puts the reader on a tailnet, so each recognises what the other left.
+pub use kobod::ssh_hardening::{
+    BEGIN as SENTINEL_BEGIN, END as SENTINEL_END, FAMILY as SENTINEL_FAMILY, QUESTIONS_OFF,
+};
 
 /// How long the reader waits for the confirming login before it restores
 /// password login on its own.
@@ -78,15 +72,6 @@ sshd=\"$(command -v sshd || echo /usr/sbin/sshd)\"\n";
 /// started per connection, where there is nothing to reload.
 const RELOAD: &str = "kill -HUP \"$(cat /var/run/sshd.pid 2>/dev/null)\" 2>/dev/null \
                       || killall -HUP sshd 2>/dev/null || true\n";
-
-/// The second line of the block: no question-and-answer login for root.
-///
-/// The server calls it keyboard-interactive, and where the server was built
-/// with PAM it is a password by another name: `PasswordAuthentication no`
-/// alone leaves root's password, or its absence, working through it. A
-/// server built without PAM has nothing behind the questions and loses
-/// nothing by the line.
-pub const QUESTIONS_OFF: &str = "KbdInteractiveAuthentication no";
 
 /// The script that closes password login for root, run over a connection
 /// that authenticated with the key.

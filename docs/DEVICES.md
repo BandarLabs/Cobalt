@@ -308,6 +308,16 @@ How the reader is reached, and who else can reach it:
   a password by another name on a server built with PAM. A server that does
   not accept it gets the first line alone, and a reader set up before the
   second line existed is given it the next time `kobo setup` runs.
+- The runtime writes the same block from the reader, before it puts the
+  reader on a tailnet, when root can still log in with a password and a key
+  is already there. A reader set up before setup closed the door is in that
+  state, and so is one whose server file went back to stock. It cannot log
+  in to itself to prove the change, so it proves it another way: the server
+  checks the new file before it replaces the old one, the server asked
+  afterwards must say root gets nothing by typing, and the listening server
+  must be seen to start again, because a running server enforces what it
+  read when it started and not the file. Any of those failing puts the file
+  back. With no key on the reader it changes nothing.
 - `--no-key` skips the key and therefore the hardening, because without this
   computer's key there is no proof a key works. That leaves the firmware's
   password login as it shipped.

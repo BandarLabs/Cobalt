@@ -35,23 +35,17 @@ for the Tailscale programs, not on a reader. The evidence bar in
 
 ## Setup
 
-1. Set up the reader once over USB, if you have not already. Setup also
-   closes password login to the reader, which Tailscale requires before it
-   will start.
+Everything up to the last step happens on the reader and your phone.
 
-   ```sh
-   kobo setup
-   ```
-
-2. On the reader, open Tailscale and turn on the switch. The first time, the
+1. On the reader, open Tailscale and turn on the switch. The first time, the
    reader downloads Tailscale over Wi-Fi, about 37 MB, and checks it before
    running it.
 
-3. Scan the code on the reader with your phone, sign in to Tailscale and
+2. Scan the code on the reader with your phone, sign in to Tailscale and
    approve the reader. The screen then shows the reader's tailnet name and
    address.
 
-4. Save that address on your computer. After this, `kobo send` and `kobo clip`
+3. Save that address on your computer. After this, `kobo send` and `kobo clip`
    reach the reader from any network while Cobalt is open on it.
 
    ```sh
@@ -163,8 +157,10 @@ accepts:
   it is how `kobo` reaches the reader. The server is asked what it would
   enforce for root arriving from a tailnet address, and must refuse root
   anything typed: password login off, and question-and-answer login off
-  wherever the server uses PAM. `kobo setup` arranges this. A server that
-  cannot be asked counts as open.
+  wherever the server uses PAM. `kobo setup` arranges this, and the reader
+  arranges it for itself when it has not been done: see
+  [Password login](#password-login). A server that cannot be asked counts as
+  open.
 - **Sync, while a sync is running**, recognised by the Sync engine being the
   program that holds the port. It accepts only the computers you paired.
 - **Tailscale's own listener** on the tailnet address.
@@ -186,6 +182,32 @@ A program listening only there is not offered to the tailnet and does not
 stop the reader joining. If a reader you have added nothing to is refused,
 the program named is part of its firmware and the list above is one short:
 report the port and the name.
+
+### Password login
+
+The Kobo software's SSH server is off unless something turns it on, and
+`kobo setup` is what usually does. As Kobo ships it, that server lets root in
+with a password, including an empty one. `kobo setup` closes that once its
+key is in place. A reader set up before setup did so is still open.
+
+The first time you switch Tailscale on, the reader closes it for you, if a
+computer's key is already on the reader so that you are not shut out. It
+adds the same marked block `kobo setup` writes to `/etc/ssh/sshd_config`,
+between `# cobalt-hardening: key-only SSH for root.` and
+`# cobalt-hardening: end.`, has the server check the file before using it,
+restarts the server, and puts the file back if the server does not then
+refuse root a password. Every `kobo` command logs in with the key, so they
+work as before. Logging in to the reader by typing a password stops working,
+from your Wi-Fi as well as from the tailnet.
+
+Switching Tailscale off or signing out leaves the block where it is. To have
+password login back, delete those lines over SSH and restart the reader.
+
+A reader with the server on and no key on it is left alone, because a
+password is then the only way in. Tailscale does not start there, and says
+to run `kobo setup`.
+
+### What this does not cover
 
 This covers TCP. A program that only receives datagrams cannot be held to a
 list this way and stays reachable from the tailnet. On a stock reader that is
@@ -238,7 +260,8 @@ The app saves one word, on or off. The runtime does the rest
 (`crates/kobod/src/tailscale.rs`):
 
 1. Checks that the kernel has a tunnel driver and that everything listening
-   on the reader is something it can account for.
+   on the reader is something it can account for, closing password login
+   for root first where a key is there to keep you in.
 2. Downloads the pinned build, `tailscale_1.104.7_arm.tgz`, from
    `pkgs.tailscale.com` if it is not installed, four megabytes at a time
    straight to a file, and refuses anything that does not match the digests
