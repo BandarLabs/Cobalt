@@ -36,6 +36,99 @@ class SimulatorRunnerTests(unittest.TestCase):
             route.write_text('# sweep: computer\n')
             self.assertTrue(runner.route_directive(route)['computer'])
 
+    def test_a_route_names_a_site_it_reads_by_its_https_address(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            route = Path(temporary) / 'drive-catalog.kobo'
+            route.write_text('# sweep: --bare needs https://catalog.example/feed needs https://other.example/\n')
+            options = runner.route_directive(route)
+            self.assertEqual(options['needs'], ['https://catalog.example/feed', 'https://other.example/'])
+            self.assertTrue(options['bare'])
+            route.write_text('expect Home\n')
+            self.assertEqual(runner.route_directive(route)['needs'], [])
+            for wrong in ('needs catalog.example', 'needs http://catalog.example/', 'needs'):
+                route.write_text(f'# sweep: {wrong}\n')
+                with self.assertRaises(ValueError):
+                    runner.route_directive(route)
+
+    def swept(self, routes, down):
+        """Sweeps a made-up app whose routes are `routes`, with `down` not answering."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = root / 'apps/fixture'
+            app.mkdir(parents=True)
+            for name, text in routes.items():
+                (app / name).write_text(text)
+            ran = []
+
+            def passed(app, *_, label=None, route_override=None, **__):
+                ran.append(label or app)
+                return dict(app=label or app, launched=True, status='pass')
+
+            with patch.object(runner, 'ROOT', root), \
+                    patch.object(runner, 'run_app', passed), \
+                    patch.object(runner, 'answering', lambda address: address not in down):
+                return runner.run_routes('fixture', root / 'kobo', root, {}, 3), ran
+
+    def test_a_route_whose_site_is_down_is_left_out_by_name_and_the_others_still_run(self):
+        routes = {
+            'drive.kobo': '# sweep: needs https://catalog.example/feed\nexpect Popular\n',
+            'drive-search.kobo': '# sweep: needs https://catalog.example/feed\nexpect Search\n',
+            'drive-offline.kobo': '# sweep: --bare\nexpect On this device\n',
+        }
+        results, ran = self.swept(routes, down={'https://catalog.example/feed'})
+        by_name = {result['app']: result for result in results}
+        self.assertEqual(ran, ['fixture:drive-offline'])
+        for left_out in ('fixture', 'fixture:drive-search'):
+            self.assertEqual(by_name[left_out]['status'], 'skipped')
+            self.assertEqual(by_name[left_out]['reason'], 'https://catalog.example/feed is not answering')
+            self.assertFalse(by_name[left_out]['launched'])
+        self.assertEqual(by_name['fixture:drive-offline']['status'], 'pass')
+        # With the site up, every one of them runs.
+        results, ran = self.swept(routes, down=set())
+        self.assertEqual(ran, ['fixture', 'fixture:drive-offline', 'fixture:drive-search'])
+        self.assertTrue(all(result['status'] == 'pass' for result in results))
+
+    def test_a_main_route_may_ask_for_a_site_and_for_nothing_else(self):
+        results, ran = self.swept({'drive.kobo': '# sweep: --bare\nexpect Home\n'}, down=set())
+        self.assertEqual(ran, [])
+        self.assertEqual(results[0]['status'], 'fail')
+        self.assertIn('may only say what it needs', results[0]['error'])
+
+    def test_a_site_counts_as_there_unless_it_cannot_be_reached_or_faults(self):
+        import urllib.error
+
+        def answer(status):
+            class Answer:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_):
+                    return False
+            Answer.status = status
+            return Answer()
+
+        def refusing(code):
+            def raised(*_, **__):
+                raise urllib.error.HTTPError('https://x.example/', code, 'said so', {}, None)
+            return raised
+
+        def unreachable(*_, **__):
+            raise urllib.error.URLError('no route')
+
+        cases = [
+            (lambda *_, **__: answer(200), True),
+            (refusing(403), True),
+            (refusing(404), True),
+            (refusing(503), False),
+            (unreachable, False),
+        ]
+        for number, (opened, there) in enumerate(cases):
+            with patch.object(runner.urllib.request, 'urlopen', opened):
+                self.assertEqual(runner.answering(f'https://case{number}.example/'), there, number)
+        # Asked once a run: the answer is kept, whatever the site does next.
+        with patch.object(runner.urllib.request, 'urlopen', unreachable):
+            self.assertTrue(runner.answering('https://case0.example/'))
+
     def run_fixture(self, startup_failure=False):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
