@@ -645,6 +645,9 @@ pub struct AppServer {
     capture_source: CaptureSource,
     time: clock::Time,
     runtime_navigation: bool,
+    /// The scenario the simulated reader is in, which outlasts any one app
+    /// on it. See [`AppState::join_reader`].
+    scenario: Arc<Mutex<Scenario>>,
 }
 
 impl AppServer {
@@ -698,6 +701,7 @@ impl AppServer {
             capture_source: CaptureSource::default(),
             time,
             runtime_navigation: false,
+            scenario: Arc::new(Mutex::new(Scenario::starting())),
         })
     }
 
@@ -833,6 +837,7 @@ impl AppServer {
         let mut initial = AppState::with_apps(Arc::clone(&self.apps));
         initial.runtime_navigation = self.runtime_navigation;
         initial.protocol = hello.version;
+        initial.join_reader(&self.scenario)?;
         if self.runtime_navigation {
             initial.lifecycle = Lifecycle::Background;
         }
@@ -1164,6 +1169,8 @@ struct AppState {
     pressure_pictures: kobo_ui::PictureCache,
     panel: PanelPreview,
     scenario: Scenario,
+    /// Where the scenario is kept for the app that is started after this one.
+    reader_scenario: Arc<Mutex<Scenario>>,
     lifecycle: Lifecycle,
     last_touch: Option<SimulatedTouch>,
     apps: Arc<Mutex<SimulatedApps>>,
@@ -1228,6 +1235,27 @@ impl Default for AppState {
 }
 
 impl AppState {
+    /// Starts this app on the reader an earlier one may have left in a
+    /// scenario.
+    ///
+    /// A script that restarts an app stops one process and starts another,
+    /// and the new one gets a session of its own. The reader it runs on is
+    /// the same reader: one that had no network before the restart has none
+    /// after it. Each session used to begin in the ordinary scenario instead,
+    /// so a route that went offline and then restarted was quietly online
+    /// from there on, asked the real network for whatever the app fetches
+    /// at launch, and failed or passed with the site it happened to ask.
+    ///
+    /// Done before the app's first message is read, so nothing it asks for
+    /// at launch is answered as if the reader were in some other state.
+    fn join_reader(&mut self, reader: &Arc<Mutex<Scenario>>) -> io::Result<()> {
+        self.scenario = *reader
+            .lock()
+            .map_err(|_| io::Error::other("simulator scenario lock poisoned"))?;
+        self.reader_scenario = Arc::clone(reader);
+        Ok(())
+    }
+
     fn with_apps(apps: Arc<Mutex<SimulatedApps>>) -> Self {
         let time = clock::Time::default();
         let clock_snapshot = time.now().expect("host clock must be in 1970..9999");
@@ -1257,6 +1285,7 @@ impl AppState {
             pressure_pictures: kobo_ui::PictureCache::new(256 * 1024),
             panel: PanelPreview::new(),
             scenario: Scenario::starting(),
+            reader_scenario: Arc::new(Mutex::new(Scenario::starting())),
             lifecycle: Lifecycle::Foreground,
             last_touch: None,
             apps,
@@ -2385,6 +2414,9 @@ impl AppSession {
             return Ok(());
         }
         state.scenario = scenario;
+        if let Ok(mut reader) = state.reader_scenario.lock() {
+            *reader = scenario;
+        }
         state.observe_hardware();
         if scenario == Scenario::CachePressure {
             state.pressure_pictures = kobo_ui::PictureCache::new(256 * 1024);
@@ -6157,6 +6189,44 @@ mod tests {
         assert!(session.change_clock("advance -1").is_err());
         assert!(session.change_clock("advance 999999999999").is_err());
         assert_eq!(session.state.lock().unwrap().simulation_json(), before);
+    }
+
+    #[test]
+    fn an_app_started_after_a_restart_is_on_the_reader_the_last_one_left() {
+        let reader = Arc::new(Mutex::new(Scenario::Normal));
+        let started = |reader: &Arc<Mutex<Scenario>>| {
+            let (_client, server) = channel::pair().unwrap();
+            let mut state = AppState::default();
+            state.join_reader(reader).unwrap();
+            AppSession {
+                state: Arc::new(Mutex::new(state)),
+                writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
+            }
+        };
+        let first = started(&reader);
+        assert_eq!(current_scenario(&first.state), Scenario::Normal);
+        first.set_scenario(Scenario::Offline).unwrap();
+        // The route restarts the app: a new process, and a session of its own.
+        let second = started(&reader);
+        assert_eq!(current_scenario(&second.state), Scenario::Offline);
+        let fetch = kobo_protocol::Task::Fetch {
+            url: "https://fixture.invalid/catalog".into(),
+            offset: 0,
+            max_bytes: 32,
+            credential: None,
+            headers: vec![],
+        };
+        assert_eq!(
+            scenario_task_error(current_scenario(&second.state), &fetch),
+            Some(kobo_protocol::TaskError::Offline)
+        );
+        // Going back online is the script's to say, and the next app hears it.
+        second.set_scenario(Scenario::Normal).unwrap();
+        assert_eq!(current_scenario(&started(&reader).state), Scenario::Normal);
+        // An app on some other simulated reader is not touched by any of it.
+        let elsewhere = started(&Arc::new(Mutex::new(Scenario::Normal)));
+        second.set_scenario(Scenario::HostDown).unwrap();
+        assert_eq!(current_scenario(&elsewhere.state), Scenario::Normal);
     }
 
     #[test]
