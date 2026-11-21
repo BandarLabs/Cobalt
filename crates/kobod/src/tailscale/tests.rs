@@ -755,6 +755,39 @@ fn anything_listening_that_is_not_known_refuses_the_join_and_names_its_port() {
 }
 
 #[test]
+fn a_refused_port_is_named_with_the_program_holding_it_when_that_has_a_plain_name() {
+    let (root, layout) = reader("refuse-named");
+    switch(&layout, true);
+    ssh_server_saying(&root, &layout, KEY_ONLY, KEY_ONLY);
+    fs::write(
+        root.join("proc/net/tcp"),
+        format!("{SOCKETS}{}", listening(8080, 2000)),
+    )
+    .expect("sockets");
+    // Nobody is found holding it, so only the port can be said.
+    assert_eq!(who_listens(&layout, 8080), None);
+    assert!(refusal(&layout, Exposure::Listening(8080))
+        .expect("refused")
+        .message
+        .starts_with("Something is listening on port 8080"));
+    // A name is the program's own word about itself and is drawn on the
+    // reader's screen, so one that is not short and plain is not repeated.
+    let long = format!("/tmp/{}", "x".repeat(33));
+    for odd in ["/tmp/a b", "/tmp/<b>", "/tmp/na\u{ef}ve", long.as_str(), ""] {
+        process_holding(&root, 640, Path::new(odd), &[5, 2000]);
+        assert_eq!(who_listens(&layout, 8080), None, "{odd:?}");
+    }
+    process_holding(&root, 640, Path::new("/usr/local/bin/httpd"), &[5, 2000]);
+    assert_eq!(who_listens(&layout, 8080).as_deref(), Some("httpd"));
+    // A program holding some other socket is not blamed for this one.
+    assert_eq!(who_listens(&layout, 22), None);
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "refused");
+    assert!(status(&layout)[2].starts_with("A program called httpd is listening on port 8080"));
+    assert!(!root.join("daemon-args").exists(), "the daemon was started");
+}
+
+#[test]
 fn the_ssh_server_is_allowed_on_the_ports_it_says_are_its_own() {
     let (root, layout) = reader("allow-ssh-port");
     let moved = "port 2222\npermitrootlogin prohibit-password\npasswordauthentication yes\n";
