@@ -27,7 +27,9 @@ text, headings, lists, tables, code, and figures with their captions, with
 the menus, advertisements, share buttons and cookie notices left out. The
 first page names the site, the author and the date, and links back to the
 page. Pictures are fitted to the reader's screen and turned grey; --colour
-keeps their colour, and --no-pictures leaves them out.
+keeps their colour, and --no-pictures leaves them out. An arXiv abstract
+page becomes a book of the paper itself where arXiv serves the paper as a
+web page, and of the abstract with a note where it does not.
 
 The book goes to your Kobo's Articles shelf, the saved reader unless a
 target is named. A reader that is asleep or away gets it later: it waits on
@@ -36,8 +38,8 @@ the next clip that finds the reader awake. --later keeps it waiting without
 trying now. --out saves it to a file or folder on this computer instead and
 sends nothing.
 
-install adds Send to Kobo to a browser's right-click menu, and uninstall
-takes it away again.";
+install adds Send to Kobo to a browser's toolbar and right-click menu, and
+uninstall takes it away again.";
 
 struct Request {
     source: Source,
@@ -47,9 +49,11 @@ struct Request {
     options: kobo_article::Options,
 }
 
-/// The largest book that goes to the reader: the most Books can open, so
-/// pictures past it are left out with a note rather than the article
-/// arriving as a book that will not open there.
+/// The largest article that goes to the reader: what the runtime hands
+/// Books in one answer. Books opens larger books a range at a time, but an
+/// article is opened the moment it lands, so it is kept to the size that
+/// opens at once, and that a reader on an older Cobalt can open at all.
+/// Pictures past it are left out with a note.
 const READER_BOOK_BYTES: usize = kobo_protocol::MAX_LIBRARY_DOCUMENT_BYTES;
 
 pub(crate) enum Source {
@@ -59,6 +63,12 @@ pub(crate) enum Source {
     },
     /// A page a browser already rendered, as the extension sends it.
     Html {
+        html: String,
+        url: String,
+    },
+    /// What the owner selected on a page. It is the whole of what they asked
+    /// for, so no paper is looked for behind the page it came from.
+    Selection {
         html: String,
         url: String,
     },
@@ -200,7 +210,8 @@ pub(crate) fn make(
             let html = kobo_article::page_text(&bytes).map_err(|refusal| refusal.to_string())?;
             kobo_article::clip(&html, url, &fetch, options)
         }
-        Source::Html { html, url } => kobo_article::clip(html, url, &fetch, options),
+        Source::Html { html, url } => kobo_article::clip_rendered(html, url, &fetch, options),
+        Source::Selection { html, url } => kobo_article::clip(html, url, &fetch, options),
         Source::Address(address) => {
             eprintln!("Fetching {address}");
             // Read against wherever the address redirected to, so the page's
@@ -208,7 +219,22 @@ pub(crate) fn make(
             kobo_article::clip_address(address, &fetch, options)
         }
     }
-    .map_err(|refusal| refusal.to_string())
+    .map_err(|refusal| said_of(&refusal))
+}
+
+/// A refusal in the clipper's words, with the way forward when there is one.
+///
+/// A link to a PDF or to a book is nothing to cut an article out of, but
+/// whoever pasted it still wants it on the reader, and `kobo send` takes the
+/// file as it is. Saying only what the link was not left them to find that
+/// out.
+fn said_of(refusal: &kobo_article::Refusal) -> String {
+    match refusal {
+        kobo_article::Refusal::NotAWebPage("a PDF" | "an archive") => {
+            format!("{refusal} Save the file, then send it with kobo send FILE.")
+        }
+        _ => refusal.to_string(),
+    }
 }
 
 /// Options for a book that goes to the reader.
@@ -579,6 +605,18 @@ mod tests {
 
     fn words(line: &str) -> Vec<String> {
         line.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn a_link_to_a_pdf_or_a_book_is_refused_with_the_command_that_sends_the_file() {
+        for what in ["a PDF", "an archive"] {
+            let said = said_of(&kobo_article::Refusal::NotAWebPage(what));
+            assert!(said.contains(what), "{said}");
+            assert!(said.ends_with("kobo send FILE."), "{said}");
+        }
+        // A picture is not something Books opens, so nothing is promised.
+        let said = said_of(&kobo_article::Refusal::NotAWebPage("a picture"));
+        assert!(!said.contains("kobo send"), "{said}");
     }
 
     #[test]

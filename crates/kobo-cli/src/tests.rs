@@ -2859,3 +2859,42 @@ fn app_link_maintenance_accepts_only_fixed_actions_and_safe_hosts() {
         assert!(super::parse_app_link(&invalid).is_err());
     }
 }
+
+#[test]
+fn a_large_upload_travels_in_slices_the_readers_shell_can_hold() {
+    let slice = super::UPLOAD_SLICE;
+    let (begin, end) = (
+        super::SLICE_OPENS.trim_end(),
+        super::SLICE_CLOSES.trim_end(),
+    );
+    for length in [1, 56, 57, 58, slice - 1, slice, slice + 1, 3 * slice] {
+        let bytes = vec![b'k'; length];
+        let mut script = Vec::new();
+        super::append_in_slices(&mut script, &bytes).expect("written");
+        let script = String::from_utf8(script).expect("text");
+        let lines: Vec<&str> = script.lines().collect();
+        let started = lines.iter().filter(|line| **line == begin).count();
+        let finished = lines.iter().filter(|line| **line == end).count();
+        assert_eq!(started, length.div_ceil(slice), "{length}");
+        assert_eq!(started, finished, "every slice is finished");
+        assert_eq!(lines.first(), Some(&begin));
+        assert_eq!(lines.last(), Some(&end), "{length}");
+        let encoded: usize = lines
+            .iter()
+            .filter(|line| **line != begin && **line != end)
+            .map(|line| {
+                assert!(!line.is_empty() && line.len() <= 76, "{length}");
+                line.len()
+            })
+            .sum();
+        assert_eq!(encoded, length.div_ceil(3) * 4, "{length}");
+        // One slice is as much as the shell is ever asked to hold.
+        let longest = script
+            .split(super::SLICE_OPENS)
+            .skip(1)
+            .map(|part| part.split(super::SLICE_CLOSES).next().map_or(0, str::len))
+            .max()
+            .unwrap_or(0);
+        assert!(longest <= slice.div_ceil(57) * 77, "{longest}");
+    }
+}

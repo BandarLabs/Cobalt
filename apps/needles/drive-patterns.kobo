@@ -29,7 +29,7 @@ tap-at 536,724
 wait-for Page 3 of
 expect 100%
 # The plus end of the text size stepper; its action names the size it goes to.
-tap-at 942,259
+tap-at 942,337
 wait-for 110%
 tap Bookmark
 wait-for Bookmarked

@@ -111,6 +111,37 @@ impl Dictionary {
     }
 }
 
+/// What a tool that prepares a dictionary on a computer needs to say about
+/// it before it is copied to a reader.
+///
+/// The reader only ever looks words up, so the entries stay private to the
+/// lookup. A command that converts or installs a dictionary has a different
+/// question: how much of the file this reader kept. Answering it from here
+/// means the count an owner is shown is the count the reader will load, not
+/// a second parser's opinion of the same file.
+impl Dictionary {
+    /// How many entries were kept, counting every sense of a headword.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.values().map(Vec::len).sum()
+    }
+
+    /// Whether no line of the source was an entry, which is the one thing
+    /// [`Index::install`] refuses a dictionary for.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// The headwords as they were written, in the order lookups compare them.
+    pub fn headwords(&self) -> impl Iterator<Item = &str> {
+        self.entries
+            .values()
+            .flatten()
+            .map(|entry| entry.headword.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Index {
     dictionaries: Vec<Dictionary>,
@@ -294,6 +325,22 @@ mod tests {
         let found = index.lookup("word", None);
         assert_eq!(found.len(), MAX_ENTRIES_PER_LOOKUP);
         assert_eq!(found[0].dictionary, "D11");
+    }
+
+    #[test]
+    fn a_dictionary_says_how_many_entries_it_kept_and_which() {
+        let dictionary = Dictionary::from_tsv(
+            "Pocket",
+            "# name=Pocket\nreader\tOne who reads.\nReader\tA device for reading.\nbroken\nink\tA coloured fluid.\n",
+        );
+        assert_eq!(dictionary.len(), 3, "both senses of one headword count");
+        assert!(!dictionary.is_empty());
+        assert_eq!(dictionary.rejected_lines, 1);
+        assert_eq!(
+            dictionary.headwords().collect::<Vec<_>>(),
+            ["ink", "reader", "Reader"]
+        );
+        assert!(Dictionary::from_tsv("Empty", "# name=Empty\n").is_empty());
     }
 
     #[test]

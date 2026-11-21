@@ -255,16 +255,22 @@ fn scan(html: &str) -> (Vec<Tag>, Vec<(usize, usize)>) {
         let role = attribute(inside, "role").map(str::to_ascii_lowercase);
         let main = role.as_deref() == Some("main")
             || attribute(inside, "itemprop").is_some_and(|prop| prop == "articleBody");
+        // A region the page itself calls its article is not furniture for a
+        // word in its class. A large newsletter platform classes every post
+        // `newsletter-post`, and with that word taken at face value each of
+        // its articles was cut to nothing while the comments under it stayed.
+        let region = main || name == "article" || name == "main";
         let furniture = role
             .as_deref()
             .is_some_and(|role| FURNITURE_ROLES.contains(&role))
             || attribute(inside, "aria-hidden").is_some_and(|value| value == "true")
-            || ["class", "id"].iter().any(|name| {
-                attribute(inside, name).is_some_and(|value| {
-                    let value = value.to_ascii_lowercase();
-                    FURNITURE_NAMES.iter().any(|word| value.contains(word))
-                })
-            })
+            || (!region
+                && ["class", "id"].iter().any(|name| {
+                    attribute(inside, name).is_some_and(|value| {
+                        let value = value.to_ascii_lowercase();
+                        FURNITURE_NAMES.iter().any(|word| value.contains(word))
+                    })
+                }))
             || has_bare_attribute(inside, "hidden")
             || attribute(inside, "type").is_some_and(|kind| kind.eq_ignore_ascii_case("button"))
             || attribute(inside, "class").is_some_and(|value| {
@@ -550,6 +556,20 @@ mod tests {
         assert!(!cut.contains("Home"));
         assert!(!cut.contains("Site name"));
         assert!(!cut.contains("Copyright"));
+    }
+
+    #[test]
+    fn an_article_classed_as_a_newsletter_post_is_still_the_article() {
+        let page = "<body><div role=\"main\">\
+            <article class=\"typography newsletter-post post\"><h1>The issue</h1>\
+            <div class=\"available-content\"><p>First.</p><p>Second.</p><p>Third.</p></div>\
+            <div class=\"newsletter-signup\"><p>Get the next one by email.</p></div></article>\
+            <div class=\"comments\"><p>A reply.</p></div></div></body>";
+        let cut = main_content(page);
+        assert!(cut.contains("The issue"));
+        assert!(cut.contains("Third."));
+        assert!(!cut.contains("Get the next one"), "the sign-up was kept");
+        assert!(!cut.contains("A reply."), "the comments were kept");
     }
 
     #[test]

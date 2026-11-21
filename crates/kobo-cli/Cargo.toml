@@ -26,6 +26,7 @@ kobo-comic = { path = "../kobo-comic" }
 kobo-net = { path = "../kobo-net" }
 kobo-stream = { path = "../kobo-stream" }
 kobo-doc = { path = "../kobo-doc" }
+kobo-dict = { path = "../kobo-dict" }
 kobo-frame-host = { path = "../kobo-frame-host" }
 kobo-music-host = { path = "../kobo-music-host" }
 kobo-vault-host = { path = "../kobo-vault-host" }

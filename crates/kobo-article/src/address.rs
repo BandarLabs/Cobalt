@@ -170,6 +170,40 @@ pub fn fetchable(address: &str) -> String {
     }
 }
 
+/// Where the whole paper is served as a web page, when `address` is a
+/// paper's abstract page on arXiv.
+///
+/// arXiv gives every paper an abstract page under `/abs/` and, for the
+/// papers it has been able to render, the paper itself under `/html/` at the
+/// same identifier. Someone who sends an abstract page to their reader wants
+/// the paper, and got a book of two hundred words. The arXiv app on the
+/// reader goes from one to the other by the same rule.
+///
+/// Only the address is worked out here. Whether a rendering exists is found
+/// by asking for it, and an identifier that does not look like one is left
+/// alone rather than turned into a request.
+#[must_use]
+pub fn full_text(address: &str) -> Option<String> {
+    if !is_web_address(address) || host_of(address)? != "arxiv.org" {
+        return None;
+    }
+    let paper = split(address)?
+        .path
+        .strip_prefix("/abs/")?
+        .trim_end_matches('/');
+    // New identifiers are one part, `2406.01234v2`; old ones carry their
+    // archive in front, `hep-th/9901001`.
+    let parts: Vec<&str> = paper.split('/').collect();
+    let plain = |part: &&str| {
+        !part.is_empty()
+            && part.len() <= 32
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+    };
+    (parts.len() <= 2 && parts.iter().all(plain)).then(|| format!("https://arxiv.org/html/{paper}"))
+}
+
 /// The host of an address without a leading `www.`, for naming a site that
 /// does not name itself.
 #[must_use]
@@ -249,6 +283,36 @@ mod tests {
     fn a_plain_http_address_is_fetched_over_tls() {
         assert_eq!(fetchable("http://a.example/x"), "https://a.example/x");
         assert_eq!(fetchable("https://a.example/x"), "https://a.example/x");
+    }
+
+    #[test]
+    fn an_abstract_page_names_where_its_paper_is_served_in_full() {
+        for (page, paper) in [
+            (
+                "https://arxiv.org/abs/2406.01234",
+                Some("https://arxiv.org/html/2406.01234"),
+            ),
+            (
+                "http://www.arxiv.org/abs/2406.01234v2?context=cs#top",
+                Some("https://arxiv.org/html/2406.01234v2"),
+            ),
+            (
+                "https://arxiv.org/abs/hep-th/9901001/",
+                Some("https://arxiv.org/html/hep-th/9901001"),
+            ),
+            // Already the paper, a listing, another site, and identifiers
+            // that are not ones.
+            ("https://arxiv.org/html/2406.01234", None),
+            ("https://arxiv.org/list/cs.CL/recent", None),
+            ("https://example.org/abs/2406.01234", None),
+            ("https://arxiv.org.example.net/abs/2406.01234", None),
+            ("https://arxiv.org/abs/", None),
+            ("https://arxiv.org/abs/a/b/c", None),
+            ("https://arxiv.org/abs/2406.01234%2F..%2Fx", None),
+            ("arxiv.org/abs/2406.01234", None),
+        ] {
+            assert_eq!(full_text(page).as_deref(), paper, "{page}");
+        }
     }
 
     #[test]

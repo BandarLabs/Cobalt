@@ -22,18 +22,30 @@ Follow websites and read their articles offline.
 - Find a feed by website name, paste its HTTPS address, or browse the starter
   feeds, which carry whole articles. Names are looked up with Feedsearch.
   Pasted addresses are fetched directly and never sent to Feedsearch.
+- Paste the address of a site instead of its feed and Feeds follows it to the
+  feed the page names, or to the usual feed paths on that site.
+- Most newsletters can be followed the same way, by the address of their
+  site: most newsletter services publish every issue as a feed as well as by
+  email. A newsletter that is sent by email only cannot be followed yet.
 - RSS, Atom and JSON Feed. Each feed is previewed with its name and article
   count before you add it.
 - Import subscriptions from an OPML file.
-- Search saved articles across every subscription.
+- Whole articles from feeds that carry only a summary. Feeds fetches the page
+  behind the summary and cuts it to the article on the reader, when you open
+  it and for the newest of each feed on **Refresh all**.
+- Search saved articles across every subscription, including the text of
+  articles fetched from their pages.
 - Articles open in the shared reader, with saved position and inline images
   with captions. A new article opens at the text size you chose last.
 - **Refresh all** on the shelf reads every feed in turn. The ten newest
-  unread articles with pictures in each feed are saved whole, pictures
-  included, so they open without Wi-Fi. The shelf says what is ready offline, for example
-  "Ready offline: 120 articles, 6.2 MB".
-- Every article's words are saved with its feed. Pictures of older articles
-  are downloaded when you open them and reused across feeds.
+  unread articles in each feed are saved whole, so they open without Wi-Fi:
+  pictures for an article the feed carries, and the page behind a summary. One
+  refresh fetches at most forty pages, shared across the feeds, and the next
+  refresh carries on. The shelf says what is ready offline, for example
+  "Ready offline: 120 articles, 6.2 MB", and counts a summary only once its
+  article is on the reader.
+- The words a feed carries are saved with the feed. Pictures of older
+  articles are downloaded when you open them and reused across feeds.
 - Refresh times are shown in the reader's own time zone.
 - Refreshing keeps the current articles until new ones arrive. If saving fails,
   **Retry saving** saves the refresh without downloading it again.
@@ -53,8 +65,16 @@ Add `--sim` to send it to the simulator instead.
 
 ## Notes
 
-Feeds shows what a feed provides. If a feed carries only summaries, that is
-what you get. For a Miniflux account, use [Digest](../../apps/rss-miniflux/).
+Feeds shows the whole article where it can get it. Some sites refuse a reader
+that is not a browser, keep their articles behind a paywall or draw their
+pages with scripts. For those you get the summary the feed carries, with a
+line under it saying so the first time, and Feeds does not ask that page
+again. If a site did not answer, opening the article again asks once more.
+Pictures are fetched from the article's own site only, so a picture served
+from elsewhere reads as its caption.
+
+A feed larger than 512 KB is cut to its newest articles. For a Miniflux
+account, use [Digest](../../apps/rss-miniflux/).
 
 ## Permissions
 
@@ -66,6 +86,7 @@ what you get. For a Miniflux account, use [Digest](../../apps/rss-miniflux/).
 cargo test -p kobo-rss
 (cd examples/rss && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py rss
+python3 scripts/quality/check-rss-whole-sim.py --output target/rss-whole
 kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 

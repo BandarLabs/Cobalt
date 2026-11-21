@@ -398,8 +398,6 @@ enum View {
     Details,
     Formats,
     Reading,
-    Lookup,
-    Note,
     /// The books already downloaded, which open without a catalog or a
     /// connection.
     Device,
@@ -709,13 +707,6 @@ struct Gutenbird {
     /// What was last searched for, shown in the field and put back in it
     /// when it is opened again, so a search is refined rather than retyped.
     query: String,
-    /// The marginal note field, opened as soon as a highlight asks for one.
-    note_entry: TextEntry,
-    pending_annotation: Option<kobo_read::AnnotationId>,
-    selected_range: Option<kobo_read::TextRange>,
-    lookup_word: String,
-    lookup_entries: Option<Vec<kobo_sdk::DictionaryEntry>>,
-    lookup_page: usize,
 
     catalogs: Vec<Catalog>,
     catalog_page: usize,
@@ -839,12 +830,6 @@ impl Default for Gutenbird {
             trail: Vec::new(),
             search_entry: TextEntry::new(),
             query: String::new(),
-            note_entry: TextEntry::new(),
-            pending_annotation: None,
-            selected_range: None,
-            lookup_word: String::new(),
-            lookup_entries: None,
-            lookup_page: 0,
             catalogs: CATALOGS
                 .iter()
                 .map(|(name, root, about)| Catalog {
@@ -931,8 +916,6 @@ impl Gutenbird {
             View::Details => self.details_screen(context),
             View::Formats => self.formats_screen(),
             View::Reading => self.reading_screen(context),
-            View::Lookup => self.lookup_screen(),
-            View::Note => self.note_screen(),
             View::Device => self.device_screen(context),
             View::RemoveBook => self.remove_screen(),
         };
@@ -2312,58 +2295,6 @@ impl Gutenbird {
             .build()
     }
 
-    fn note_screen(&self) -> kobo_sdk::Screen {
-        ScreenBuilder::new("gutenbird-note")
-            .top_bar("Marginal note")
-            .text_entry_with_hint(
-                &self.note_entry,
-                "Your note",
-                "Write beside the highlighted words. The highlight remains if the note is blank.",
-                "Save note",
-            )
-            .build()
-    }
-
-    fn lookup_screen(&self) -> kobo_sdk::Screen {
-        let mut screen = ScreenBuilder::new("gutenbird-lookup")
-            .top_bar(self.lookup_word.clone())
-            .section("Offline dictionary");
-        match &self.lookup_entries {
-            None => {
-                screen = screen.activity("Looking up the selected word", None);
-            }
-            Some(entries) if entries.is_empty() => {
-                screen = screen.secondary(
-                    "No installed dictionary has this word. Add UTF-8 TSV dictionaries to Cobalt's dictionaries folder.",
-                );
-            }
-            Some(entries) => {
-                if let Some(entry) = entries.get(self.lookup_page.min(entries.len() - 1)) {
-                    screen = screen
-                        .heading(entry.headword.clone())
-                        .secondary(format!(
-                            "{} · {} · {} of {}",
-                            entry.dictionary,
-                            entry.language,
-                            self.lookup_page + 1,
-                            entries.len()
-                        ))
-                        .text(dictionary_excerpt(&entry.definition));
-                    if self.lookup_page > 0 {
-                        screen = screen.button("lookup-previous", "Previous definition");
-                    }
-                    if self.lookup_page + 1 < entries.len() {
-                        screen = screen.button("lookup-next", "Next definition");
-                    }
-                }
-            }
-        }
-        screen
-            .button("lookup-highlight", "Highlight")
-            .button("lookup-note", "Add note")
-            .build()
-    }
-
     // ---------------------------------------------------------------
     // Details
     // ---------------------------------------------------------------
@@ -3459,6 +3390,13 @@ impl Gutenbird {
         let Some(outcome) = self.book.act(context, action) else {
             return false;
         };
+        self.after_reader(context, outcome);
+        true
+    }
+
+    /// Does what the reader left for the application to do about something
+    /// it handled, whether that was a tap or a hold.
+    fn after_reader(&mut self, context: &mut Context, outcome: Outcome) {
         match outcome {
             Outcome::Elsewhere | Outcome::Repaint => {}
             // The reader's own way out goes where Back goes: to the page the
@@ -3475,7 +3413,6 @@ impl Gutenbird {
             }
         }
         self.show(context);
-        true
     }
 
     fn save_place(&mut self, context: &mut Context) {
@@ -3998,15 +3935,6 @@ fn encode_registry(catalogs: &[Catalog]) -> Vec<u8> {
 
 fn clean_field(field: &str) -> String {
     field.replace(['\t', '\n', '\r'], " ").trim().to_owned()
-}
-
-fn dictionary_excerpt(definition: &str) -> String {
-    const LIMIT: usize = 700;
-    let mut excerpt = definition.chars().take(LIMIT).collect::<String>();
-    if definition.chars().count() > LIMIT {
-        excerpt.push('…');
-    }
-    excerpt
 }
 
 fn decode_registry(bytes: &[u8]) -> Vec<Catalog> {
@@ -4637,14 +4565,8 @@ impl KoboApp for Gutenbird {
         request: kobo_sdk::DeviceRequest,
         result: kobo_sdk::DeviceResult,
     ) {
-        if let (
-            kobo_sdk::DeviceRequest::LookupWord { .. },
-            kobo_sdk::DeviceResult::Dictionary { word, entries },
-        ) = (&request, &result)
-        {
-            if self.view == View::Lookup && *word == self.lookup_word {
-                self.lookup_entries = Some(entries.clone());
-                self.lookup_page = 0;
+        if let kobo_sdk::DeviceRequest::LookupWord { .. } = request {
+            if self.book.took_definition(&request, &result) && self.view == View::Reading {
                 self.show(context);
             }
             return;
@@ -4657,33 +4579,18 @@ impl KoboApp for Gutenbird {
         }
     }
 
+    /// A word held on the page is looked up, and can be highlighted or given
+    /// a note from there. The shared reader owns that whole exchange, so a
+    /// hold is handed to it exactly as a tap is.
     fn on_text_hold(&mut self, context: &mut Context, action: ActionId, hit: kobo_sdk::TextHit) {
-        if self.view != View::Reading || action != kobo_sdk::action_id(kobo_read::action::MARKING) {
-            self.on_action(context, action);
-            return;
+        if self.view == View::Reading {
+            if let Some(outcome) = self.book.hold(context, action, hit) {
+                self.touched = true;
+                self.after_reader(context, outcome);
+                return;
+            }
         }
-        let Ok(block) = u32::try_from(hit.context) else {
-            return;
-        };
-        let range = kobo_read::TextRange {
-            start: kobo_read::TextPosition {
-                block,
-                offset: hit.start,
-            },
-            end: kobo_read::TextPosition {
-                block,
-                offset: hit.end,
-            },
-        };
-        let word = self.book.reader().and_then(|reader| reader.text_in(range));
-        let Some(word) = word else { return };
-        self.selected_range = Some(range);
-        self.lookup_word.clone_from(&word);
-        self.lookup_entries = None;
-        self.lookup_page = 0;
-        let _ = context.device().lookup_word(word, None::<String>);
-        self.go(View::Lookup);
-        self.show(context);
+        self.on_action(context, action);
     }
 
     #[allow(clippy::too_many_lines)]
@@ -4704,6 +4611,17 @@ impl KoboApp for Gutenbird {
             }
         }
         if action == ActionId::BACK {
+            // The shared reader has first call on Back while a book is open.
+            // After a jump to a found passage or to another part of the book
+            // it goes back to the page that was left, and only Back from the
+            // page itself leaves the book: handled here first, it closed the
+            // book out from under a reader who had only looked something up.
+            if self.view == View::Reading && self.read_action(context, action) {
+                if self.view == View::Reading {
+                    self.show(context);
+                }
+                return;
+            }
             if self.view == View::Reading {
                 let metrics = context.metrics();
                 if let Some(reader) = self.book.reader_mut() {
@@ -4763,69 +4681,6 @@ impl KoboApp for Gutenbird {
                 && !matches!(self.current_catalog().search, SearchState::None)
             {
                 self.search_entry.open_with(self.query.clone());
-                self.show(context);
-                return;
-            }
-        }
-        if self.view == View::Lookup
-            && (action == action_id("lookup-highlight") || action == action_id("lookup-note"))
-        {
-            let created = self.selected_range.and_then(|range| {
-                let metrics = context.metrics();
-                self.book
-                    .reader_mut()
-                    .and_then(|reader| reader.annotate(range, None, &metrics).ok())
-            });
-            if let Some(id) = created {
-                self.save_place(context);
-                if action == action_id("lookup-note") {
-                    self.pending_annotation = Some(id);
-                    self.note_entry.open();
-                    self.go(View::Note);
-                } else {
-                    self.selected_range = None;
-                    self.back_to(View::Reading);
-                }
-                self.show(context);
-            }
-            return;
-        }
-        if self.view == View::Lookup && action == action_id("lookup-previous") {
-            self.lookup_page = self.lookup_page.saturating_sub(1);
-            self.show(context);
-            return;
-        }
-        if self.view == View::Lookup && action == action_id("lookup-next") {
-            let last = self
-                .lookup_entries
-                .as_ref()
-                .map_or(0, |entries| entries.len().saturating_sub(1));
-            self.lookup_page = self.lookup_page.saturating_add(1).min(last);
-            self.show(context);
-            return;
-        }
-        if self.view == View::Note {
-            // Backing out of the keyboard leaves the note blank, which is
-            // what the field says happens: the highlight stays without one.
-            let note = match self.note_entry.handle(action) {
-                Some(Typing::Submitted(note)) => Some(Some(note)),
-                Some(Typing::Changed) => {
-                    self.show(context);
-                    return;
-                }
-                Some(_) => Some(None),
-                None => None,
-            };
-            if let Some(note) = note {
-                if let (Some(id), Some(reader)) =
-                    (self.pending_annotation.take(), self.book.reader_mut())
-                {
-                    let _ = reader.edit_annotation_note(id, note.as_deref());
-                    self.save_place(context);
-                }
-                self.back_to(View::Lookup);
-                self.back_to(View::Reading);
-                self.selected_range = None;
                 self.show(context);
                 return;
             }
@@ -7369,14 +7224,14 @@ Please read this before you distribute or use this work.\n";
     }
 
     #[test]
-    fn holding_a_word_opens_marginalia_and_saves_the_note_on_that_exact_word() {
+    fn holding_a_word_looks_it_up_and_saves_the_note_on_that_exact_word() {
         let mut runner = AppRunner::new(Gutenbird {
             view: View::Reading,
             book: BookView::holding(opened("café novel")),
             complete: true,
             ..Gutenbird::default()
         });
-        runner.text_hold(
+        let commands = runner.text_hold(
             action_id(kobo_read::action::MARKING),
             kobo_sdk::TextHit {
                 context: 0,
@@ -7384,9 +7239,18 @@ Please read this before you distribute or use this work.\n";
                 end: 5,
             },
         );
-        assert_eq!(runner.app().view, View::Lookup);
-        assert!(runner.app().book.reader().unwrap().annotations().is_empty());
-        runner.device_result(kobo_sdk::DeviceResult::Dictionary {
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Device(kobo_sdk::DeviceRequest::LookupWord { word, .. }) if word == "café"
+            )),
+            "the held word was not asked about"
+        );
+        assert_eq!(runner.app().view, View::Reading);
+        let reader = |runner: &AppRunner<Gutenbird>| runner.app().book.reader().unwrap().clone();
+        assert_eq!(reader(&runner).chrome(), kobo_read::Chrome::Word);
+        assert!(reader(&runner).annotations().is_empty());
+        let shown = runner.device_result(kobo_sdk::DeviceResult::Dictionary {
             word: "café".into(),
             entries: vec![kobo_sdk::DictionaryEntry {
                 dictionary: "Pocket English".into(),
@@ -7395,14 +7259,21 @@ Please read this before you distribute or use this work.\n";
                 definition: "A small coffee house.".into(),
             }],
         });
-        assert_eq!(runner.app().lookup_entries.as_ref().unwrap().len(), 1);
-        runner.action(action_id("lookup-note"));
-        assert_eq!(runner.app().view, View::Note);
-        assert_eq!(runner.app().book.reader().unwrap().annotations().len(), 1);
+        let Some(Command::SetScreen(screen)) = shown.last() else {
+            panic!("the definition was not drawn");
+        };
+        assert!(screen_text(screen)
+            .iter()
+            .any(|line| line.contains("A small coffee house.")));
+        runner.action(action_id(kobo_read::action::WORD_NOTE));
+        assert_eq!(reader(&runner).chrome(), kobo_read::Chrome::Note);
+        assert_eq!(reader(&runner).annotations().len(), 1);
 
         runner.type_text("q");
         assert_eq!(runner.app().view, View::Reading);
-        let annotation = &runner.app().book.reader().unwrap().annotations()[0];
+        assert_eq!(reader(&runner).chrome(), kobo_read::Chrome::Hidden);
+        let reader = reader(&runner);
+        let annotation = &reader.annotations()[0];
         assert_eq!(annotation.note.as_deref(), Some("q"));
     }
 
@@ -7422,10 +7293,12 @@ Please read this before you distribute or use this work.\n";
                 end: 5,
             },
         );
-        runner.action(action_id("lookup-note"));
+        runner.action(action_id(kobo_read::action::WORD_NOTE));
         runner.cancel_text();
         assert_eq!(runner.app().view, View::Reading);
-        let annotations = runner.app().book.reader().unwrap().annotations();
+        let reader = runner.app().book.reader().unwrap();
+        assert_eq!(reader.chrome(), kobo_read::Chrome::Hidden);
+        let annotations = reader.annotations();
         assert_eq!(annotations.len(), 1, "the highlight went with the note");
         assert_eq!(annotations[0].note, None);
     }
