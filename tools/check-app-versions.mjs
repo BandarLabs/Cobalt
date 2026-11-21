@@ -806,26 +806,28 @@ export function releaseDiffArguments(baseRevision) {
 }
 
 // Whether an edit to the lockfile consists entirely of package additions:
-// every block that was there is there still, byte for byte, and at least one
-// is new. A block carries its package's resolved version, checksum and
-// dependency list, so an edit of this kind cannot have changed what any
-// package already in the file compiles against.
+// every package that was there resolves exactly as it did, and at least one
+// is new.
+//
+// Judged by package identity, as every other lockfile question here is, and
+// not by bytes. A new app's own dependency can bring a second version of a
+// crate already locked, and Cargo then rewrites every block that names the
+// first one to say which it means. Those blocks have changed and what they
+// resolve to has not, which is the difference the identities are there to
+// tell. The workspace's own version number moving is passed over the same
+// way.
 export function lockfileOnlyAddsPackages(previousSource, currentSource) {
-  const previous = lockfileParts(previousSource);
-  const current = lockfileParts(currentSource);
-  if (!previous || !current || previous.preamble !== current.preamble) return false;
-  if (current.packages.length <= previous.packages.length) return false;
-
-  const available = new Map();
-  for (const packageBlock of current.packages) {
-    available.set(packageBlock, (available.get(packageBlock) || 0) + 1);
+  let changed;
+  let before;
+  try {
+    changed = changedLockPackageIdentities(previousSource, currentSource);
+    before = lockPackagesByIdentity(previousSource).packages;
+  } catch {
+    // A file that cannot be read as a lockfile, or whose preamble moved, is
+    // not an addition to anything.
+    return false;
   }
-  for (const packageBlock of previous.packages) {
-    const count = available.get(packageBlock) || 0;
-    if (count === 0) return false;
-    available.set(packageBlock, count - 1);
-  }
-  return true;
+  return changed.size > 0 && [...changed].every(identity => !before.has(identity));
 }
 
 // The reviewed lockfile a change may be measured against, by its blob: the
@@ -861,8 +863,9 @@ export function reviewedLockBlob(manifest, protocolVersion, baseBlob) {
 // Measured against the reviewed lockfile, it answers for what it added.
 //
 // Anything more than additions is measured against the published lockfile
-// as before: a changed or missing block is a change to something an existing
-// app may compile against, and that is not what was reviewed.
+// as before: a package that resolves differently, or one that has gone, is a
+// change to something an existing app may compile against, and that is not
+// what was reviewed.
 export function lockfileToMeasureAgainst(publishedSource, currentSource, reviewedSource) {
   return typeof reviewedSource === "string" &&
     lockfileOnlyAddsPackages(reviewedSource, currentSource)

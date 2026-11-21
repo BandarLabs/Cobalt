@@ -843,7 +843,14 @@ test("active protocol compatible-change entries name the exact current files", (
           );
           continue;
         }
-        const changed = changedLockPackageIdentities(reviewed, readFileSync(file.path, "utf8"));
+        const currentLock = readFileSync(file.path, "utf8");
+        // A lockfile that only adds packages to the reviewed one resolves
+        // everything the review covered exactly as it did, and the release
+        // logic measures it against the reviewed one. So adding an app does
+        // not lapse the entry either: a contributor's pull request would
+        // otherwise have to re-pin a review it has nothing to do with.
+        if (lockfileOnlyAddsPackages(reviewed, currentLock)) continue;
+        const changed = changedLockPackageIdentities(reviewed, currentLock);
         assert.deepEqual(
           [...changed],
           [],
@@ -1037,6 +1044,68 @@ test("a lockfile that only adds an app to the reviewed one answers for the app a
   for (const missing of [null, undefined, false]) {
     assert.equal(lockfileToMeasureAgainst(published, withNewApp, missing), published);
   }
+});
+
+test("a new app that brings a second version of a crate still only adds packages", () => {
+  const registry = 'source = "registry+https://github.com/rust-lang/crates.io-index"';
+  const one = [
+    "version = 4",
+    "",
+    "[[package]]",
+    'name = "foldhash"',
+    'version = "0.1.5"',
+    registry,
+    "",
+    "[[package]]",
+    'name = "kobo-notes"',
+    'version = "0.3.37"',
+    "dependencies = [",
+    ' "foldhash",',
+    "]",
+    ""
+  ].join("\n");
+  // Cargo names foldhash by name alone while one version is locked. The new
+  // app needs another, so the notes app's block is rewritten to say which it
+  // means, and still means the one it meant.
+  const two = [
+    "version = 4",
+    "",
+    "[[package]]",
+    'name = "foldhash"',
+    'version = "0.1.5"',
+    registry,
+    "",
+    "[[package]]",
+    'name = "foldhash"',
+    'version = "0.2.0"',
+    registry,
+    "",
+    "[[package]]",
+    'name = "kobo-notes"',
+    'version = "0.3.37"',
+    "dependencies = [",
+    ' "foldhash 0.1.5",',
+    "]",
+    "",
+    "[[package]]",
+    'name = "kobo-reader"',
+    'version = "0.3.37"',
+    "dependencies = [",
+    ' "foldhash 0.2.0",',
+    "]",
+    ""
+  ].join("\n");
+  assert.equal(lockfileOnlyAddsPackages(one, two), true);
+  // The workspace's own version moving with a release is not a change.
+  assert.equal(lockfileOnlyAddsPackages(one, two.replaceAll('"0.3.37"', '"0.3.38"')), true);
+  // The notes app moving to the new version is one.
+  assert.equal(
+    lockfileOnlyAddsPackages(one, two.replace(' "foldhash 0.1.5",', ' "foldhash 0.2.0",')),
+    false
+  );
+  // And so is a file that is not a lockfile, or one with nothing added.
+  assert.equal(lockfileOnlyAddsPackages(one, "not a lockfile"), false);
+  assert.equal(lockfileOnlyAddsPackages(one, one), false);
 });
 
 test("the reviewed lockfile is the one pinned for this protocol and this published file", () => {
