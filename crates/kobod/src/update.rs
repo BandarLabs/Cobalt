@@ -317,9 +317,18 @@ fn discard_staging(staging: &Path) -> Result<(), DeviceError> {
 ///
 /// An interrupted transaction is completed first, as it always has been. Then
 /// a staged release, if there is one, becomes the installation. `true` means
-/// the files this process was started from may no longer be the installation,
+/// the files this process was started from are no longer the installation,
 /// and the caller has to start again from the one now in place rather than go
 /// on as the old runtime with new applications around it.
+///
+/// It is `true` only for that. A staged release that could not be put in
+/// place is rolled back, and a transaction found half done may be finished
+/// by going back as well as by going on. Either leaves the runtime this
+/// process is in the installation, and starting it again would buy nothing
+/// and risk a start that fails: the caller has no way on if the installation
+/// will not start a second time. So the answer is read off the disk. The
+/// runtime's own file is looked at before and after, and moving a tree away
+/// and back leaves it the file it was, where a new release brings another.
 ///
 /// A staged release that cannot be put in place is discarded rather than
 /// retried, so a release that fails here costs one start and not every one
@@ -330,17 +339,63 @@ fn discard_staging(staging: &Path) -> Result<(), DeviceError> {
 /// [`DeviceError::Backend`] when an interrupted transaction cannot be read or
 /// completed, which leaves the installation for the launch bootstrap to judge.
 pub fn settle_before_launch(adds: &Path) -> Result<bool, DeviceError> {
+    settle_with(adds, &mut |_| Ok(()))
+}
+
+/// [`settle_before_launch`], with a fault a test can put in the way of the
+/// staged release as it is put in place.
+fn settle_with(
+    adds: &Path,
+    step: &mut impl FnMut(TransactionStep) -> Result<(), TransactionFailure>,
+) -> Result<bool, DeviceError> {
     let interrupted = read_direction(adds)?.is_some();
+    let started_from = runtime_in_place(adds);
     recover_interrupted_update(adds)?;
-    let opened = open_staged_release(adds);
+    let opened = open_staged_release(adds, step);
     // A promotion carries the mark into the installation with the tree it
     // marked, whether it ran just now or was finished by recovery, and there
     // it vouches for nothing.
     let _ignored = fs::remove_file(adds.join("cobalt").join(STAGED_MARK));
-    Ok(opened || interrupted)
+    Ok((opened || interrupted) && runtime_replaced(adds, started_from))
 }
 
-fn open_staged_release(adds: &Path) -> bool {
+/// Which file the installation's runtime is, for telling later whether it is
+/// still that file. `None` when there is none.
+#[cfg(unix)]
+fn runtime_in_place(adds: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let runtime = fs::symlink_metadata(adds.join("cobalt/bin/kobod")).ok()?;
+    Some((runtime.dev(), runtime.ino()))
+}
+
+/// Whether the installation's runtime is a different file from the one
+/// `started_from` names.
+///
+/// The process asking is running from that file, which keeps it what it is
+/// for as long as the process lives, on the reader's FAT partition too.
+#[cfg(unix)]
+fn runtime_replaced(adds: &Path, started_from: Option<(u64, u64)>) -> bool {
+    runtime_in_place(adds) != started_from
+}
+
+// A system with no such thing as which file a path names has only whether
+// the trees were moved to go on, which is what the caller is told there.
+#[cfg(not(unix))]
+fn runtime_in_place(_adds: &Path) -> Option<(u64, u64)> {
+    None
+}
+
+#[cfg(not(unix))]
+fn runtime_replaced(_adds: &Path, _started_from: Option<(u64, u64)>) -> bool {
+    true
+}
+
+/// Puts a staged release in place, and says whether the trees were moved in
+/// trying, which is not yet whether the installation is a different one.
+fn open_staged_release(
+    adds: &Path,
+    step: &mut impl FnMut(TransactionStep) -> Result<(), TransactionFailure>,
+) -> bool {
     let staging = adds.join("cobalt.next");
     if !staging.join(STAGED_MARK).is_file() {
         return false;
@@ -352,7 +407,7 @@ fn open_staged_release(adds: &Path) -> bool {
         let _ignored = discard_staging(&staging);
         return false;
     }
-    match swap(adds, &staging) {
+    match swap_with_fault(adds, &staging, step) {
         Ok(()) => trace("platform update: the staged release is now the installation"),
         Err(error) => {
             let reason = format!("the staged release could not be put in place: {error}");
@@ -366,11 +421,19 @@ fn open_staged_release(adds: &Path) -> bool {
             }
         }
     }
-    // Either way the trees have moved, even if only there and back, so the
-    // process starts again from whatever is in place now.
     true
 }
 
+/// Whether a release has what the launch chain starts, each part a plain
+/// file and the two programs marked as programs.
+///
+/// The reader's book partition is FAT, which keeps no mode for a file, so
+/// the marks seen here are whatever the partition was mounted to show for
+/// every file on it. That is not a second, stricter demand on a staged
+/// release: the launch bootstrap asks the same of the installation before
+/// every start, with `-x` in a shell, and the kernel asks it again when the
+/// runtime is run. A partition mounted so that this fails for a staged
+/// release is one no installed release starts from either.
 fn complete_launch_chain(release: &Path) -> bool {
     regular_file(&release.join("start.sh"), false)
         && regular_file(&release.join("bin/kobod"), true)
@@ -501,15 +564,6 @@ fn unpack_with_bootstrap(
     Ok(())
 }
 
-/// Retires the current installation and moves the staged one into place.
-///
-/// Owner folders are first moved to a transaction holder beside every
-/// versioned tree. A durable direction marker makes each following rename
-/// restartable, including when power disappears between two owner folders.
-fn swap(adds: &Path, staging: &Path) -> Result<(), DeviceError> {
-    swap_with_fault(adds, staging, &mut |_| Ok(()))
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TransactionStep {
     SetForward,
@@ -564,9 +618,15 @@ const NICKELMENU_CONFIGS: [&str; 2] = ["nm/cobalt", "nm/menu"];
 const OLD_LAUNCH_PATH: &str = "/mnt/onboard/.adds/cobalt/start.sh";
 const STABLE_LAUNCH_PATH: &str = "/mnt/onboard/.adds/cobalt-launch.sh";
 
-/// The complete update transaction with a power-loss boundary injected by
-/// tests. An interruption deliberately skips in-process rollback: the next
-/// normal startup must recover the durable state on disk.
+/// Retires the current installation and moves the staged one into place.
+///
+/// Owner folders are first moved to a transaction holder beside every
+/// versioned tree. A durable direction marker makes each following rename
+/// restartable, including when power disappears between two owner folders.
+///
+/// `step` is called at each boundary and is where tests inject a power loss
+/// or a refused write. An interruption deliberately skips in-process
+/// rollback: the next normal startup must recover the durable state on disk.
 fn swap_with_fault(
     adds: &Path,
     staging: &Path,
@@ -1124,7 +1184,7 @@ mod tests {
         settle_before_launch, JOURNAL, OWNER_FOLDERS, PREFIX, STAGED_MARK,
     };
     #[cfg(unix)]
-    use super::{swap_with_fault, TransactionFailure, TransactionStep};
+    use super::{settle_with, swap_with_fault, TransactionFailure, TransactionStep};
     use kobo_protocol::DeviceError;
     use std::fs;
     #[cfg(unix)]
@@ -1491,6 +1551,91 @@ mod tests {
         );
         assert!(!adds.join(JOURNAL).exists());
         assert!(!adds.join("cobalt").join(STAGED_MARK).exists());
+        let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    /// A start that tried a staged release and had to put the old one back
+    /// is running the installation, and a start that found a promotion half
+    /// done and undid it is too. Neither may be told the installation
+    /// changed: the caller would start it a second time for nothing, and
+    /// has no way on if that start fails.
+    #[cfg(unix)]
+    #[test]
+    fn a_release_that_could_not_be_put_in_place_does_not_send_the_start_round_again() {
+        let refused_at = |refused: TransactionStep| {
+            move |step: TransactionStep| {
+                if step == refused {
+                    Err(TransactionFailure::Backend)
+                } else {
+                    Ok(())
+                }
+            }
+        };
+        // Refused before the staged tree is moved, and after: once the new
+        // tree is in place and an owner folder will not go back into it.
+        for (name, refused) in [
+            ("refused-promotion", TransactionStep::PromoteStaging),
+            ("refused-owner", TransactionStep::RestoreOwner("state")),
+        ] {
+            let adds = transaction_fixture(name);
+            fs::write(adds.join("cobalt.next").join(STAGED_MARK), "digest\n").expect("mark");
+            let runtime = fs::read(adds.join("cobalt/bin/kobod")).expect("the runtime in place");
+
+            assert_eq!(
+                settle_with(&adds, &mut refused_at(refused)),
+                Ok(false),
+                "{name}"
+            );
+
+            assert_eq!(
+                fs::read_to_string(adds.join("cobalt/release")).expect("the installation"),
+                "old",
+                "{name}"
+            );
+            assert_eq!(
+                fs::read(adds.join("cobalt/bin/kobod")).expect("the runtime"),
+                runtime
+            );
+            assert!(!adds.join(JOURNAL).exists(), "{name}");
+            assert!(!adds.join("cobalt.next").exists(), "{name}");
+            assert_owner_data(&adds, "old");
+            assert!(
+                fs::read_to_string(adds.join("cobalt/state/last-update-error"))
+                    .expect("an account of the release that was not put in place")
+                    .contains("could not be put in place"),
+                "{name}"
+            );
+            let _ignored = fs::remove_dir_all(&adds);
+        }
+
+        let adds = transaction_fixture("undone-promotion");
+        let interrupted = swap_with_fault(&adds, &adds.join("cobalt.next"), &mut |step| {
+            if step == TransactionStep::PromoteStaging {
+                Err(TransactionFailure::Backend)
+            } else if step == TransactionStep::RollbackPrevious {
+                Err(TransactionFailure::Interrupted)
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(interrupted, Err(DeviceError::Backend));
+        assert!(
+            adds.join(JOURNAL).exists(),
+            "a rollback cut short is left open"
+        );
+        // The launch bootstrap puts a whole release in place before the
+        // runtime is started, which is the tree this start is running from.
+        if !adds.join("cobalt").exists() {
+            fs::rename(adds.join("cobalt.prev"), adds.join("cobalt")).expect("bootstrap");
+        }
+
+        assert_eq!(settle_before_launch(&adds), Ok(false));
+
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt/release")).expect("the installation"),
+            "old"
+        );
+        assert!(!adds.join(JOURNAL).exists());
         let _ignored = fs::remove_dir_all(&adds);
     }
 
