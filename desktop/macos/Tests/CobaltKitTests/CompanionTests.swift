@@ -928,7 +928,7 @@ struct InstallStageTests {
         #expect(states(ejected) == [.done, .done, .done, .current])
         #expect(states(setupSaid) == [.done, .done, .done, .done])
         #expect(JobScene.scene(for: job("Updating Cobalt", said: ""), state: nil, now: Date()).stages.map(\.title) == [
-            "Reading the reader", "Writing Cobalt to the reader", "Ejecting the reader", "Waiting for the reader on Wi-Fi",
+            "Reading the reader", "Copying Cobalt to the reader", "Ejecting the reader", "Finding the reader on Wi-Fi",
         ])
     }
 

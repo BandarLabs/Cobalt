@@ -76,8 +76,10 @@ struct SetupPane: View {
 
     var body: some View {
         Pane {
+            // A statement of where things stand is set at one size wherever
+            // it appears. Only a name is set larger: the reader's, an app's.
             Text(heading)
-                .font(Paper.serif(28))
+                .font(Paper.serif(24))
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
             if setup.stage != .ready, !scene.stages.isEmpty {

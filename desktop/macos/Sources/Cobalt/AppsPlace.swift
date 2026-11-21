@@ -464,7 +464,7 @@ private struct AppPage: View {
         if !entry.description.isEmpty, entry.description != entry.summary {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(Array(entry.description.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, paragraph in
-                    Prose(paragraph.replacingOccurrences(of: "\n", with: " "), font: Paper.serif(16))
+                    Prose(paragraph.replacingOccurrences(of: "\n", with: " "), font: Paper.serif(15))
                 }
             }
             .frame(maxWidth: Paper.column, alignment: .leading)
@@ -502,8 +502,13 @@ private struct AppPage: View {
                                     .background(Paper.inset, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                             }
                             if let link = step.link, let url = URL(string: link.url), url.scheme == "https" {
-                                Link(link.label, destination: url)
-                                    .tint(Paper.link)
+                                // The colour is given to the words and not
+                                // left to the tint, which a Link takes from
+                                // the system's accent in some states and so
+                                // came out a second blue.
+                                Link(destination: url) {
+                                    Text(link.label).foregroundStyle(Paper.link)
+                                }
                             }
                         }
                     }

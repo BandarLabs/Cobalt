@@ -223,7 +223,7 @@ struct SendPlace: View {
                 ForEach(Array(waiting.enumerated()), id: \.offset) { _, article in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(article.title)
-                            .font(Paper.serif(16))
+                            .font(Paper.serif(17))
                             .fixedSize(horizontal: false, vertical: true)
                         if let site = article.site, !site.isEmpty {
                             Text(site)

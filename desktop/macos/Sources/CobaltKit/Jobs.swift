@@ -101,14 +101,16 @@ public struct JobScene: Equatable, Sendable {
     /// and loses nothing, since everything it said is still there to open.
     private static let installStages: [(title: String, done: String)] = [
         ("Reading the reader", "Ready to install Cobalt"),
-        ("Writing Cobalt to the reader", "\nSet up "),
+        ("Copying Cobalt to the reader", "\nSet up "),
         ("Ejecting the reader", "volume ejected"),
-        ("Waiting for the reader on Wi-Fi", "The reader is back on Wi-Fi"),
+        ("Finding the reader on Wi-Fi", "The reader is back on Wi-Fi"),
     ]
 
     /// The same four things in the server's own account of them, which is
     /// what is used whenever the server gives one. Reading setup's printed
-    /// lines is kept for a kobo command too old to say.
+    /// lines is kept for a kobo command too old to say. A step the two
+    /// share has one name in both, so an install reads the same whichever
+    /// way its progress is known.
     private static let told: [(title: String, stage: SetupStage)] = [
         ("Copying Cobalt to the reader", .writing),
         ("Ejecting the reader", .eject),
