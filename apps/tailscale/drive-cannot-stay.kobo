@@ -1,0 +1,11 @@
+# sweep: --bare --seed-root apps/tailscale/fixtures/cannot-stay
+# Asked to stay connected on a reader without the room for it. The runtime's
+# reason leads the options page, and the first screen does not claim to stay.
+wait-for Connected
+expect Runs while Cobalt is open.
+expect-missing Stays connected
+tap Options
+wait-for does not have the 110 MB free
+expect Tailscale runs while Cobalt is open instead.
+clean
+shot tailscale-cannot-stay

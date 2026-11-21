@@ -19,7 +19,7 @@ const HOME: &str = "/var/lib/cobalt/syncthing";
 /// Left in the engine's home by a session that is ending, so the window it
 /// started, running in a process of its own, ends with it.
 const STOP: &str = "stop-window";
-const ENGINE: &str = "/mnt/onboard/.adds/cobalt/bin/syncthing";
+pub const ENGINE: &str = "/mnt/onboard/.adds/cobalt/bin/syncthing";
 const ENGINE_SHA256: &str = "e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf";
 
 /// Where the engine is fetched from when it is not installed yet.

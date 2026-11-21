@@ -1,0 +1,8 @@
+# sweep: --bare --seed-root apps/tailscale/fixtures/failed
+# A download that did not finish. The runtime tries again by itself, and the
+# owner can ask sooner.
+wait-for Tailscale could not be downloaded. Check Wi-Fi and try again.
+expect Could not start
+expect Try again
+clean
+shot tailscale-failed

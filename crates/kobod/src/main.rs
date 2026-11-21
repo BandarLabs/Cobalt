@@ -101,6 +101,11 @@ mod consent;
 mod device;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod syncthing;
+// The Tailscale supervisor is made of process groups, signals and device
+// nodes, and runs nowhere but the reader, so a Windows host build leaves it
+// out and says so if asked.
+#[cfg(unix)]
+mod tailscale;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod touch_calibration;
 #[cfg_attr(not(unix), allow(dead_code))]
@@ -195,6 +200,15 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     }
     if arguments
         .first()
+        .is_some_and(|argument| argument == "--tailscale")
+    {
+        #[cfg(unix)]
+        return tailscale::command(&arguments[1..]).map_err(Into::into);
+        #[cfg(not(unix))]
+        return Err("Tailscale runs on the reader, not on this computer".into());
+    }
+    if arguments
+        .first()
         .is_some_and(|argument| argument == "--beta-store")
     {
         return beta_store_maintenance(&arguments[1..]);
@@ -205,7 +219,7 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         println!("path={}", path.display());
         return Ok(());
     }
-    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair] [--syncthing] [--resolve-app APP] [--beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP]".into())
+    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair] [--syncthing] [--tailscale] [--resolve-app APP] [--beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP]".into())
 }
 
 /// A narrow device-side surface for the host acceptance harness.

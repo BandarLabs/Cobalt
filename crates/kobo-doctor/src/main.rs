@@ -163,6 +163,7 @@ fn human_probe() -> ExitCode {
             touch.name, touch.path, touch.x_min, touch.x_max, touch.y_min, touch.y_max
         );
     }
+    print_tailscale_readiness();
 
     let matched_profile = match require_profile(matched_profile) {
         Ok(profile) => profile,
@@ -512,6 +513,217 @@ fn observe(
     Ok(())
 }
 
+/// What can be read, without touching anything, about whether Tailscale
+/// could run on this reader.
+///
+/// Every line is a read of a file the kernel publishes or of a path's
+/// existence; nothing is created, opened for writing or brought up. That
+/// limits what this can claim, and each line says which side of the limit it
+/// is on. Whether the kernel has a tunnel driver is only half answered here:
+/// a driver that is registered is certain, one that is not may still be a
+/// module the kernel loads when the device node is first opened, and only
+/// the supervisor in `crates/kobod/src/tailscale.rs` opens it. The device node
+/// existing says nothing either way, since anybody can make one. What is
+/// listening is the other thing worth reading before a tailnet is joined,
+/// because the supervisor refuses to start while anything is listening that
+/// it cannot account for, and its refusal names only the port.
+fn print_tailscale_readiness() {
+    println!("tailscale readiness (read-only):");
+    let misc = std::fs::read_to_string("/proc/misc").ok();
+    println!(
+        "  kernel tunnel driver: {}",
+        match misc.as_deref().map(tunnel_driver_registered) {
+            Some(true) => "registered",
+            Some(false) =>
+                "not registered (it may still load when the node is opened; starting Tailscale finds out)",
+            None => "unknown (/proc/misc cannot be read)",
+        }
+    );
+    println!(
+        "  tunnel device node: {}",
+        if Path::new("/dev/net/tun").exists() {
+            "present (proves nothing about the driver)"
+        } else {
+            "absent (made on every start; /dev is rebuilt at boot)"
+        }
+    );
+    let flags = std::fs::read_to_string("/sys/class/net/lo/flags").unwrap_or_default();
+    println!(
+        "  loopback: {}",
+        match interface_is_up(&flags) {
+            Some(true) => "up",
+            Some(false) => "down (brought up on start)",
+            None => "unknown",
+        }
+    );
+    let listening = ["/proc/net/tcp", "/proc/net/tcp6"]
+        .iter()
+        .filter_map(|table| std::fs::read_to_string(table).ok())
+        .flat_map(|table| listening_ports(&table))
+        .collect::<Vec<_>>();
+    // Every one of them, because Tailscale joins a tailnet only when it can
+    // account for everything that is listening.
+    for port in &listening {
+        println!(
+            "  listening on {port}: {}",
+            match port {
+                22 => "ssh (must refuse root anything but a key before Tailscale starts)",
+                23 => "telnet (Tailscale will not start while this is up)",
+                21 => "ftp (Tailscale will not start while this is up)",
+                _ => "not known to Cobalt (Tailscale will not start while this is up, unless it is the Sync engine during a sync)",
+            }
+        );
+    }
+    if listening.is_empty() {
+        println!("  listening: nothing on an address other machines can reach");
+    }
+    let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    for key in ["MemTotal", "MemAvailable"] {
+        if let Some(line) = meminfo.lines().find(|line| line.starts_with(key)) {
+            println!("  {line}");
+        }
+    }
+    println!(
+        "  packet filter tools: {}",
+        if ["/sbin/iptables", "/usr/sbin/iptables"]
+            .iter()
+            .any(|path| Path::new(path).exists())
+        {
+            "present (unexpected; the daemon is still told to leave the firewall alone)"
+        } else {
+            "absent (expected; every listening port is reachable from a tailnet)"
+        }
+    );
+    print_kernel_routing_support();
+    let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
+    match mounts
+        .lines()
+        .find(|line| line.split_whitespace().nth(1) == Some("/mnt/onboard"))
+    {
+        Some(line) => println!("  /mnt/onboard: {line}"),
+        None => println!("  /mnt/onboard: not mounted"),
+    }
+}
+
+/// What the kernel offers for carrying other devices' traffic, the way a
+/// Linux exit node or subnet router ordinarily does it.
+///
+/// The Tailscale service does not use any of this. It has the daemon carry
+/// that traffic itself, exactly because nothing was known about these on any
+/// reader. They are reported so that the next person knows: a reader whose
+/// kernel has a packet filter with address translation could let the kernel
+/// do the forwarding, which is faster than a daemon on one core.
+///
+/// Each line is as far as a read can go. The forwarding switch is a fact.
+/// Connection tracking and the older tables are facts when present. The
+/// newer packet filter has no file that announces it, so its line comes from
+/// the kernel's own list of symbols: finding them proves the code is in the
+/// running kernel, and not finding them does not prove a module could not
+/// be loaded. Whether any of it works is something only using it shows.
+fn print_kernel_routing_support() {
+    let forwarding = std::fs::read_to_string("/proc/sys/net/ipv4/ip_forward");
+    println!(
+        "  kernel forwarding switch: {}",
+        match forwarding.as_deref().map(str::trim) {
+            Ok("0") => "off (Tailscale here does not need it on)",
+            Ok(_) => "on",
+            Err(_) => "unreadable",
+        }
+    );
+    println!(
+        "  connection tracking: {}",
+        if Path::new("/proc/sys/net/netfilter/nf_conntrack_max").exists() {
+            "present"
+        } else {
+            "not present"
+        }
+    );
+    let tables = std::fs::read_to_string("/proc/net/ip_tables_names").unwrap_or_default();
+    let tables = tables.split_whitespace().collect::<Vec<_>>();
+    println!(
+        "  older packet filter tables: {}",
+        if tables.is_empty() {
+            "none".to_owned()
+        } else {
+            tables.join(", ")
+        }
+    );
+    match std::fs::read_to_string("/proc/kallsyms") {
+        Ok(symbols) => {
+            let found = packet_filter_in(&symbols);
+            println!(
+                "  newer packet filter in the running kernel: {}",
+                if found.is_empty() {
+                    "no symbols found (a module on disk would not show here)".to_owned()
+                } else {
+                    found.join(", ")
+                }
+            );
+        }
+        Err(_) => println!(
+            "  newer packet filter in the running kernel: unknown (/proc/kallsyms cannot be read)"
+        ),
+    }
+}
+
+/// Which parts of the newer packet filter the kernel's symbol list shows:
+/// the filter itself, address translation, and the rule that rewrites a
+/// packet's source to the reader's own address.
+fn packet_filter_in(symbols: &str) -> Vec<&'static str> {
+    let has = |prefix: &str| {
+        symbols.lines().any(|line| {
+            line.split_whitespace()
+                .nth(2)
+                .is_some_and(|name| name.starts_with(prefix))
+        })
+    };
+    [
+        ("nf_tables_", "nf_tables"),
+        ("nft_nat", "address translation"),
+        ("nft_masq", "masquerade"),
+        ("nft_ct", "connection tracking rules"),
+    ]
+    .into_iter()
+    .filter(|(prefix, _)| has(prefix))
+    .map(|(_, name)| name)
+    .collect()
+}
+
+/// Whether the kernel's list of miscellaneous devices names the tunnel
+/// driver, which registers as `tun` whatever its minor number.
+fn tunnel_driver_registered(misc: &str) -> bool {
+    misc.lines()
+        .any(|line| line.split_whitespace().nth(1) == Some("tun"))
+}
+
+/// Whether an interface's flags say it is up.
+///
+/// The flags and not `operstate`, which reads `unknown` on a loopback that is
+/// working, so a report built on it said the same thing on every reader.
+fn interface_is_up(flags: &str) -> Option<bool> {
+    u32::from_str_radix(flags.trim().trim_start_matches("0x"), 16)
+        .ok()
+        .map(|flags| flags & 1 == 1)
+}
+
+/// The TCP ports something is listening on at an address other machines can
+/// reach, from the kernel's socket table.
+fn listening_ports(table: &str) -> Vec<u16> {
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let (address, port) = fields.nth(1)?.rsplit_once(':')?;
+            let listening = fields.nth(1)? == "0A";
+            let loopback = matches!(address, "0100007F" | "00000000000000000000000001000000");
+            (listening && !loopback)
+                .then(|| u16::from_str_radix(port, 16).ok())
+                .flatten()
+        })
+        .collect()
+}
+
 /// Positional read: `FileExt` on Unix, the `seek_read` equivalent on Windows.
 /// Doctor is a device tool, so the Windows arm exists to keep the workspace
 /// compiling there; it is never exercised on a real panel.
@@ -589,6 +801,46 @@ fn hwconfig_revision_fields(output: &str) -> Vec<&str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_tunnel_driver_is_found_by_name_in_the_kernels_device_list() {
+        assert!(super::tunnel_driver_registered(
+            " 59 memory_bandwidth\n200 tun\n130 watchdog\n"
+        ));
+        // A name that only contains it, and a list without it.
+        assert!(!super::tunnel_driver_registered(
+            " 62 tunnel4\n130 watchdog\n"
+        ));
+        assert!(!super::tunnel_driver_registered(""));
+    }
+
+    #[test]
+    fn the_newer_packet_filter_is_reported_part_by_part_from_the_kernels_symbols() {
+        let symbols = "c0a1b2c0 T nf_tables_newtable\nc0a1b300 t nft_masq_ipv4_eval\tnft_masq_ipv4\nc0a1b400 t nft_nat_eval\nc0a1b500 T tun_get_socket\n";
+        assert_eq!(
+            super::packet_filter_in(symbols),
+            ["nf_tables", "address translation", "masquerade"]
+        );
+        // A kernel with none of it, and a name that only contains one.
+        assert!(super::packet_filter_in(
+            "c0a1b500 T tun_get_socket\nc0a1b600 T my_nf_tables_helper\n"
+        )
+        .is_empty());
+        assert!(super::packet_filter_in("").is_empty());
+    }
+
+    #[test]
+    fn loopback_is_read_from_its_flags_not_its_operstate() {
+        assert_eq!(super::interface_is_up("0x49\n"), Some(true));
+        assert_eq!(super::interface_is_up("0x8\n"), Some(false));
+        assert_eq!(super::interface_is_up("unknown\n"), None);
+    }
+
+    #[test]
+    fn listening_ports_leave_out_loopback_and_open_connections() {
+        let table = "  sl  local_address rem_address   st\n   0: 00000000:0016 00000000:0000 0A\n   1: 0100007F:20E0 00000000:0000 0A\n   2: 0A00000C:0016 0A000002:C1A2 01\n";
+        assert_eq!(super::listening_ports(table), [22]);
+    }
+
     #[test]
     fn a_recording_request_is_read_as_seconds_and_a_rate() {
         assert_eq!(super::parse_record_request("20:2"), Ok((20, 2)));

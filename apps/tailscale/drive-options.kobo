@@ -1,0 +1,25 @@
+# sweep: --bare --seed-root apps/tailscale/fixtures/connected
+# The choices beyond being on the tailnet are on a page of their own, each
+# off until the owner turns it on. A switch that is off says only its name;
+# what one costs is said once it is on.
+wait-for Connected
+expect Runs while Cobalt is open.
+tap Options
+wait-for Stay connected outside Cobalt
+expect-missing Stops when you leave Cobalt.
+expect Offer as an exit node
+expect Share this network
+expect-missing battery
+expect-missing admin console
+clean
+shot tailscale-options
+tap-id stay
+wait-for Uses more battery.
+expect only while the reader is awake
+expect After a restart, open Cobalt once to connect again.
+clean
+shot tailscale-staying
+# The first screen says which of the two it is doing.
+tap-id 4294967295
+wait-for Stays connected after you leave Cobalt.
+expect-missing Runs while Cobalt is open.

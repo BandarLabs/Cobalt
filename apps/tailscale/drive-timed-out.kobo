@@ -1,0 +1,10 @@
+# sweep: --bare --seed-root apps/tailscale/fixtures/timed-out
+# Nobody approved the reader in time, so the daemon was stopped and the
+# screen offers a new code.
+wait-for Sign-in was not finished in time.
+expect Sign-in timed out
+expect Try again
+clean
+shot tailscale-timed-out
+tap Try again
+wait-for Starting

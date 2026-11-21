@@ -1562,6 +1562,12 @@ fn remote_doctor_uses_strict_hosts_and_workspace_artifact() {
     }
     assert!(valid_device_host("192.0.2.1"));
     assert!(valid_device_host("kobo-reader_1"));
+    // A reader on a tailnet is named by its tailnet address or by the name
+    // the tailnet gives it, in either address family.
+    assert!(valid_device_host("100.101.102.103"));
+    assert!(valid_device_host("kobo-cobalt"));
+    assert!(valid_device_host("kobo-cobalt.example.ts.net"));
+    assert!(valid_device_host("fd7a:115c:a1e0::7"));
     assert!(!valid_device_host(""));
     assert!(!valid_device_host("--sim"));
     assert!(!valid_device_host("-reader"));

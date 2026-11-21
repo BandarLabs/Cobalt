@@ -1,0 +1,9 @@
+# sweep: --bare --seed-root apps/tailscale/fixtures/refused
+# The runtime will not join a tailnet while root can log in with a password.
+# Its own words lead the screen, and say what to run.
+wait-for Root can still log in to this reader with a password.
+expect Run kobo setup on your computer
+expect Not started
+expect Try again
+clean
+shot tailscale-refused

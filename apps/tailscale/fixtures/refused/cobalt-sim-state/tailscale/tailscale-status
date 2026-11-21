@@ -1,0 +1,5 @@
+refused
+
+Root can still log in to this reader with a password. Run kobo setup on your computer to close that, then turn Tailscale on again.
+
+
