@@ -114,12 +114,22 @@ as its first line asks:
 # sweep: --bare --seed-root examples/chat/fixtures/cut-short
 # sweep: after-main
 # sweep: skip
+# sweep: needs https://www.gutenberg.org/ebooks.opds/
 ```
 
 `--bare` skips the default seed, `--seed-root` copies a prepared state in
 first, `after-main` runs in the state the main route left behind, and `skip`
 keeps a route for manual use. A route with no such line runs like the main
 one.
+
+`needs` names an address the route reads live from somebody else's site. The
+sweep asks that address first, once a run. If it cannot be reached or answers
+with a server fault, the route is left out and the last lines of the sweep
+say which routes were not run and why, so an outage at that site does not
+fail every pull request and hold back a release. It may be given more than
+once, goes with the other words, and is the one thing a main `drive.kobo`
+may ask for. Prefer a local fixture to a live site where the flow allows it:
+a route that is left out checks nothing.
 
 ## Live Paperterm session
 
