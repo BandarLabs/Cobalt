@@ -177,6 +177,30 @@ Screenshots are from a Kobo Clara BW or its simulator.
 Want an app that is not here? Add it to the
 [app request thread](https://github.com/BandarLabs/Cobalt/issues/41).
 
+## Desktop app
+
+`kobo ui` opens Cobalt in a window on your computer. It sets up a reader,
+installs, updates and removes apps over the cable, and sends files and web
+articles to the reader over Wi-Fi. On a Mac the window is a native app, which
+the installer puts beside the `kobo` command; elsewhere it is a page in your
+browser.
+
+<p align="center">
+  <img src="docs/media/desktop/mac-apps.png" width="860" alt="The Cobalt Mac app on its Apps place, showing the apps on a Kobo Clara BW, each by a picture of its first screen">
+</p>
+
+<p align="center">
+  <img src="docs/media/desktop/mac-app-page.png" width="860" alt="The Cobalt Mac app on the page for Chess, with the app's first screen, what it does, its version and size, what it needs and an Install button">
+</p>
+
+<p align="center">
+  <img src="docs/media/desktop/mac-send.png" width="860" alt="The Cobalt Mac app on its Send place, sending a comic to the reader, with a field for a web article and two articles waiting for the reader"><br>
+  <sub>The Mac app in Cobalt 0.3.39, with sample data.</sub>
+</p>
+
+[docs/companion-cli.md](docs/companion-cli.md#the-companion-window) describes
+each part of the window.
+
 ## Features
 
 - Signed app installs, updates and removal over Wi-Fi.
