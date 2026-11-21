@@ -298,12 +298,16 @@ How the reader is reached, and who else can reach it:
   login by password, including an empty one, and some firmware clears root's
   password at boot. So when setup sees the reader come back, it closes
   password login for root over a connection that may authenticate by the key
-  and nothing else: it appends a marked `Match User root` /
-  `PasswordAuthentication no` block to `sshd_config`, checks it with `sshd -t`
-  and `sshd -T`, reloads the server, and keeps the change only when a second,
-  fresh key login gets in. If that second login never arrives, the reader puts
-  the old file back by itself after five minutes, so a key that does not work
-  cannot lock anyone out.
+  and nothing else: it appends a marked `Match User root` block to
+  `sshd_config` with `PasswordAuthentication no` and
+  `KbdInteractiveAuthentication no`, checks it with `sshd -t` and `sshd -T`,
+  reloads the server, and keeps the change only when a second, fresh key
+  login gets in. If that second login never arrives, the reader puts the old
+  file back by itself after five minutes, so a key that does not work cannot
+  lock anyone out. The second line closes question-and-answer login, which is
+  a password by another name on a server built with PAM. A server that does
+  not accept it gets the first line alone, and a reader set up before the
+  second line existed is given it the next time `kobo setup` runs.
 - `--no-key` skips the key and therefore the hardening, because without this
   computer's key there is no proof a key works. That leaves the firmware's
   password login as it shipped.
