@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Put your Kobo on your Tailscale tailnet. Send books and articles to it from any network with kobo send and kobo clip, and reach your own servers from its apps. It runs while Cobalt is open, and can stay connected, act as an exit node and share your home network if you switch those on. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/tailscale.png">
 <meta name="twitter:image:alt" content="Tailscale connected on a Kobo, with the reader's tailnet name and address">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-K2XOGaKPjf+2zjgaX5UBlcRCLgc9g/K3je5msQjEDJA='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-9NzM2fTVWqco62BsQ5Pd63eiBzXp27Qdaik23dF8yRs='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.0",
+      "softwareVersion": "0.1.1",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -101,7 +101,7 @@
         <a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/tailscale">Source code on GitHub</a>
       </div>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.1.0</dd></div>
+        <div><dt>Version</dt><dd>0.1.1</dd></div>
         <div><dt>Needs</dt><dd>Cobalt 0.3.39 or newer</dd></div>
         <div><dt>May use</dt><dd>Nothing beyond its own storage</dd></div>
       </dl>
@@ -166,8 +166,8 @@
     <p class="status" id="install-status" role="status" aria-live="polite"></p>
   </section>
   <section class="section whats-new">
-    <h2>New in 0.1.0</h2>
-    <p>First release. One switch, sign-in by scanning a code with your phone, and options to stay connected outside Cobalt, offer the reader as an exit node and share its network, each off until you turn it on.</p>
+    <h2>New in 0.1.1</h2>
+    <p>The exit node and the shared network now come with a code to scan. Switching either on opens the page of the Tailscale admin console where it is approved, as a code for your phone, and the screen closes once your tailnet has approved it.</p>
   </section>
   <section class="section">
     <p class="after-index">Want another Kobo app? Request it, suggest a feature or report a bug in <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.</p>

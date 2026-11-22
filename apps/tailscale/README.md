@@ -100,9 +100,13 @@ it is not available there.
 
 ### What the last two need, and their limits
 
-- **Approval, once.** In the Tailscale admin console, open this reader's
-  route settings and allow the exit node or the route. Until then the switch
-  says it is waiting.
+- **Approval, once, from your phone.** A device cannot approve what it
+  offers. Somebody who manages your tailnet does, in the Tailscale admin
+  console. Switching either on opens a code on the reader: scan it, sign in,
+  and on the page that opens choose **Edit route settings**, tick the exit
+  node or the network, and save. The screen closes within a minute of that.
+  Until then the switch says it is waiting, and **Approve** under the
+  switches and on the first screen shows the code again.
 - **A reader is slow at this.** It has one core and Wi-Fi. Expect a few
   megabits, not a router's speed.
 - **The reader stays awake for it while Cobalt is open.** Cobalt normally
@@ -354,11 +358,17 @@ approved from a phone and been reached over its tailnet. What that showed:
   address, with no second approval.
 - A sign-in nobody finished closed after ten minutes and was not started
   again until **Try again**.
+- Switched on as an exit node, the reader offered itself, with the daemon
+  carrying routed traffic itself and the kernel's forwarding switch still
+  off, and the tailnet listed the offer as not yet approved. The switch said
+  it was waiting and gave the owner nowhere to go, which is why approving
+  now has a code to scan.
 - A program left listening on a port was refused by name, once.
 
-Nobody has yet seen, on a reader: staying connected outside Cobalt, the exit
-node, the shared network, the reader reached from outside its own Wi-Fi, or
-the key outliving a restart (the folder it is kept in did). So a run that
+Nobody has yet seen, on a reader: staying connected outside Cobalt, an
+approved exit node carrying traffic, the shared network, the reader reached
+from outside its own Wi-Fi, or the key outliving a restart (the folder it is
+kept in did). So a run that
 gets further is evidence as well as a test. With the reader at `READER` on your Wi-Fi,
 capture these before switching Tailscale on, once it says **Connected**, and
 after leaving Cobalt:
