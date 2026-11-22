@@ -464,8 +464,11 @@ impl TailscaleService {
             return;
         };
         // Its status already says what it is waiting for, and nothing but
-        // the owner changes that.
-        if self.settled.holds(want) {
+        // the owner changes that. A supervisor kept outside the session is
+        // not this one's child, so for it the status is all there is to go
+        // by, and one that stopped for any other reason is started again.
+        let waiting = want == Want::Stay && crate::tailscale::waits_on_the_owner();
+        if self.settled.holds(want, waiting) {
             return;
         }
         if self.retry_after.is_some_and(|at| Instant::now() < at) {

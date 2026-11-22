@@ -1759,15 +1759,15 @@ fn the_runtime_is_asked_to_run_only_what_the_owner_asked_for() {
 #[test]
 fn a_start_that_ended_waiting_on_the_owner_is_not_made_again_until_they_ask() {
     let mut settled = Settled::default();
-    assert!(!settled.holds(Want::Run), "a session starts it once");
+    assert!(!settled.holds(Want::Run, false), "a session starts it once");
     // Refused, or a sign-in nobody finished: ended, and not a failure.
     settled.ended(Want::Run);
-    assert!(settled.holds(Want::Run));
+    assert!(settled.holds(Want::Run, false));
     // The owner taps Try again with nothing running.
     settled.asked(false);
-    assert!(!settled.holds(Want::Run));
+    assert!(!settled.holds(Want::Run, false));
     settled.ended(Want::Run);
-    assert!(settled.holds(Want::Run));
+    assert!(settled.holds(Want::Run, false));
 }
 
 #[test]
@@ -1777,11 +1777,14 @@ fn a_supervisor_that_left_for_a_choice_the_owner_changed_is_followed_by_the_next
     // was running: it leaves, and the other kind is what is wanted now.
     settled.asked(true);
     settled.ended(Want::Run);
-    assert!(!settled.holds(Want::Stay));
-    assert!(!settled.holds(Want::Run), "the same choice saved again");
+    assert!(!settled.holds(Want::Stay, false));
+    assert!(
+        !settled.holds(Want::Run, false),
+        "the same choice saved again"
+    );
     // Only that once. What ends after it waits for the owner again.
     settled.ended(Want::Run);
-    assert!(settled.holds(Want::Run));
+    assert!(settled.holds(Want::Run, false));
 }
 
 #[test]
@@ -1790,8 +1793,38 @@ fn a_reader_that_could_not_be_kept_connected_still_gets_the_session_supervisor()
     // The step that arranges staying ended well and left a note that it
     // could not, so what is wanted next is the supervisor that runs here.
     settled.ended(Want::Stay);
-    assert!(settled.holds(Want::Stay));
-    assert!(!settled.holds(Want::Run));
+    assert!(!settled.holds(Want::Run, false));
+    assert!(!settled.holds(Want::Run, true));
+}
+
+#[test]
+fn a_kept_supervisor_is_started_again_unless_it_stopped_for_the_owner() {
+    let (_, layout) = reader("settled-kept");
+    let said = |state: &'static str| {
+        fs::write(
+            layout.app_state.join(STATUS),
+            Status::quiet(state, "Why.").render(),
+        )
+        .expect("status");
+        waits_on_the_owner_in(&layout)
+    };
+    let mut settled = Settled::default();
+    // Before the step that starts one has run, nothing holds it back,
+    // whatever an earlier session left in the status.
+    assert!(!settled.holds(Want::Stay, said("refused")));
+    settled.ended(Want::Stay);
+    // It is nobody's child, so how it ended is read from what it said. A
+    // download that failed or a daemon that died is tried again.
+    for passing in ["failed", "stopped", "starting", "running", "offline"] {
+        assert!(!settled.holds(Want::Stay, said(passing)), "{passing}");
+    }
+    // What only the owner can settle is left for them.
+    for theirs in ["refused", "unsupported", "timed-out", "needs-approval"] {
+        assert!(settled.holds(Want::Stay, said(theirs)), "{theirs}");
+    }
+    // And they have: Try again saves the switch.
+    settled.asked(false);
+    assert!(!settled.holds(Want::Stay, said("refused")));
 }
 
 #[test]
@@ -1800,7 +1833,7 @@ fn a_failure_is_left_to_the_clock_and_forgets_that_the_owner_asked() {
     settled.asked(true);
     settled.failed();
     settled.ended(Want::Run);
-    assert!(settled.holds(Want::Run));
+    assert!(settled.holds(Want::Run, false));
 }
 
 #[test]

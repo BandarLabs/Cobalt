@@ -755,10 +755,19 @@ impl Want {
 /// The one settled end that must be followed by a start is the supervisor
 /// leaving because the owner changed a choice it cannot take up while
 /// running. That is told apart by the owner having asked while it ran.
+///
+/// A reader kept connected outside Cobalt is a different case, because what
+/// the session runs for it is only the step that starts a supervisor of its
+/// own. That step ending well says a supervisor was started and nothing
+/// about how it ended, and it is nobody's child to ask. So for that one the
+/// session goes by what the supervisor last said: left alone while that is
+/// something only the owner can settle, started again when it stopped for
+/// any other reason, such as a download that failed.
 #[derive(Clone, Copy, Debug, Default)]
 #[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 pub struct Settled {
     ended: Option<Want>,
+    kept_started: bool,
     asked_meanwhile: bool,
 }
 
@@ -768,13 +777,18 @@ impl Settled {
     /// supervisor was there to see it.
     pub fn asked(&mut self, running: bool) {
         self.ended = None;
+        self.kept_started = false;
         self.asked_meanwhile = running;
     }
 
     /// What was started for `want` ended without failing.
     pub fn ended(&mut self, want: Want) {
-        if !std::mem::take(&mut self.asked_meanwhile) {
-            self.ended = Some(want);
+        if std::mem::take(&mut self.asked_meanwhile) {
+            return;
+        }
+        match want {
+            Want::Stay => self.kept_started = true,
+            Want::Run | Want::SignOut => self.ended = Some(want),
         }
     }
 
@@ -788,10 +802,29 @@ impl Settled {
     /// Asked of what is wanted now, not of what ended: a step that could not
     /// arrange for the reader to stay connected ends well too, and what is
     /// wanted after it is the supervisor that runs with the session.
+    /// `waiting_on_owner` is what the status says, from [`waits_on_the_owner`],
+    /// and is only consulted for a reader kept connected.
     #[must_use]
-    pub fn holds(self, want: Want) -> bool {
-        self.ended == Some(want)
+    pub fn holds(self, want: Want, waiting_on_owner: bool) -> bool {
+        match want {
+            Want::Stay => self.kept_started && waiting_on_owner,
+            Want::Run | Want::SignOut => self.ended == Some(want),
+        }
     }
+}
+
+/// Whether the last thing a supervisor said is something only the owner can
+/// settle, so that starting another would say it again.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub fn waits_on_the_owner() -> bool {
+    waits_on_the_owner_in(&Layout::device())
+}
+
+fn waits_on_the_owner_in(layout: &Layout) -> bool {
+    matches!(
+        read_status(layout).lines().next().unwrap_or_default(),
+        "refused" | "unsupported" | "timed-out" | "needs-approval"
+    )
 }
 
 /// Whether the service should be started, read from what the app saved.
