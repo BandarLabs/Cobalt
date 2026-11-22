@@ -529,11 +529,12 @@ its passive soak has completed.
 
 ### Tailscale across a session
 
-One reader has run the Tailscale service, as far as the approval code: a
-Clara BW (N365) on firmware 4.46.23852, kernel 4.9.77. Everything past that
-point, and everything on any other reader, has been tested against stand-ins
-for the two Tailscale programs, so a claim below about a kernel is a question
-unless it says it was seen.
+One reader has run the Tailscale service: a Clara BW (N365) on firmware
+4.46.23852, kernel 4.9.77, approved from a phone and reached over its tailnet
+from a computer on the same Wi-Fi. Its three options, and everything on any
+other reader, have been tested against stand-ins for the two Tailscale
+programs, so a claim below about a kernel is a question unless it says it was
+seen.
 
 What that reader showed. Its kernel has the tunnel driver, registered in
 `/proc/misc` with `/dev/net/tun` already made, and the daemon brought its
@@ -542,8 +543,12 @@ interface up on it. The firmware mounts a RAM disk of sixteen kilobytes over
 room to begin with, which is why the daemon's home is under
 `/usr/local/cobalt`. Its SSH server was at the firmware's stock settings
 with a computer's key beside them, and the runtime closed password login
-itself before joining. Ending the session stopped the daemon, removed the
-interface and left Wi-Fi working under the stock reader.
+itself before joining. Approved, it took its tailnet address on the kernel's
+interface and routed to the other machines through the daemon's own table,
+with the packet filter left alone, and a computer on the tailnet pinged it
+and logged in to it. Ending the session stopped the daemon, removed the
+interface and left Wi-Fi working under the stock reader. Opening Cobalt again
+connected it fifteen seconds later with no second approval.
 
 The service needs the kernel's tunnel driver, and nothing in the repository
 says which other firmware builds have it. The two kernels in the support
@@ -576,12 +581,13 @@ filter: the daemon carries that traffic itself. `kobo doctor` still reports
 what each kernel offers for it, the forwarding switch, connection tracking
 and the packet filter, because a kernel that has them could do the forwarding
 faster and nobody has looked. The daemon held 30 MB on the Clara BW while it
-waited to be approved. What has not been measured on any reader: its memory
-once connected and beside a running app, whether its link monitoring disturbs
-the hand-back when it stays connected, how long a reconnect takes after the
-radio returns, and whether the daemon's routing works without the packet
-filter tools the firmware lacks. The app's README lists the evidence to
-capture on a first run.
+waited to be approved and 31 MB at most once connected, beside the launcher
+and the Tailscale app. What has not been measured on any reader: its memory
+beside a heavier app, whether its link monitoring disturbs the hand-back when
+it stays connected, how long a reconnect takes after the radio returns, and
+whether the daemon carries an exit node's or a shared network's traffic
+without the packet filter tools the firmware lacks. The app's README lists
+the evidence to capture on a first run.
 
 ### The three watchdogs
 

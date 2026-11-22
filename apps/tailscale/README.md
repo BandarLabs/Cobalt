@@ -12,10 +12,11 @@ the reader can reach your own servers by name.
 </tr>
 </table>
 
-One reader has run this as far as the approval code: a Clara BW on firmware
-4.46.23852. [First run on a reader](#first-run-on-a-reader) says what that
-showed and what nobody has seen yet. The rest has been tested against
-stand-ins for the Tailscale programs. The evidence bar in
+One reader has run this: a Clara BW on firmware 4.46.23852, approved from a
+phone and reached over its tailnet.
+[First run on a reader](#first-run-on-a-reader) says what that showed and
+what nobody has seen yet, the three options among it. The rest has been
+tested against stand-ins for the Tailscale programs. The evidence bar in
 [docs/DEVICES.md](../../docs/DEVICES.md) applies before it is called tested.
 
 ## Features
@@ -323,27 +324,42 @@ Files sent to the reader with Taildrop are not accepted.
 
 ## First run on a reader
 
-A Clara BW (N365, firmware 4.46.23852, kernel 4.9.77) has run this as far as
-the approval code. What that showed:
+A Clara BW (N365, firmware 4.46.23852, kernel 4.9.77) has run this, been
+approved from a phone and been reached over its tailnet. What that showed:
 
 - The kernel has the tunnel driver, and the daemon brought `tailscale0` up
   on it.
 - The reader closed password login for root itself, and logging in with the
-  key went on working, through the server's restart.
+  key went on working, through the server's restart. The door was still
+  closed after the reader had been restarted.
 - The download arrived and matched its digests, and the programs ran from
-  system storage, which had 719 MB free.
+  system storage, which had 719 MB free. They and the daemon's folder were
+  still there after a restart.
 - With the programs already downloaded, the approval code was ready about
   fifteen seconds after Cobalt opened.
-- The daemon held 30 MB while it waited for approval, with its
-  `oom_score_adj` at 800 and the default route still on Wi-Fi.
-- Leaving Cobalt stopped the daemon and removed its interface, and Wi-Fi
-  went on working in the Kobo software.
+- Scanning the code with a phone and signing in connected the reader. The
+  screen showed its name and address, and `/etc/hosts` gained the tailnet's
+  names.
+- A computer on the tailnet pinged the reader and logged in to it at its
+  tailnet address, and the reader pinged the computer. Both were on the same
+  Wi-Fi and the path between them was direct. Asked at that address with no
+  key, the SSH server offered keys only.
+- The daemon held 30 MB while it waited for approval and 31 MB at most once
+  connected, with its `oom_score_adj` at 800 and the default route still on
+  Wi-Fi.
+- Leaving Cobalt stopped the daemon and removed its interface, the names
+  were gone from `/etc/hosts`, the reader no longer answered on the tailnet,
+  and Wi-Fi went on working in the Kobo software.
+- Opening Cobalt again connected it fifteen seconds later at the same
+  address, with no second approval.
+- A sign-in nobody finished closed after ten minutes and was not started
+  again until **Try again**.
 - A program left listening on a port was refused by name, once.
 
-Nobody has yet seen, on a reader: approval and the connected screen, traffic
-over the tailnet, staying connected outside Cobalt, the exit node, the shared
-network, or the key outliving a restart. So a run that gets further is
-evidence as well as a test. With the reader at `READER` on your Wi-Fi,
+Nobody has yet seen, on a reader: staying connected outside Cobalt, the exit
+node, the shared network, the reader reached from outside its own Wi-Fi, or
+the key outliving a restart (the folder it is kept in did). So a run that
+gets further is evidence as well as a test. With the reader at `READER` on your Wi-Fi,
 capture these before switching Tailscale on, once it says **Connected**, and
 after leaving Cobalt:
 
