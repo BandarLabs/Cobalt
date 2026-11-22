@@ -17,9 +17,9 @@
 //!
 //! Nothing here can prove the owner still holds the other half of that key.
 //! What is checked is everything the reader can see: that the server takes
-//! keys at all, that the line is a plain key and not text or a key bound to
-//! one command, and that the file and the folders above it are ones the
-//! server will not turn away. A reader whose key was lost is still left
+//! keys at all and keys of this kind, that the line is a whole key and not
+//! text or a key bound to one command, and that the file and the folders
+//! above it, where they really are, are ones the server will not turn away. A reader whose key was lost is still left
 //! without a shell by this, and gets one back the way it got the first:
 //! `kobo setup` over USB, which needs no login.
 //!
@@ -39,6 +39,8 @@
 use super::{
     answer, holder_of, holds_socket, listeners, said, ssh_door, Layout, Listener, SshDoor,
 };
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use kobod::ssh_hardening as hardening;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -134,32 +136,93 @@ fn root_has_a_usable_key(layout: &Layout, settings: &str) -> bool {
         .into_iter()
         .filter_map(|name| key_file(&home, name))
         .any(|file| {
-            let holds_a_key = read_bounded(&on_the_reader(&file))
-                .is_some_and(|keys| keys.lines().any(is_a_plain_key));
+            let holds_a_key = read_bounded(&on_the_reader(&file)).is_some_and(|keys| {
+                keys.lines()
+                    .filter_map(plain_key)
+                    .any(|kind| server_takes(settings, kind))
+            });
             holds_a_key && (!strict || server_would_read(layout, &home, &file))
         })
 }
 
-/// Whether a line of a key file is a key and nothing else: its kind, then
-/// the key itself.
+/// Whether the server takes keys of this kind.
+///
+/// A server can be told which kinds it accepts, and a key of any other kind
+/// in its file lets nobody in however well formed it is. One that does not
+/// say takes every kind it knows. The setting has had two names, and an RSA
+/// key is taken through any of the three signatures it can make.
+fn server_takes(settings: &str, kind: &str) -> bool {
+    let mut accepted = said(settings, "pubkeyacceptedalgorithms")
+        .chain(said(settings, "pubkeyacceptedkeytypes"))
+        .flat_map(|list| list.split(','))
+        .map(str::trim)
+        .peekable();
+    if accepted.peek().is_none() {
+        return true;
+    }
+    let signs_as: &[&str] = if kind == "ssh-rsa" {
+        &["ssh-rsa", "rsa-sha2-256", "rsa-sha2-512"]
+    } else {
+        std::slice::from_ref(&kind)
+    };
+    accepted.any(|algorithm| signs_as.contains(&algorithm))
+}
+
+/// The kind of key a line of a key file holds, when the line is a key and
+/// nothing else: its kind, then the key itself.
 ///
 /// Text that is not a key lets nobody in. A key with conditions in front of
 /// it, such as one tied to a single command, may let its holder in to
 /// nothing useful, and what its conditions allow is not something to guess
 /// at before taking the password away. `kobo setup` writes plain keys.
-fn is_a_plain_key(line: &str) -> bool {
+fn plain_key(line: &str) -> Option<&str> {
     let mut fields = line.split_whitespace();
-    let (Some(kind), Some(key)) = (fields.next(), fields.next()) else {
+    let (kind, key) = (fields.next()?, fields.next()?);
+    is_whole(kind, key).then_some(kind)
+}
+
+/// Whether the key is what its kind says, all of it and no more.
+///
+/// A key is written as fields, each a length and that many bytes, and the
+/// first field is the kind over again. Letters that only look like a key,
+/// a key cut short in copying, and a key filed under another kind's name all
+/// fail here, where the server would also turn them away. The kinds are the
+/// ones a server of this age accepts.
+fn is_whole(kind: &str, key: &str) -> bool {
+    let Ok(blob) = STANDARD.decode(key) else {
         return false;
     };
-    let known = ["ssh-", "ecdsa-sha2-", "sk-ssh-", "sk-ecdsa-sha2-"]
-        .iter()
-        .any(|prefix| kind.starts_with(prefix));
-    known
-        && key.len() >= 32
-        && key
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
+    let mut fields = Vec::new();
+    let mut rest = blob.as_slice();
+    while !rest.is_empty() {
+        let Some((length, after)) = rest.split_first_chunk::<4>() else {
+            return false;
+        };
+        let Ok(length) = usize::try_from(u32::from_be_bytes(*length)) else {
+            return false;
+        };
+        if after.len() < length {
+            return false;
+        }
+        let (field, after) = after.split_at(length);
+        fields.push(field);
+        rest = after;
+    }
+    if fields.first() != Some(&kind.as_bytes()) {
+        return false;
+    }
+    let curve = |named: &str| fields.get(1) == Some(&named.as_bytes());
+    match kind {
+        "ssh-ed25519" => fields.len() == 2 && fields[1].len() == 32,
+        // The public number and the modulus, which no server takes under
+        // 1024 bits.
+        "ssh-rsa" => fields.len() == 3 && fields[2].len() >= 128,
+        "sk-ssh-ed25519@openssh.com" => fields.len() == 3 && fields[1].len() == 32,
+        "sk-ecdsa-sha2-nistp256@openssh.com" => fields.len() == 4 && curve("nistp256"),
+        _ => kind
+            .strip_prefix("ecdsa-sha2-")
+            .is_some_and(|named| fields.len() == 3 && curve(named)),
+    }
 }
 
 /// Whether the server, being strict about it, would read this key file.
@@ -168,20 +231,34 @@ fn is_a_plain_key(line: &str) -> bool {
 /// root's home, belongs to somebody else or can be written by anybody but
 /// its owner, and then the key in it lets nobody in. The owner it accepts is
 /// root, which is also who owns the top of the reader's filesystem.
+///
+/// The server follows links before it looks, so the file and the home are
+/// judged where they really are. A key folder that is a link into a folder
+/// anybody can write is turned away for the folder it is in, not passed for
+/// the tidy name it is reached by.
 fn server_would_read(layout: &Layout, home: &Path, file: &Path) -> bool {
     let on_the_reader = |path: &Path| layout.system.join(path.strip_prefix("/").unwrap_or(path));
     let Ok(roots) = fs::metadata(&layout.system).map(|top| top.uid()) else {
         return false;
     };
-    let mut step = Some(file);
+    let (Ok(file), Ok(home), Ok(top)) = (
+        fs::canonicalize(on_the_reader(file)),
+        fs::canonicalize(on_the_reader(home)),
+        fs::canonicalize(&layout.system),
+    ) else {
+        return false;
+    };
+    let mut step = Some(file.as_path());
     while let Some(path) = step {
-        let Ok(found) = fs::metadata(on_the_reader(path)) else {
+        let Ok(found) = fs::metadata(path) else {
             return false;
         };
         if (found.uid() != 0 && found.uid() != roots) || found.mode() & 0o022 != 0 {
             return false;
         }
-        if path == home {
+        // Home is where the server stops looking. A file that is not under
+        // home at all is looked at as far up as there is anything to look at.
+        if path == home || path == top {
             break;
         }
         step = path.parent();
@@ -304,7 +381,9 @@ struct Server {
 /// It is about to be sent a signal, and a process number is not an identity.
 /// What ties this one to the server is that it holds the sockets the
 /// server's ports are listening on and was started from the server's own
-/// program. Every socket, because a reader can be listening on those ports
+/// program: that file, not one of the same name somewhere else, which would
+/// read settings of its own and not be spoken for by a fresh copy of this
+/// one. Every socket, because a reader can be listening on those ports
 /// twice over, once for each kind of address, and two servers sharing them
 /// would leave one that was never told and still takes a password.
 fn listening_server(layout: &Layout, ports: &[u16]) -> Option<Server> {
@@ -321,7 +400,11 @@ fn listening_server(layout: &Layout, ports: &[u16]) -> Option<Server> {
         return None;
     }
     let program = fs::read_link(layout.proc.join(pid.to_string()).join("exe")).ok()?;
-    (program.file_name() == layout.sshd.file_name()).then_some(Server { pid, sockets })
+    // A program replaced on disk since it started has no file to resolve
+    // to, and is not this one either.
+    let program = fs::canonicalize(&program).unwrap_or(program);
+    let servers = fs::canonicalize(&layout.sshd).ok()?;
+    (program == servers).then_some(Server { pid, sockets })
 }
 
 /// Whether the server holding this listener is one a fresh server speaks
