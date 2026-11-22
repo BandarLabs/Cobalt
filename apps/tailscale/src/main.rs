@@ -96,6 +96,9 @@ struct ServiceStatus {
     shared: String,
     exit_node_why: String,
     network_why: String,
+    /// The bytes the daemon has carried since it started, in from the
+    /// tailnet's devices and then out to them, while the runtime knows.
+    carried: String,
 }
 
 impl ServiceStatus {
@@ -114,6 +117,7 @@ impl ServiceStatus {
             shared: next(),
             exit_node_why: next(),
             network_why: next(),
+            carried: next(),
         }
     }
 
@@ -170,6 +174,10 @@ struct Tailscale {
     /// The watch ran its whole limit, so it stays stopped until the owner
     /// does something or the runtime says something new.
     gave_up: bool,
+    /// Ticks while the reader is carrying for its tailnet, so the figure on
+    /// the first screen keeps up. Slowly, because the runtime asks the
+    /// daemon for it once a minute.
+    meter: Heartbeat,
 }
 
 impl Default for Tailscale {
@@ -188,6 +196,7 @@ impl Default for Tailscale {
             approve_page: String::new(),
             approve_from: View::Status,
             gave_up: false,
+            meter: Heartbeat::every(30),
         }
     }
 }
@@ -229,6 +238,30 @@ impl Tailscale {
         } else {
             self.watch.stop(context);
         }
+        if self.connected() && self.offers().contains(&Offer::Approved) {
+            self.meter.start(context);
+        } else {
+            self.meter.stop(context);
+        }
+    }
+
+    /// How much the reader has carried for its tailnet since Tailscale last
+    /// started, once the tailnet has approved something for it to carry and
+    /// the runtime has said how much that came to.
+    ///
+    /// One figure, both directions together. Which way the bytes went is
+    /// not what an owner minding a battery or a data plan is asking.
+    fn carried(&self) -> Option<String> {
+        if !(self.connected() && self.offers().contains(&Offer::Approved)) {
+            return None;
+        }
+        let mut counts = self.status.carried.split(' ').map(str::parse::<u64>);
+        let (Some(Ok(received)), Some(Ok(sent)), None) =
+            (counts.next(), counts.next(), counts.next())
+        else {
+            return None;
+        };
+        Some(megabytes(received.saturating_add(sent)))
     }
 
     /// Where each offer stands, the exit node first.
@@ -371,7 +404,7 @@ impl Tailscale {
         }
         rows.push(("options", "Options", "", Glyph::Settings));
         rows.push(("about", "About Tailscale", "", Glyph::Globe));
-        let mut facts = Vec::with_capacity(3);
+        let mut facts = Vec::with_capacity(4);
         if self.enabled {
             facts.push(("Status", self.state_words().to_owned()));
         }
@@ -381,6 +414,9 @@ impl Tailscale {
             }
             if !self.status.address.is_empty() {
                 facts.push(("Address", self.status.address.clone()));
+            }
+            if let Some(carried) = self.carried() {
+                facts.push(("Carried", carried));
             }
         }
         screen
@@ -613,6 +649,17 @@ impl Tailscale {
     }
 }
 
+/// A count of bytes the way an owner reads one: megabytes, and gigabytes to
+/// one place once there are a thousand of those.
+fn megabytes(bytes: u64) -> String {
+    let megabytes = bytes / 1_000_000;
+    match megabytes {
+        0 => "Under 1 MB".to_owned(),
+        1..=999 => format!("{megabytes} MB"),
+        _ => format!("{}.{} GB", megabytes / 1000, megabytes % 1000 / 100),
+    }
+}
+
 /// The page that says what the service is for and what it opens, which the
 /// sign-out question is also asked over, so the owner answers it looking at
 /// the page they asked from.
@@ -669,6 +716,12 @@ impl KoboApp for Tailscale {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if self.meter.on_task(context, task, &outcome) {
+            if !matches!(outcome, TaskOutcome::Cancelled) {
+                context.store().load(STATUS);
+            }
+            return;
+        }
         if !self.watch.on_task(context, task, &outcome) {
             return;
         }
@@ -1330,6 +1383,95 @@ mod tests {
         runner.action(ActionId::BACK);
         let again = runner.action(action_id("approve"));
         assert!(nap(&again).is_some());
+    }
+
+    const CARRYING: &str = "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\napproved\n\n\n\n\n67275732 324307184\n";
+
+    fn exit_node_app(status: &str) -> Tailscale {
+        Tailscale {
+            exit_node: true,
+            ..with_status(true, status)
+        }
+    }
+
+    #[test]
+    fn a_reader_carrying_for_its_tailnet_says_how_much_on_the_first_screen() {
+        let said = words(&exit_node_app(CARRYING).status_screen());
+        assert!(said.contains("Carried 391 MB"), "{said}");
+        assert!(exit_node_app(CARRYING)
+            .status_screen()
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
+        for (why, status) in [
+            // Nothing can have gone through an offer nobody has approved.
+            ("waiting", CARRYING.replace("approved", "waiting")),
+            // A runtime from before the figure says nothing about it.
+            ("an older runtime", ALLOWED.to_owned()),
+            (
+                "half a figure",
+                CARRYING.replace("67275732 324307184", "67275732"),
+            ),
+            (
+                "not a figure",
+                CARRYING.replace("67275732 324307184", "a lot"),
+            ),
+            ("not connected", CARRYING.replace("running", "offline")),
+        ] {
+            let said = words(&exit_node_app(&status).status_screen());
+            assert!(!said.contains("Carried"), "{why}: {said}");
+        }
+        // The switch being off is the end of it, whatever the file still says.
+        let said = words(&with_status(true, CARRYING).status_screen());
+        assert!(!said.contains("Carried"), "{said}");
+    }
+
+    #[test]
+    fn bytes_are_said_in_megabytes_and_then_gigabytes() {
+        for (bytes, said) in [
+            (0, "Under 1 MB"),
+            (999_999, "Under 1 MB"),
+            (1_000_000, "1 MB"),
+            (391_582_916, "391 MB"),
+            (999_999_999, "999 MB"),
+            (1_000_000_000, "1.0 GB"),
+            (1_250_000_000, "1.2 GB"),
+            (23_960_000_000, "23.9 GB"),
+        ] {
+            assert_eq!(megabytes(bytes), said);
+        }
+    }
+
+    #[test]
+    fn the_figure_is_looked_at_again_every_half_minute_while_something_is_approved() {
+        let mut runner = AppRunner::new(exit_node_app(""));
+        let carrying = says(&mut runner, CARRYING);
+        let tick = nap(&carrying).expect("the figure is followed");
+        assert!(carrying.iter().any(|command| matches!(
+            command,
+            Command::Spawn {
+                work: Task::Sleep { seconds: 30 },
+                ..
+            }
+        )));
+        // A tick asks the runtime's file again and waits for the next.
+        let ticked = runner.task_outcome(tick, TaskOutcome::Completed(Vec::new()));
+        assert!(ticked.iter().any(|command| matches!(
+            command,
+            Command::Store(StoreRequest::Load { key }) if key == STATUS
+        )));
+        let later = says(
+            &mut runner,
+            &CARRYING.replace("67275732 324307184", "100000000 900000000"),
+        );
+        assert!(words(screen(&later)).contains("Carried 1.0 GB"));
+        // Approval taken back: nothing is being carried, so nothing is
+        // looked for.
+        let next = nap(&ticked).expect("the next tick");
+        let withdrawn = says(&mut runner, &CARRYING.replace("approved", "waiting"));
+        assert!(withdrawn
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == next)));
     }
 
     #[test]

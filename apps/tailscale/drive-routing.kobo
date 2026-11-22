@@ -4,6 +4,11 @@
 # said once under them.
 wait-for Connected
 expect Approve the shared network
+# The exit node is approved, so what the reader has carried is said.
+expect Carried
+expect 391 MB
+clean
+shot tailscale-carried
 tap Options
 wait-for Offer as an exit node
 expect Approved.

@@ -531,10 +531,10 @@ its passive soak has completed.
 
 One reader has run the Tailscale service: a Clara BW (N365) on firmware
 4.46.23852, kernel 4.9.77, approved from a phone and reached over its tailnet
-from a computer on the same Wi-Fi. Its three options, and everything on any
-other reader, have been tested against stand-ins for the two Tailscale
-programs, so a claim below about a kernel is a question unless it says it was
-seen.
+from a computer on the same Wi-Fi, and used as an exit node. Staying
+connected, the shared network, and everything on any other reader, have been
+tested against stand-ins for the two Tailscale programs, so a claim below
+about a kernel is a question unless it says it was seen.
 
 What that reader showed. Its kernel has the tunnel driver, registered in
 `/proc/misc` with `/dev/net/tun` already made, and the daemon brought its
@@ -582,12 +582,14 @@ what each kernel offers for it, the forwarding switch, connection tracking
 and the packet filter, because a kernel that has them could do the forwarding
 faster and nobody has looked. The daemon held 30 MB on the Clara BW while it
 waited to be approved and 31 MB at most once connected, beside the launcher
-and the Tailscale app. What has not been measured on any reader: its memory
-beside a heavier app, whether its link monitoring disturbs the hand-back when
-it stays connected, how long a reconnect takes after the radio returns, and
-whether the daemon carries an exit node's or a shared network's traffic
-without the packet filter tools the firmware lacks. The app's README lists
-the evidence to capture on a first run.
+and the Tailscale app. As an exit node it carried 391 MB in a little over two
+hours with the kernel's forwarding switch off and no packet filter tools on
+the reader, which is the daemon carrying that traffic itself, and its memory
+peaked at 63 MB against the 96 it is limited to. What has not been measured
+on any reader: its memory beside a heavier app, whether its link monitoring
+disturbs the hand-back when it stays connected, how long a reconnect takes
+after the radio returns, and whether a shared network's traffic is carried
+the same way. The app's README lists the evidence to capture on a first run.
 
 ### The three watchdogs
 

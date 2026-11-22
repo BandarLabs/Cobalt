@@ -579,6 +579,10 @@ struct RoutingNotes {
     shared: String,
     exit_node_why: String,
     network_why: String,
+    /// How much the daemon has carried since it started, in bytes: in from
+    /// the tailnet's devices, then out to them. Known only while the tailnet
+    /// has approved something for the reader to carry.
+    carried: Option<(u64, u64)>,
 }
 
 impl Status {
@@ -593,7 +597,7 @@ impl Status {
     fn render(&self) -> String {
         let routing = &self.routing;
         format!(
-            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
             self.state,
             self.address,
             self.message,
@@ -604,7 +608,10 @@ impl Status {
             routing.network,
             routing.shared,
             routing.exit_node_why,
-            routing.network_why
+            routing.network_why,
+            routing
+                .carried
+                .map_or_else(String::new, |(received, sent)| format!("{received} {sent}"))
         )
     }
 }
@@ -1294,6 +1301,21 @@ impl<'a> Supervisor<'a> {
                 "waiting"
             };
         }
+    }
+
+    /// Records how much the daemon has carried, while the tailnet has
+    /// approved something for it to carry.
+    ///
+    /// Asked only then. It is one more program started every time the
+    /// tunnel is asked how it is, and a reader that is a plain member of its
+    /// tailnet has no figure an owner would look for.
+    fn note_carried(&self) {
+        let approved = {
+            let notes = self.notes.borrow();
+            notes.exit_node == "approved" || notes.network == "approved"
+        };
+        let carried = if approved { carried(self.layout) } else { None };
+        self.notes.borrow_mut().carried = carried;
     }
 
     /// Says what happened, or remembers it for when the card is back.
@@ -2535,6 +2557,48 @@ fn report(layout: &Layout) -> Option<Report> {
     parse_report(&answer(command, layout.timing.answer).ok()?)
 }
 
+/// How much the daemon has carried over the tunnel since it started: bytes
+/// in from the tailnet's devices, then bytes out to them.
+///
+/// The daemon keeps these counts itself, by the road each packet took, and
+/// keeps none for an exit node or a shared network alone. On a reader that
+/// is offering either, nearly all of it is that traffic: what is left is
+/// the owner's own sends to the reader. The counts start again from nothing
+/// with the daemon.
+fn carried(layout: &Layout) -> Option<(u64, u64)> {
+    let mut command = layout.ask();
+    command.args(["metrics", "print"]);
+    parse_carried(&answer(command, layout.timing.answer).ok()?)
+}
+
+/// Adds up the daemon's own counts of bytes in and bytes out, over every
+/// road it lists. `None` when it lists neither, as a build from before it
+/// counted does.
+fn parse_carried(metrics: &str) -> Option<(u64, u64)> {
+    let total = |name: &str| {
+        let mut counts = metrics
+            .lines()
+            .filter_map(|line| line.strip_prefix(name))
+            // The name whole, not the start of a longer one.
+            .filter(|rest| rest.starts_with('{') || rest.starts_with(' '))
+            .filter_map(|rest| rest.rsplit(' ').next()?.parse::<f64>().ok())
+            .filter(|count| count.is_finite() && *count >= 0.0)
+            .peekable();
+        counts.peek()?;
+        // Whole bytes, written as a number that may carry an exponent.
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a count of bytes, checked finite and not negative"
+        )]
+        Some(counts.map(|count| count as u64).sum::<u64>())
+    };
+    Some((
+        total("tailscaled_inbound_bytes_total")?,
+        total("tailscaled_outbound_bytes_total")?,
+    ))
+}
+
 fn sync_hosts(layout: &Layout) {
     let mut command = layout.ask();
     command.args(["status", "--json"]);
@@ -2802,6 +2866,7 @@ fn keep_up(supervisor: &Supervisor, daemon: &mut Daemon) -> Result<(), End> {
                         return Ok(());
                     }
                     supervisor.note_approvals(&report);
+                    supervisor.note_carried();
                     supervisor.say(&Status {
                         address: report.address,
                         name: report.name,
