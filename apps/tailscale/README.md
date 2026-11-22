@@ -123,11 +123,14 @@ it is not available there.
 - **TCP, UDP and ping only.** The Tailscale program carries each connection
   itself and makes it again from the reader.
 - **How much it has carried.** Once your tailnet has approved either, the
-  first screen says how much data the reader has carried since Tailscale
-  last started, and looks again about once a minute. Tailscale counts
-  everything that crossed the tailnet to and from the reader, not the exit
-  node's share alone, which on a reader is nearly the same thing. The count
-  starts again whenever Tailscale does. It needs a Cobalt newer than 0.3.40.
+  first screen has a **Traffic** line: Rx is what the reader has received
+  from your devices and Tx what it has sent to them since Tailscale last
+  started, which is what they downloaded through it. It looks again about
+  once a minute. Tailscale
+  counts everything that crossed the tailnet to and from the reader, not the
+  exit node's share alone, which on a reader is nearly the same thing. The
+  counts start again whenever Tailscale does. It needs a Cobalt newer than
+  0.3.40.
 - **One reader has carried traffic as an exit node,** and none has shared a
   network yet. If a reader turns out not to be able to carry traffic, the
   switch says it is not available and nothing is offered to your tailnet.

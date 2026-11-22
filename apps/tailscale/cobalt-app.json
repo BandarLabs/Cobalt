@@ -6,7 +6,7 @@
   "page_description": "Put your Kobo on your Tailscale tailnet. Send books and articles to it from any network with kobo send and kobo clip, and reach your own servers from its apps. It runs while Cobalt is open, and can stay connected, act as an exit node and share your home network if you switch those on.",
   "version": "0.1.2",
   "minimum_cobalt_version": "0.3.39",
-  "release_notes": "Once your tailnet has approved the reader as an exit node or its network as shared, the first screen says how much data it has carried since Tailscale last started. Needs a Cobalt newer than 0.3.40 to show it.",
+  "release_notes": "Once your tailnet has approved the reader as an exit node or its network as shared, the first screen has a Traffic line: how much it has received (Rx) and sent (Tx) since Tailscale last started. Needs a Cobalt newer than 0.3.40.",
   "glyph": "globe",
   "capabilities": [],
   "setup": {

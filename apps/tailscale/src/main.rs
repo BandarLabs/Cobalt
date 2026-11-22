@@ -187,8 +187,8 @@ struct Tailscale {
     /// The watch ran its whole limit, so it stays stopped until the owner
     /// does something or the runtime says something new.
     gave_up: bool,
-    /// Ticks while the reader is carrying for its tailnet, so the figure on
-    /// the first screen keeps up. Slowly, because the runtime asks the
+    /// Ticks while the reader is carrying for its tailnet, so the figures on
+    /// the first screen keep up. Slowly, because the runtime asks the
     /// daemon for it once a minute.
     meter: Heartbeat,
 }
@@ -258,12 +258,15 @@ impl Tailscale {
         }
     }
 
-    /// How much the reader has carried for its tailnet since Tailscale last
-    /// started, once the tailnet has approved something for it to carry and
-    /// the runtime has said how much that came to.
+    /// How much the reader has received from its tailnet's devices and sent
+    /// to them since Tailscale last started, once the tailnet has approved
+    /// something for it to carry and the runtime has said how much that
+    /// came to.
     ///
-    /// One figure, both directions together. Which way the bytes went is
-    /// not what an owner minding a battery or a data plan is asking.
+    /// The two apart, because they are rarely alike: an exit node sends its
+    /// devices several times what they send it, and an owner minding a data
+    /// plan wants the larger one by itself. Said the way every network tool
+    /// says them, received and then sent, on the one line.
     fn carried(&self) -> Option<String> {
         if !(self.connected() && self.offers().contains(&Offer::Approved)) {
             return None;
@@ -274,7 +277,11 @@ impl Tailscale {
         else {
             return None;
         };
-        Some(megabytes(received.saturating_add(sent)))
+        Some(format!(
+            "Rx {}, Tx {}",
+            megabytes(received),
+            megabytes(sent)
+        ))
     }
 
     /// Where each offer stands, the exit node first.
@@ -428,8 +435,8 @@ impl Tailscale {
             if !self.status.address.is_empty() {
                 facts.push(("Address", self.status.address.clone()));
             }
-            if let Some(carried) = self.carried() {
-                facts.push(("Carried", carried));
+            if let Some(traffic) = self.carried() {
+                facts.push(("Traffic", traffic));
             }
         }
         screen
@@ -1410,7 +1417,7 @@ mod tests {
     #[test]
     fn a_reader_carrying_for_its_tailnet_says_how_much_on_the_first_screen() {
         let said = words(&exit_node_app(CARRYING).status_screen());
-        assert!(said.contains("Carried 391 MB"), "{said}");
+        assert!(said.contains("Traffic Rx 67 MB, Tx 324 MB"), "{said}");
         assert!(exit_node_app(CARRYING)
             .status_screen()
             .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
@@ -1432,11 +1439,11 @@ mod tests {
             ("not connected", CARRYING.replace("running", "offline")),
         ] {
             let said = words(&exit_node_app(&status).status_screen());
-            assert!(!said.contains("Carried"), "{why}: {said}");
+            assert!(!said.contains("Traffic"), "{why}: {said}");
         }
         // The switch being off is the end of it, whatever the file still says.
         let said = words(&with_status(true, CARRYING).status_screen());
-        assert!(!said.contains("Carried"), "{said}");
+        assert!(!said.contains("Traffic"), "{said}");
     }
 
     #[test]
@@ -1477,7 +1484,7 @@ mod tests {
             &mut runner,
             &CARRYING.replace("67275732 324307184", "100000000 900000000"),
         );
-        assert!(words(screen(&later)).contains("Carried 1.0 GB"));
+        assert!(words(screen(&later)).contains("Rx 100 MB, Tx 900 MB"));
         // Approval taken back: nothing is being carried, so nothing is
         // looked for.
         let next = nap(&ticked).expect("the next tick");
@@ -1535,7 +1542,7 @@ mod tests {
 
         // More goes through. The figure keeps up and the wait stays over.
         let more = says(&mut runner, &mixed("1000000 900000000"));
-        assert!(words(screen(&more)).contains("Carried 901 MB"));
+        assert!(words(screen(&more)).contains("Rx 1 MB, Tx 900 MB"));
         assert!(nap_of(&more, 3).is_none(), "the wait was started over");
         assert!(runner.app().gave_up);
 

@@ -4,9 +4,10 @@
 # said once under them.
 wait-for Connected
 expect Approve the shared network
-# The exit node is approved, so what the reader has carried is said.
-expect Carried
-expect 391 MB
+# The exit node is approved, so what the reader has received from the
+# tailnet's devices and sent to them is said.
+expect Traffic
+expect Rx 67 MB, Tx 324 MB
 clean
 shot tailscale-carried
 tap Options
