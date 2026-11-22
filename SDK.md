@@ -951,7 +951,9 @@ at seven to one contrast or better before the filter takes its share, and both
 among the 4096 colours the panel resolves so what is sent is what is shown. On a
 colour reader an accent does one thing with several parts:
 
-- the top bar is filled with the tint, its title and controls still in ink;
+- the line under the top bar is drawn in the strong shade, a little heavier
+  than the grey rule it replaces; the bar itself stays paper, its title and
+  controls in ink;
 - the primary button is filled with the strong shade, its label in paper;
 - the mark under the current destination, a selected chip or tab, a switch
   that is on, a ticked box, a chosen option, the filled part of a progress bar,
@@ -960,8 +962,8 @@ colour reader an accent does one thing with several parts:
 - the square in hand on a chess or draughts board, and the word a crossword
   is solving, take the tint.
 
-An application with no accent keeps a paper bar and has its controls drawn in
-the platform's own cobalt. Some colours are the platform's whatever the
+An application with no accent keeps the grey rule under its bar and has its
+controls drawn in the platform's own cobalt. Some colours are the platform's whatever the
 application's accent is, the way every phone draws its own red for an error:
 banners are green for success, red for an error and amber for attention, and
 keep their mark and outline; a text field whose value was refused is tinted

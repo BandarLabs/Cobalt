@@ -3287,13 +3287,48 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
 
 /// The size a screen's own title is set at, in the bar at the top.
 ///
-/// Body, not [`FontSize::Title`]. The bar names the screen you are already
-/// looking at; it is a label, not a headline, and at title size it was the
-/// loudest thing on every page, louder than the first heading of the content
-/// beneath it. Kobo's own reader sets its bar at about the size of its body
-/// text for the same reason. An overlay's title keeps the larger size, because
-/// an overlay has no content above it to compete with.
-const BAR_TITLE: FontSize = FontSize::Body;
+/// Title, which the typesetter sets in the heading cut. It was Title once
+/// before, at 4.2 millimetres under a 5.4 millimetre page heading, and came
+/// down to Body because two loud lines a centimetre apart gave every screen
+/// two titles. Body turned out to be the other mistake: in the weight and
+/// size of every row beneath it the bar read as one more line of the list,
+/// and the top of the screen had no anchor at all. Since then the scale has
+/// come down round it. Title is 3.8 millimetres and a page's heading 4.6, so
+/// the bar names the screen in the cut a book sets its running head in and
+/// the heading under it still leads the page.
+const BAR_TITLE: FontSize = FontSize::Title;
+
+/// How thick the line under the top bar is when it carries an accent, in
+/// tenths of a millimetre.
+///
+/// A rule is three tenths, which is two pixels of colour on a panel that
+/// resolves colour at half its grey resolution: a line that thin comes out
+/// grey with a fringe. Eight tenths is five colour pixels, enough to read as
+/// the colour it is, and about what the stock reader draws under its current
+/// tab. The extra is taken upwards out of the bar, so nothing under it moves.
+const BAR_ACCENT_TENTH_MM: i32 = 8;
+
+/// How far a bar control's target hangs outside the margin so that the ink
+/// of its mark ends on it.
+struct BarHang {
+    /// For the way back, whose arrow is a narrow stroke in the middle of its
+    /// box.
+    back: i32,
+    /// For a picture, which fills its box.
+    picture: i32,
+}
+
+/// See [`BarHang`]. The mark is drawn in the middle three fifths of its
+/// target ([`bar_mark`]), and the arrow's stroke begins three eighths of the
+/// way across that.
+const fn bar_mark_hang(control: i32) -> BarHang {
+    let mark = control * 3 / 5;
+    let picture = (control - mark) / 2;
+    BarHang {
+        back: picture + mark * 3 / 8 - mark / 24,
+        picture,
+    }
+}
 
 fn layout_top_bar(
     top_bar: &TopBar,
@@ -3324,13 +3359,20 @@ fn layout_top_bar(
     // here rather than at each control, because every one of them is centred
     // against the same height.
     let control = min(metrics.touch_target_default(), height);
+    let hang = bar_mark_hang(control);
     let mut title_x = margin;
     let mut title_width = width;
     if chrome.back {
+        // The arrow stands on the margin, where the clock above it and the
+        // page under it begin, and its target reaches out towards the bezel
+        // to put it there. Centred in a square that started at the margin it
+        // stood a third of a centimetre in from everything else on the
+        // screen, a mark belonging to neither the edge nor the title.
+        let x = max(0, margin - hang.back);
         layout.nodes.push(LayoutNode {
             id: top_bar.id,
             rect: Rect {
-                x: margin,
+                x,
                 y: top + (height - control) / 2,
                 width: control,
                 height: control,
@@ -3338,14 +3380,27 @@ fn layout_top_bar(
             kind: LayoutKind::Back,
             text_lines: Vec::new(),
         });
-        let taken = control.saturating_add(metrics.space(Space::Small));
+        let taken = (x + control).saturating_sub(margin);
         title_x = title_x.saturating_add(taken);
         title_width = title_width.saturating_sub(taken);
     }
     // Right to left, in the order they were added, so adding a control never
     // moves the one that was already there: a reader who knows where "Aa" is
     // must still find it there on the next screen that carries it.
-    let mut action_right = metrics.width - margin;
+    //
+    // A picture's ink ends on the margin too, under the battery, so the first
+    // target starts a little outside it. Words already end where their box
+    // does and are left where they were.
+    let leads_with_picture = top_bar
+        .actions
+        .first()
+        .is_some_and(|action| action.glyph.is_some());
+    let mut action_right = metrics.width - margin
+        + if leads_with_picture {
+            min(hang.picture, margin)
+        } else {
+            0
+        };
     for action in top_bar.actions.iter().take(MAX_BAR_ACTIONS) {
         let wanted = if action.glyph.is_some() {
             // Square. A picture has no natural width to measure, and a target
@@ -3420,6 +3475,26 @@ fn layout_top_bar(
             height: metrics.rule_thickness(),
         },
         kind: LayoutKind::Divider,
+        text_lines: Vec::new(),
+    });
+    // The same line again, at the weight it has when it carries a colour.
+    // Laid out on every panel so a colour reader and a grey one hold the same
+    // nodes, and drawn only where there is a colour to draw it in. Its extra
+    // thickness rises into the bar, so the rule's foot and everything under
+    // it stay where they were.
+    let accent = max(
+        metrics.rule_thickness(),
+        metrics.tenth_mm(BAR_ACCENT_TENTH_MM),
+    );
+    layout.nodes.push(LayoutNode {
+        id: top_bar.id,
+        rect: Rect {
+            x: 0,
+            y: top + height + metrics.rule_thickness() - accent,
+            width: metrics.width,
+            height: accent,
+        },
+        kind: LayoutKind::BarAccent,
         text_lines: Vec::new(),
     });
     // Where the bar ends, not how tall it is. Returning the height was right
@@ -5972,6 +6047,10 @@ pub enum LayoutKind {
     PagedList,
     TopBar,
     TopBarTitle,
+    /// The line under the top bar at the weight it is drawn in colour. A
+    /// colour panel paints a screen's accent here, over the grey rule; a
+    /// grey panel paints nothing and the rule shows.
+    BarAccent,
     /// Emitted only by the runtime, never by an application.
     Back,
     BarAction(ActionId),
@@ -18519,6 +18598,11 @@ fn paint_layout(
             // screen in the same colour and the content between them would
             // be the quietest thing on the panel.
             LayoutKind::TopBar => fill_clipped(surface, node.rect, palette.bar(), clip),
+            LayoutKind::BarAccent => {
+                if let Some(accent) = palette.bar_rule() {
+                    fill_clipped(surface, node.rect, accent, clip);
+                }
+            }
             LayoutKind::NavBar => fill_clipped(surface, node.rect, tone::PAPER, clip),
             // Paper, not surface. The band is the quietest thing on the panel
             // and a tinted strip across the top of every screen is a permanent
