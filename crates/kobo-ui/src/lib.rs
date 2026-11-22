@@ -400,6 +400,12 @@ const TERMINAL_SIZE: FontSize = FontSize::Terminal;
 pub struct DisplayMetrics {
     pub width: i32,
     pub height: i32,
+    /// The density the interface is laid out at.
+    ///
+    /// The panel's own on a six inch reader, and a little above it on a
+    /// larger one, so that a millimetre asked for here is drawn larger than
+    /// life where the panel is read from further away. Build it with
+    /// [`Self::for_panel`] rather than from a profile's figure directly.
     pub pixels_per_inch: i32,
     /// The reader's preferred text size, supplied by the runtime.
     pub text_scale: TextScale,
@@ -586,7 +592,77 @@ impl Default for DisplayMetrics {
     }
 }
 
+/// How much larger than life the interface is drawn on a panel, in percent.
+///
+/// Every size in this crate is a physical one, and for a long time that was
+/// the whole rule: a button ten millimetres tall on a six inch Clara was ten
+/// millimetres tall on a ten inch Elipsa. It is the right rule for a finger
+/// and the wrong one for an eye. A larger reader is held further away, in two
+/// hands or propped on a table, so the same ten millimetres reads smaller on
+/// it, and the bars that are a comfortable ninth of a Clara were a thin strip
+/// across the top of an Elipsa with small type under it.
+///
+/// So the interface grows with the panel, by about four per cent for each
+/// centimetre the panel is wider than a six inch one: nothing on a Clara or a
+/// Nia, six per cent on a seven inch Libra, eleven on an eight inch Sage, a
+/// quarter on the Elipsa. That is well short of proportional, which would
+/// draw a ten inch reader's controls for somebody across the room, and it
+/// lands the Elipsa where a tablet sits against a phone. It never goes below
+/// life size, because a target smaller than a finger is wrong at any
+/// distance, and it stops at 130 per cent.
+///
+/// The short side is the measure, so the answer is the same whichever way up
+/// the panel is described.
+#[must_use]
+pub const fn interface_scale_percent(width: i32, height: i32, pixels_per_inch: i32) -> i32 {
+    if pixels_per_inch <= 0 {
+        return 100;
+    }
+    let short = if width < height { width } else { height };
+    let short_tenth_mm = short * 254 / pixels_per_inch;
+    let over = short_tenth_mm - SIX_INCH_SHORT_SIDE_TENTH_MM;
+    if over <= 0 {
+        return 100;
+    }
+    let percent = 100 + over * 38 / 1000;
+    if percent > 130 {
+        130
+    } else {
+        percent
+    }
+}
+
+/// The short side of a six inch three-by-four panel, with the half
+/// millimetre the 212 and 300 pixel per inch ones differ by.
+const SIX_INCH_SHORT_SIDE_TENTH_MM: i32 = 910;
+
 impl DisplayMetrics {
+    /// The metrics a panel is laid out with, from what the panel is.
+    ///
+    /// `pixels_per_inch` here is the panel's own. The density that comes back
+    /// in [`Self::pixels_per_inch`] is that raised by
+    /// [`interface_scale_percent`], which is how the interface grows on a
+    /// larger reader: every measure in this crate goes through the density, so
+    /// type, spacing, bars and targets all grow together and keep their
+    /// proportions. The runtime sends an application these same numbers, so an
+    /// application that measures a page for itself measures the page the
+    /// runtime draws, whichever release of this crate it was built against.
+    #[must_use]
+    pub const fn for_panel(
+        width: i32,
+        height: i32,
+        pixels_per_inch: i32,
+        text_scale: TextScale,
+    ) -> Self {
+        let percent = interface_scale_percent(width, height, pixels_per_inch);
+        Self {
+            width,
+            height,
+            pixels_per_inch: (pixels_per_inch * percent + 50) / 100,
+            text_scale,
+        }
+    }
+
     /// The logical viewport for this orientation.
     #[must_use]
     pub const fn oriented(mut self, orientation: Orientation) -> Self {

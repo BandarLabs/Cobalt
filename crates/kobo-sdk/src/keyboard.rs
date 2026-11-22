@@ -618,12 +618,12 @@ mod tests {
         kobo_profile::SUPPORTED_PROFILES
             .iter()
             .flat_map(|profile| {
-                let portrait = DisplayMetrics {
-                    width: i32::try_from(profile.width).expect("profile width fits layout"),
-                    height: i32::try_from(profile.height).expect("profile height fits layout"),
-                    pixels_per_inch: i32::from(profile.pixels_per_inch),
-                    text_scale: TextScale::Default,
-                };
+                let portrait = DisplayMetrics::for_panel(
+                    i32::try_from(profile.width).expect("profile width fits layout"),
+                    i32::try_from(profile.height).expect("profile height fits layout"),
+                    i32::from(profile.pixels_per_inch),
+                    TextScale::Default,
+                );
                 let landscape = DisplayMetrics {
                     width: portrait.height,
                     height: portrait.width,

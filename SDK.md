@@ -419,7 +419,11 @@ There is no free-form drawing, no colour of your own, no font choice and no
 pixel positioning. Every size comes from the panel's *physical* dimensions, so a
 control that is comfortable under a thumb on a six inch panel is comfortable on
 a ten inch one, and a line of text holds roughly the same number of words on
-both.
+both. A larger reader is held further away, so the runtime draws the whole
+interface a little over life size on one: six per cent on a seven inch panel,
+a quarter on a ten inch one, nothing on six inches. It does this through the
+density it hands the application in `context.metrics()`, so measure with those
+metrics rather than with a figure from a specification sheet.
 
 Wrapping uses the installed face's measured glyph advances, Unicode line-break
 opportunities and grapheme boundaries. It does not estimate from character

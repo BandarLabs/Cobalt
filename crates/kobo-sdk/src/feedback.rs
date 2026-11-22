@@ -86,12 +86,12 @@ mod tests {
         for profile in kobo_profile::SUPPORTED_PROFILES {
             for scale in TextScale::STEPS {
                 for orientation in [Orientation::Portrait, Orientation::Landscape] {
-                    let metrics = DisplayMetrics {
-                        width: i32::try_from(profile.width).unwrap(),
-                        height: i32::try_from(profile.height).unwrap(),
-                        pixels_per_inch: i32::from(profile.pixels_per_inch),
-                        text_scale: scale,
-                    }
+                    let metrics = DisplayMetrics::for_panel(
+                        i32::try_from(profile.width).unwrap(),
+                        i32::try_from(profile.height).unwrap(),
+                        i32::from(profile.pixels_per_inch),
+                        scale,
+                    )
                     .oriented(orientation);
                     kobo_text::install(metrics).unwrap();
                     let mut previous = None;
