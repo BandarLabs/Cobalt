@@ -121,6 +121,19 @@ impl ServiceStatus {
         }
     }
 
+    /// Whether the runtime has said something new about the tunnel itself.
+    ///
+    /// A count that moved is not that. It moves every minute for as long as
+    /// anything goes through the reader, and taken for news it would start a
+    /// wait over that had already run its limit.
+    fn says_more_than(&self, earlier: &Self) -> bool {
+        let but_the_count = |status: &Self| Self {
+            carried: String::new(),
+            ..status.clone()
+        };
+        but_the_count(self) != but_the_count(earlier)
+    }
+
     /// Whether the supervisor is still on its way somewhere, so the screen
     /// should keep looking.
     fn unsettled(&self) -> bool {
@@ -582,7 +595,7 @@ impl Tailscale {
         let fresh = value
             .map(|bytes| ServiceStatus::parse(&String::from_utf8_lossy(bytes)))
             .unwrap_or_default();
-        if fresh != self.status {
+        if fresh.says_more_than(&self.status) {
             // The runtime has spoken, so the start is not stalled.
             self.stalled = false;
             self.gave_up = false;
@@ -1472,6 +1485,66 @@ mod tests {
         assert!(withdrawn
             .iter()
             .any(|command| matches!(command, Command::Cancel(task) if *task == next)));
+    }
+
+    /// The nap of the clock that ticks every `seconds`, if it is still
+    /// ticking after `commands`.
+    fn nap_of(commands: &[Command], seconds: u32) -> Option<TaskId> {
+        let mut nap = None;
+        for command in commands {
+            match command {
+                Command::Spawn {
+                    task,
+                    work: Task::Sleep { seconds: every },
+                } if *every == seconds => nap = Some(*task),
+                Command::Cancel(task) if nap == Some(*task) => nap = None,
+                _ => {}
+            }
+        }
+        nap
+    }
+
+    #[test]
+    fn a_count_that_moves_does_not_start_a_wait_for_approval_over() {
+        // The exit node approved and carrying, the network still waiting.
+        let mixed = |carried: &str| {
+            format!(
+                "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\napproved\nwaiting\n192.168.1.0/24\n\n\n{carried}\n"
+            )
+        };
+        let mut runner = AppRunner::new(routing_app(""));
+        let first = says(&mut runner, &mixed("1000000 2000000"));
+        let mut tick = nap_of(&first, 3).expect("the waiting offer is followed");
+        assert!(nap_of(&first, 30).is_some(), "the count is followed too");
+        // Nobody approves the network, and all the while the count moves.
+        let mut megabytes = 3;
+        while !runner.app().gave_up {
+            let ticked = runner.task_outcome(tick, TaskOutcome::Completed(Vec::new()));
+            megabytes += 1;
+            let told = says(&mut runner, &mixed(&format!("1000000 {megabytes}000000")));
+            assert!(megabytes < 1000, "followed for ever");
+            if let Some(next) = nap_of(&told, 3).or_else(|| nap_of(&ticked, 3)) {
+                tick = next;
+            }
+        }
+        assert_eq!(
+            megabytes,
+            3 + 240,
+            "three seconds a tick for twelve minutes"
+        );
+
+        // More goes through. The figure keeps up and the wait stays over.
+        let more = says(&mut runner, &mixed("1000000 900000000"));
+        assert!(words(screen(&more)).contains("Carried 901 MB"));
+        assert!(nap_of(&more, 3).is_none(), "the wait was started over");
+        assert!(runner.app().gave_up);
+
+        // The tailnet saying something about the offer is news.
+        says(
+            &mut runner,
+            &mixed("1000000 900000000").replace("waiting", "approved"),
+        );
+        assert!(!runner.app().gave_up);
     }
 
     #[test]
