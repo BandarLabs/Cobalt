@@ -1025,6 +1025,12 @@ impl Drop for ListeningServer {
     }
 }
 
+/// The public halves of two keys made for these tests. Their private halves
+/// were thrown away, so they let nobody in anywhere.
+const A_KEY: &str =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICuFQTUwQPbKpQUNR8cWZcaAFve2ua3OkHsNTnLNUX1c";
+const A_KEY_OF_ANOTHER_KIND: &str = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLk6GF9wtC5PrmwocbOvJW5YdvaEhs08LOp+koyVSUbb01iZPpJSrTELWHG3oc9VgVWCSfVexSZDL55pHtnmpd0=";
+
 /// A reader as `kobo setup` left it before setup closed the password door:
 /// the SSH server listening with its stock file, root's home at `/`, and one
 /// computer's key in it.
@@ -1036,7 +1042,7 @@ fn reader_with_a_key(name: &str, server: &str) -> (PathBuf, Layout, ListeningSer
     fs::create_dir_all(layout.system.join(".ssh")).expect("root's home");
     fs::write(
         layout.system.join(".ssh/authorized_keys"),
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn kobo-cobalt\n",
+        format!("{A_KEY} kobo-cobalt\n"),
     )
     .expect("key");
     script(&layout.sshd, SERVER_READING_ITS_FILE);
@@ -1197,23 +1203,88 @@ fn a_server_that_does_not_start_again_has_its_file_put_back() {
 fn text_that_is_not_a_plain_key_does_not_count_as_a_way_in() {
     let (_, layout, _server) = reader_with_a_key("door-not-a-key", "listening");
     let keys = layout.system.join(".ssh/authorized_keys");
+    let (kind, key) = A_KEY.split_once(' ').expect("a kind and a key");
     for not_a_way_in in [
-        "not a key\n",
-        "ssh-ed25519 short\n",
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI!!!StandInStandInStandIn\n",
+        "not a key\n".to_owned(),
+        "ssh-ed25519 short\n".to_owned(),
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI!!!StandInStandInStandIn\n".to_owned(),
+        // Letters a key could be written in, which are not one.
+        "ssh-ed25519 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n".to_owned(),
+        // A key that lost its end in copying.
+        format!("{kind} {}\n", &key[..key.len() - 8]),
+        // A key filed under another kind's name.
+        format!("ssh-rsa {key}\n"),
         // A key tied to one command lets its holder in to that and no more.
-        "command=\"/bin/false\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn kobo\n",
+        format!("command=\"/bin/false\" {A_KEY} kobo\n"),
     ] {
-        fs::write(&keys, not_a_way_in).expect("keys");
+        fs::write(&keys, &not_a_way_in).expect("keys");
         assert!(door::close(&layout).is_err(), "{not_a_way_in:?}");
         assert_eq!(settings_file(&layout), STOCK_FILE);
     }
     // Among lines that are not, one that is.
     fs::write(
         &keys,
-        "# this computer\n\necdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAy desk\n",
+        format!("# this computer\n\n{A_KEY_OF_ANOTHER_KIND} desk\n"),
     )
     .expect("keys");
+    assert_eq!(door::close(&layout), Ok(()));
+}
+
+#[test]
+fn a_key_of_a_kind_the_server_does_not_take_does_not_count_as_a_way_in() {
+    let (root, layout, _server) = reader_with_a_key("door-kind-not-taken", "listening");
+    let taking = |setting: &str| {
+        script(
+            &layout.sshd,
+            &SERVER_READING_ITS_FILE.replace(
+                "echo \"permitrootlogin yes\"",
+                &format!("echo \"permitrootlogin yes\"\necho \"{setting}\""),
+            ),
+        );
+    };
+    // The only key on the reader is of a kind this server was told not to
+    // take, under either name the setting has had.
+    for setting in [
+        "pubkeyacceptedalgorithms rsa-sha2-512,rsa-sha2-256",
+        "pubkeyacceptedkeytypes ssh-rsa,ecdsa-sha2-nistp256",
+    ] {
+        taking(setting);
+        assert!(door::close(&layout).is_err(), "{setting}");
+        assert_eq!(settings_file(&layout), STOCK_FILE);
+        assert!(recorded(&root, "sshd-reloads").is_empty());
+    }
+    // A second key of a kind it does take is a way in.
+    let keys = layout.system.join(".ssh/authorized_keys");
+    fs::write(
+        &keys,
+        format!("{A_KEY} kobo\n{A_KEY_OF_ANOTHER_KIND} desk\n"),
+    )
+    .expect("keys");
+    assert_eq!(door::close(&layout), Ok(()));
+}
+
+#[test]
+fn a_key_folder_linked_into_a_folder_anybody_can_write_does_not_count_as_a_way_in() {
+    let (root, layout, _server) = reader_with_a_key("door-linked-keys", "listening");
+    let mode = |path: &Path, mode: u32| {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("mode");
+    };
+    // The keys really live under a folder like /tmp, and root's key folder
+    // is a link to them. Every folder on the way by name is in order.
+    let shared = layout.system.join("tmp");
+    let real = shared.join("keys");
+    fs::create_dir_all(&real).expect("the real folder");
+    mode(&real, 0o700);
+    mode(&shared, 0o777);
+    let named = layout.system.join(".ssh");
+    fs::rename(named.join("authorized_keys"), real.join("authorized_keys")).expect("moved");
+    fs::remove_dir(&named).expect("the folder by name");
+    std::os::unix::fs::symlink(&real, &named).expect("link");
+    assert!(door::close(&layout).is_err());
+    assert_eq!(settings_file(&layout), STOCK_FILE);
+    assert!(recorded(&root, "sshd-reloads").is_empty());
+    // The same link into a folder only root can write is a way in.
+    mode(&shared, 0o755);
     assert_eq!(door::close(&layout), Ok(()));
 }
 
@@ -1313,7 +1384,17 @@ fn two_servers_sharing_the_port_are_not_taken_for_one() {
 fn nothing_is_changed_when_the_listening_server_cannot_be_told() {
     let (root, layout, server) = reader_with_a_key("door-no-server", "listening");
     let entry = root.join("proc").join(server.0.id().to_string());
-    // Whatever holds the port was not started from the server's program.
+    // Whatever holds the port was started from a program with the server's
+    // name that is not the server's program, and reads settings of its own.
+    let namesake = root
+        .join("opt")
+        .join(layout.sshd.file_name().expect("a name"));
+    fs::create_dir_all(root.join("opt")).expect("elsewhere");
+    fs::copy(&layout.sshd, &namesake).expect("a namesake");
+    fs::remove_file(entry.join("exe")).expect("program");
+    std::os::unix::fs::symlink(&namesake, entry.join("exe")).expect("program");
+    assert!(door::close(&layout).is_err());
+    // Or from another program altogether.
     fs::remove_file(entry.join("exe")).expect("program");
     std::os::unix::fs::symlink("/bin/busybox", entry.join("exe")).expect("program");
     assert!(door::close(&layout).is_err());
