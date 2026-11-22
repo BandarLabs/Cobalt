@@ -205,9 +205,15 @@ from your Wi-Fi as well as from the tailnet.
 Switching Tailscale off or signing out leaves the block where it is. To have
 password login back, delete those lines over SSH and restart the reader.
 
-A reader with the server on and no key on it is left alone, because a
-password is then the only way in. Tailscale does not start there, and says
-to run `kobo setup`.
+A reader with the server on and no key the server would accept is left
+alone, because a password is then the only way in. So is one whose server
+was started with settings of its own, which its file does not decide.
+Tailscale does not start there, and says to run `kobo setup`.
+
+The reader can see that a key is there and that the server would take it.
+It cannot see whether you still have the other half. If you do not, logging
+in over SSH stops working until `kobo setup` is run again over USB, which
+needs no login.
 
 ### What this does not cover
 

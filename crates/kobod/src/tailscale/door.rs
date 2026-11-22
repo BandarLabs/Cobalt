@@ -11,9 +11,17 @@
 //!
 //! So the runtime closes the door, when that cannot cost the owner their way
 //! in: a key for root must already be on the reader, in a file the server
-//! says it reads. `kobo setup` puts one there. Without a key, a password is
-//! the only way anybody gets a shell on the reader, so the file is left alone
-//! and the join is refused as it always was.
+//! says it reads and would accept. `kobo setup` puts one there. Without a
+//! key, a password is the only way anybody gets a shell on the reader, so the
+//! file is left alone and the join is refused as it always was.
+//!
+//! Nothing here can prove the owner still holds the other half of that key.
+//! What is checked is everything the reader can see: that the server takes
+//! keys at all, that the line is a plain key and not text or a key bound to
+//! one command, and that the file and the folders above it are ones the
+//! server will not turn away. A reader whose key was lost is still left
+//! without a shell by this, and gets one back the way it got the first:
+//! `kobo setup` over USB, which needs no login.
 //!
 //! The block written is the one `kobo setup` writes, from
 //! [`kobod::ssh_hardening`], so each recognises the other's. What differs is
@@ -28,11 +36,13 @@
 //!    what a running server enforces: it hands each connection the settings
 //!    it read when it started.
 
-use super::{answer, listeners, said, ssh_door, Layout, SshDoor};
+use super::{
+    answer, holder_of, holds_socket, listeners, said, ssh_door, Layout, Listener, SshDoor,
+};
 use kobod::ssh_hardening as hardening;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -47,9 +57,11 @@ const LARGEST_FILE: u64 = 256 * 1024;
 /// answer to every one of them.
 pub(super) fn close(layout: &Layout) -> Result<(), String> {
     let settings = effective_settings(layout).ok_or("the SSH server would not say its settings")?;
-    if !root_has_a_key(layout, &settings) {
+    if !root_has_a_usable_key(layout, &settings) {
         return Err(
-            "no key for root is on the reader, so a password is the only way in".to_owned(),
+            "no key the server would accept for root is on the reader, so a password is the \
+             only way in"
+                .to_owned(),
         );
     }
     let ports = said(&settings, "port")
@@ -58,7 +70,14 @@ pub(super) fn close(layout: &Layout) -> Result<(), String> {
     // Found before anything is changed: a server that cannot be told to
     // read its file again is a server whose file there is no use changing.
     let server = listening_server(layout, &ports)
-        .ok_or("the listening SSH server was not found among the reader's processes")?;
+        .ok_or("no one SSH server was found holding every socket its ports listen on")?;
+    if !started_plainly(layout, server.pid) {
+        return Err(
+            "the listening SSH server was started with settings of its own, which its file \
+             does not decide"
+                .to_owned(),
+        );
+    }
     let file = &layout.sshd_config;
     let original = read_bounded(file).ok_or("the SSH server's file could not be read")?;
     let mode = fs::metadata(file).map_or(0o644, |found| found.permissions().mode() & 0o777);
@@ -90,34 +109,84 @@ fn effective_settings(layout: &Layout) -> Option<String> {
 }
 
 /// Whether a key that lets root in is on the reader, in a file the server
-/// reads.
+/// reads and would accept.
 ///
 /// The server names its key files, relative to root's home unless they say
 /// otherwise, and the reader's list of accounts says where that home is. On
 /// some readers it is `/` and on others `/root`, which is why `kobo setup`
 /// writes the key to both and why neither is assumed here.
-fn root_has_a_key(layout: &Layout, settings: &str) -> bool {
+fn root_has_a_usable_key(layout: &Layout, settings: &str) -> bool {
+    if said(settings, "pubkeyauthentication").any(|value| value == "no") {
+        return false;
+    }
     let Some(home) = roots_home(layout) else {
         return false;
     };
+    let strict = !said(settings, "strictmodes").any(|value| value == "no");
     let mut named = said(settings, "authorizedkeysfile")
         .flat_map(str::split_whitespace)
         .collect::<Vec<_>>();
     if named.is_empty() {
         named = vec![".ssh/authorized_keys", ".ssh/authorized_keys2"];
     }
+    let on_the_reader = |path: &Path| layout.system.join(path.strip_prefix("/").unwrap_or(path));
     named
         .into_iter()
         .filter_map(|name| key_file(&home, name))
         .any(|file| {
-            read_bounded(&layout.system.join(file.strip_prefix("/").unwrap_or(&file))).is_some_and(
-                |keys| {
-                    keys.lines()
-                        .map(str::trim)
-                        .any(|line| !line.is_empty() && !line.starts_with('#'))
-                },
-            )
+            let holds_a_key = read_bounded(&on_the_reader(&file))
+                .is_some_and(|keys| keys.lines().any(is_a_plain_key));
+            holds_a_key && (!strict || server_would_read(layout, &home, &file))
         })
+}
+
+/// Whether a line of a key file is a key and nothing else: its kind, then
+/// the key itself.
+///
+/// Text that is not a key lets nobody in. A key with conditions in front of
+/// it, such as one tied to a single command, may let its holder in to
+/// nothing useful, and what its conditions allow is not something to guess
+/// at before taking the password away. `kobo setup` writes plain keys.
+fn is_a_plain_key(line: &str) -> bool {
+    let mut fields = line.split_whitespace();
+    let (Some(kind), Some(key)) = (fields.next(), fields.next()) else {
+        return false;
+    };
+    let known = ["ssh-", "ecdsa-sha2-", "sk-ssh-", "sk-ecdsa-sha2-"]
+        .iter()
+        .any(|prefix| kind.starts_with(prefix));
+    known
+        && key.len() >= 32
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
+}
+
+/// Whether the server, being strict about it, would read this key file.
+///
+/// It turns a key file away when the file, or any folder from it up to
+/// root's home, belongs to somebody else or can be written by anybody but
+/// its owner, and then the key in it lets nobody in. The owner it accepts is
+/// root, which is also who owns the top of the reader's filesystem.
+fn server_would_read(layout: &Layout, home: &Path, file: &Path) -> bool {
+    let on_the_reader = |path: &Path| layout.system.join(path.strip_prefix("/").unwrap_or(path));
+    let Ok(roots) = fs::metadata(&layout.system).map(|top| top.uid()) else {
+        return false;
+    };
+    let mut step = Some(file);
+    while let Some(path) = step {
+        let Ok(found) = fs::metadata(on_the_reader(path)) else {
+            return false;
+        };
+        if (found.uid() != 0 && found.uid() != roots) || found.mode() & 0o022 != 0 {
+            return false;
+        }
+        if path == home {
+            break;
+        }
+        step = path.parent();
+    }
+    true
 }
 
 /// Root's home directory, from the reader's list of accounts.
@@ -229,44 +298,94 @@ struct Server {
     sockets: Vec<u64>,
 }
 
-/// Finds the one process that holds the listening sockets on the server's
+/// Finds the one process that holds every listening socket on the server's
 /// own ports, and only if that process is the server.
 ///
 /// It is about to be sent a signal, and a process number is not an identity.
-/// What ties this one to the server is that it holds the socket the server's
-/// port is listening on and was started from the server's own program.
+/// What ties this one to the server is that it holds the sockets the
+/// server's ports are listening on and was started from the server's own
+/// program. Every socket, because a reader can be listening on those ports
+/// twice over, once for each kind of address, and two servers sharing them
+/// would leave one that was never told and still takes a password.
 fn listening_server(layout: &Layout, ports: &[u16]) -> Option<Server> {
     let sockets = listeners(layout)?
         .into_iter()
         .filter(|listener| ports.contains(&listener.port))
-        .filter_map(|listener| listener.inode)
-        .collect::<Vec<_>>();
-    let first = *sockets.first()?;
-    let pid = fs::read_dir(&layout.proc)
-        .ok()?
-        .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
-        .find(|pid| super::holds_socket(layout, *pid, first))?;
+        .map(|listener| listener.inode)
+        .collect::<Option<Vec<_>>>()?;
+    let pid = holder_of(layout, *sockets.first()?)?;
+    if !sockets
+        .iter()
+        .all(|socket| holds_socket(layout, pid, *socket))
+    {
+        return None;
+    }
     let program = fs::read_link(layout.proc.join(pid.to_string()).join("exe")).ok()?;
     (program.file_name() == layout.sshd.file_name()).then_some(Server { pid, sockets })
+}
+
+/// Whether the server holding this listener is one a fresh server speaks
+/// for.
+///
+/// What the server enforces is learnt by asking a fresh one, which reads the
+/// file. A listener started with a file of its own, or with a setting given
+/// on its command line, enforces something the file does not decide, so the
+/// answer is not about it. A listener nobody can be found holding is taken
+/// to be the server it appears to be, as it was before this was asked.
+pub(super) fn answers_for(layout: &Layout, listener: Listener) -> bool {
+    listener
+        .inode
+        .and_then(|socket| holder_of(layout, socket))
+        .is_none_or(|pid| started_plainly(layout, pid))
+}
+
+/// Whether a server was started with nothing that could point it at other
+/// settings than its file's.
+///
+/// A server that has renamed itself for the process list keeps the line it
+/// was started with inside the new name, which is where this reads it; one
+/// that has not is read from its arguments as they stand. The few options
+/// allowed are the ones that change how it runs and not what it enforces.
+fn started_plainly(layout: &Layout, pid: u32) -> bool {
+    const HARMLESS: [&str; 5] = ["-D", "-e", "-4", "-6", "-q"];
+    let Ok(line) = fs::read(layout.proc.join(pid.to_string()).join("cmdline")) else {
+        return false;
+    };
+    let line = String::from_utf8_lossy(&line);
+    let line = line.trim_end_matches('\0');
+    let started_as = match line.strip_prefix("sshd: ") {
+        Some(renamed) => renamed
+            .split_once(" [")
+            .map_or(renamed, |(before, _)| before)
+            .replace('\0', " "),
+        None => line.replace('\0', " "),
+    };
+    started_as
+        .split_whitespace()
+        .skip(1)
+        .all(|argument| HARMLESS.contains(&argument))
 }
 
 /// Tells the server to read its file again, and waits to see that it did.
 ///
 /// A server told to hang up closes its listening sockets and starts itself
-/// again from its file, so the proof that it read the file is a listening
-/// socket on its port that was not there before.
+/// again from its file, so the proof that it read the file is that its ports
+/// are listening again and on none of the sockets that were there before.
 fn restart(layout: &Layout, server: &Server, ports: &[u16]) -> Result<(), String> {
     hang_up(server.pid)?;
     let deadline = Instant::now() + layout.timing.answer;
     loop {
         let fresh = listeners(layout).is_some_and(|now| {
-            now.iter().any(|listener| {
-                ports.contains(&listener.port)
-                    && listener
+            let mut ours = now
+                .iter()
+                .filter(|listener| ports.contains(&listener.port))
+                .peekable();
+            ours.peek().is_some()
+                && ours.all(|listener| {
+                    listener
                         .inode
-                        .is_some_and(|inode| !server.sockets.contains(&inode))
-            })
+                        .is_some_and(|socket| !server.sockets.contains(&socket))
+                })
         });
         if fresh {
             return Ok(());

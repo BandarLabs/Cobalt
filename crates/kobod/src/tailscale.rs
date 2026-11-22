@@ -1818,7 +1818,14 @@ fn exposure(layout: &Layout, daemon: Option<u32>) -> Exposure {
             return Exposure::DebugServices;
         }
         match ssh.get_or_insert_with(|| ssh_door(layout)) {
-            SshDoor::Closed(ports) if ports.contains(&listener.port) => {}
+            SshDoor::Closed(ports) if ports.contains(&listener.port) => {
+                // That answer came from a fresh server reading the file. A
+                // listener started with settings of its own is not that
+                // server, and what it enforces has not been asked.
+                if !door::answers_for(layout, listener) {
+                    return Exposure::SshUnreadable;
+                }
+            }
             SshDoor::Open(ports) if ports.contains(&listener.port) => {
                 return Exposure::PasswordLogin
             }
@@ -1892,6 +1899,16 @@ fn holds_socket(layout: &Layout, pid: u32, inode: u64) -> bool {
     })
 }
 
+/// The process holding the socket numbered `inode`, found among everything
+/// the kernel says is running.
+fn holder_of(layout: &Layout, inode: u64) -> Option<u32> {
+    fs::read_dir(&layout.proc)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .find(|pid| holds_socket(layout, *pid, inode))
+}
+
 /// The program holding the listener on `port`, by the name it was started
 /// under.
 ///
@@ -1903,11 +1920,7 @@ fn who_listens(layout: &Layout, port: u16) -> Option<String> {
         .into_iter()
         .find(|listener| listener.port == port)?
         .inode?;
-    let holder = fs::read_dir(&layout.proc)
-        .ok()?
-        .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
-        .find(|pid| holds_socket(layout, *pid, inode))?;
+    let holder = holder_of(layout, inode)?;
     let line = fs::read(layout.proc.join(holder.to_string()).join("cmdline")).ok()?;
     let started_as = std::str::from_utf8(line.split(|byte| *byte == 0).next()?).ok()?;
     let name = Path::new(started_as).file_name()?.to_str()?;

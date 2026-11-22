@@ -1194,6 +1194,122 @@ fn a_server_that_does_not_start_again_has_its_file_put_back() {
 }
 
 #[test]
+fn text_that_is_not_a_plain_key_does_not_count_as_a_way_in() {
+    let (_, layout, _server) = reader_with_a_key("door-not-a-key", "listening");
+    let keys = layout.system.join(".ssh/authorized_keys");
+    for not_a_way_in in [
+        "not a key\n",
+        "ssh-ed25519 short\n",
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI!!!StandInStandInStandIn\n",
+        // A key tied to one command lets its holder in to that and no more.
+        "command=\"/bin/false\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn kobo\n",
+    ] {
+        fs::write(&keys, not_a_way_in).expect("keys");
+        assert!(door::close(&layout).is_err(), "{not_a_way_in:?}");
+        assert_eq!(settings_file(&layout), STOCK_FILE);
+    }
+    // Among lines that are not, one that is.
+    fs::write(
+        &keys,
+        "# this computer\n\necdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAy desk\n",
+    )
+    .expect("keys");
+    assert_eq!(door::close(&layout), Ok(()));
+}
+
+#[test]
+fn a_key_the_server_would_turn_away_does_not_count_as_a_way_in() {
+    let (root, layout, _server) = reader_with_a_key("door-unusable-key", "listening");
+    let keys = layout.system.join(".ssh/authorized_keys");
+    let folder = layout.system.join(".ssh");
+    let mode = |path: &Path, mode: u32| {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("mode");
+    };
+    // A file, or a folder above it, that others can write is one the server
+    // will not read keys from while it is being strict.
+    mode(&keys, 0o664);
+    assert!(door::close(&layout).is_err(), "a key file others can write");
+    mode(&keys, 0o600);
+    mode(&folder, 0o777);
+    assert!(door::close(&layout).is_err(), "a folder others can write");
+    mode(&folder, 0o700);
+    // A server that does not take keys at all.
+    script(
+        &layout.sshd,
+        &SERVER_READING_ITS_FILE.replace(
+            "echo \"permitrootlogin yes\"",
+            "echo \"permitrootlogin yes\"\necho \"pubkeyauthentication no\"",
+        ),
+    );
+    assert!(door::close(&layout).is_err(), "keys switched off");
+    assert_eq!(settings_file(&layout), STOCK_FILE);
+    assert!(recorded(&root, "sshd-reloads").is_empty());
+    // And one that is not strict reads the file whatever its mode.
+    script(
+        &layout.sshd,
+        &SERVER_READING_ITS_FILE.replace(
+            "echo \"permitrootlogin yes\"",
+            "echo \"permitrootlogin yes\"\necho \"strictmodes no\"",
+        ),
+    );
+    mode(&keys, 0o664);
+    assert_eq!(door::close(&layout), Ok(()));
+}
+
+#[test]
+fn a_server_started_with_settings_of_its_own_is_not_spoken_for_by_its_file() {
+    let (root, layout, server) = reader_with_a_key("door-own-settings", "listening");
+    let line = root
+        .join("proc")
+        .join(server.0.id().to_string())
+        .join("cmdline");
+    let started = |as_what: &[u8]| fs::write(&line, as_what).expect("cmdline");
+    // As the server shows itself once it is listening, and as one that has
+    // not renamed itself does. Another file, or a setting on the command
+    // line, decides what it enforces whatever the usual file says.
+    for own in [
+        &b"sshd: /usr/sbin/sshd -f /tmp/other_config [listener] 0 of 10-100 startups"[..],
+        b"sshd: /usr/sbin/sshd -o PasswordAuthentication=yes [listener] 0 of 10-100 startups",
+        b"/usr/sbin/sshd\0-D\0-oPasswordAuthentication=yes\0",
+    ] {
+        started(own);
+        assert!(door::close(&layout).is_err());
+        assert_eq!(settings_file(&layout), STOCK_FILE);
+    }
+    // A file that says closed says nothing about such a server either.
+    fs::write(
+        &layout.sshd_config,
+        format!("{STOCK_FILE}{}", kobod::ssh_hardening::block(true)),
+    )
+    .expect("settings");
+    assert_eq!(exposure(&layout, None), Exposure::SshUnreadable);
+    // Started the way the firmware starts it, or only told how to run.
+    for plain in [
+        &b"sshd: /usr/sbin/sshd [listener] 0 of 10-100 startups"[..],
+        b"sshd: /usr/sbin/sshd -D -e [listener] 0 of 10-100 startups",
+        b"/usr/sbin/sshd\0-D\0",
+    ] {
+        started(plain);
+        assert_eq!(exposure(&layout, None), Exposure::Acceptable);
+    }
+}
+
+#[test]
+fn two_servers_sharing_the_port_are_not_taken_for_one() {
+    let (root, layout, _server) = reader_with_a_key("door-two-servers", "listening");
+    // The same port listening a second time, for the other kind of address,
+    // on a socket the server found does not hold.
+    fs::write(
+        root.join("proc/net/tcp6"),
+        "  sl  local_address ...\n   0: 00000000000000000000000000000000:0016 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1009 1 0 100 0 0 10 0\n",
+    )
+    .expect("sockets");
+    assert!(door::close(&layout).is_err());
+    assert_eq!(settings_file(&layout), STOCK_FILE);
+    assert!(recorded(&root, "sshd-reloads").is_empty());
+}
+
+#[test]
 fn nothing_is_changed_when_the_listening_server_cannot_be_told() {
     let (root, layout, server) = reader_with_a_key("door-no-server", "listening");
     let entry = root.join("proc").join(server.0.id().to_string());
