@@ -3,16 +3,31 @@
 # network still waiting. Each says where it stands, and what it costs is
 # said once under them.
 wait-for Connected
+expect Approve the shared network
 tap Options
 wait-for Offer as an exit node
 expect Approved.
 expect-missing Your devices can choose it
 expect Waiting for approval: 192.168.1.0/24
-expect Approve it once in the Tailscale admin console
+expect Approve the shared network
 expect the reader stays awake while Cobalt is open, down to 20% battery.
 expect It stops carrying traffic when it sleeps or Tailscale stops.
 clean
 shot tailscale-routing
+# The network is approved on the reader's page in the admin console, which
+# the reader shows as a code for a phone, with what to tick there.
+tap Approve the shared network
+wait-for Scan with your phone
+expect Approve the shared network
+expect choose Edit route settings
+expect 192.168.1.0/24
+expect Or open this address on any phone or computer:
+expect closes by itself
+clean
+shot tailscale-approve
+# Back returns to the switches.
+tap-id 4294967295
+wait-for Offer as an exit node
 # Switching one off is saved at once, and a switch that is off has no line
 # under it.
 tap-id share-network

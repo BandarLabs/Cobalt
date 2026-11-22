@@ -28,6 +28,10 @@ const START_WAIT: Duration = Duration::from_secs(60);
 /// anything still unsettled after twelve is a stale file, and following it
 /// further would only cost battery.
 const FOLLOW_LIMIT: Duration = Duration::from_secs(12 * 60);
+/// Where a tailnet's machines are listed in Tailscale's admin console. A
+/// machine's own page is this and its tailnet address, and that page is
+/// where somebody who manages the tailnet approves what the machine offers.
+const ADMIN_MACHINES: &str = "https://login.tailscale.com/admin/machines";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
@@ -39,6 +43,9 @@ enum View {
     SignOut,
     /// What the owner may switch on beyond being on the tailnet at all.
     Options,
+    /// The reader's page in the admin console, as a code for a phone and as
+    /// text: where what it offers is approved.
+    Approve,
 }
 
 /// Where one thing the reader offers the tailnet stands, as the owner
@@ -151,6 +158,18 @@ struct Tailscale {
     /// The link the sign-in screen was last opened for, so it opens by itself
     /// once per link and stays closed after the owner leaves it.
     shown_link: String,
+    /// The offers the owner has just switched on, the exit node first, until
+    /// the runtime says where each stands. One that is waiting for the
+    /// tailnet opens the page to approve it on, once.
+    just_asked: [bool; 2],
+    /// The page the approval screen is showing, kept from when it opened so
+    /// the code does not change under a phone while the daemon starts again.
+    approve_page: String,
+    /// The screen the approval page was opened from, which Back returns to.
+    approve_from: View,
+    /// The watch ran its whole limit, so it stays stopped until the owner
+    /// does something or the runtime says something new.
+    gave_up: bool,
 }
 
 impl Default for Tailscale {
@@ -165,6 +184,10 @@ impl Default for Tailscale {
             watch: Heartbeat::every(3),
             stalled: false,
             shown_link: String::new(),
+            just_asked: [false; 2],
+            approve_page: String::new(),
+            approve_from: View::Status,
+            gave_up: false,
         }
     }
 }
@@ -190,12 +213,59 @@ impl Tailscale {
 
     /// Follows a start that is under way, and stops when there is nothing
     /// left to follow.
+    ///
+    /// An offer the tailnet has not answered is followed too. Its answer is
+    /// given on a phone, and the owner looks back at the reader to see that
+    /// it took.
     fn follow(&mut self, context: &mut Context) {
-        if self.enabled && self.status.unsettled() && !self.stalled {
+        let unanswered = self.connected()
+            && self
+                .offers()
+                .iter()
+                .any(|offer| matches!(offer, Offer::Starting | Offer::Waiting));
+        if self.enabled && !self.stalled && !self.gave_up && (self.status.unsettled() || unanswered)
+        {
             self.watch.start(context);
         } else {
             self.watch.stop(context);
         }
+    }
+
+    /// Where each offer stands, the exit node first.
+    fn offers(&self) -> [Offer; 2] {
+        let connected = self.connected();
+        [
+            Offer::read(self.exit_node, connected, &self.status.exit_node),
+            Offer::read(self.share_network, connected, &self.status.network),
+        ]
+    }
+
+    /// What to call approving whichever of the two offers answer to `which`,
+    /// on the row that opens the page and at the top of the page.
+    fn approval_title(&self, which: fn(Offer) -> bool) -> Option<&'static str> {
+        match self.offers().map(which) {
+            [true, true] => Some("Approve both offers"),
+            [true, false] => Some("Approve the exit node"),
+            [false, true] => Some("Approve the shared network"),
+            [false, false] => None,
+        }
+    }
+
+    /// The approval page is offered once the tailnet has been asked. Before
+    /// that there is nothing on it to tick.
+    fn approval_row(&self) -> Option<&'static str> {
+        self.approval_title(|offer| offer == Offer::Waiting)
+    }
+
+    /// Opens the page an offer is approved on, from the screen the owner is
+    /// looking at.
+    fn open_approval(&mut self, context: &mut Context) {
+        self.approve_from = self.view;
+        self.approve_page = format!("{ADMIN_MACHINES}/{}", self.status.address);
+        self.view = View::Approve;
+        // Followed from now, so the page closes when the tailnet says yes.
+        self.gave_up = false;
+        self.follow(context);
     }
 
     fn connected(&self) -> bool {
@@ -296,6 +366,8 @@ impl Tailscale {
                 ))
         {
             rows.push(("retry", "Try again", "", Glyph::Refresh));
+        } else if let Some(title) = self.approval_row() {
+            rows.push(("approve", title, "", Glyph::Key));
         }
         rows.push(("options", "Options", "", Glyph::Settings));
         rows.push(("about", "About Tailscale", "", Glyph::Globe));
@@ -349,8 +421,7 @@ impl Tailscale {
         // that knows whether the tailnet has approved it and whether this
         // reader can do it at all. A switch that is on and cannot work says
         // so in the runtime's words; it never just sits there on.
-        let connected = self.connected();
-        let exit_node = Offer::read(self.exit_node, connected, &self.status.exit_node);
+        let [exit_node, network] = self.offers();
         screen = screen.toggle(
             "exit-node",
             "Offer as an exit node",
@@ -365,7 +436,6 @@ impl Tailscale {
         if exit_node == Offer::Unavailable && !self.status.exit_node_why.is_empty() {
             screen = screen.secondary(self.status.exit_node_why.clone());
         }
-        let network = Offer::read(self.share_network, connected, &self.status.network);
         screen = screen.toggle(
             "share-network",
             "Share this network",
@@ -385,16 +455,14 @@ impl Tailscale {
         {
             screen = screen.secondary(self.status.network_why.clone());
         }
-        // Where to approve is said only while something is waiting to be,
-        // and what it costs for as long as anything is offered.
-        let offers = [exit_node, network];
-        let unapproved = offers
-            .iter()
-            .any(|offer| matches!(offer, Offer::Starting | Offer::Waiting));
-        let offered = unapproved || offers.contains(&Offer::Approved);
-        if unapproved {
-            screen = screen.secondary("Approve it once in the Tailscale admin console, under this reader's route settings.");
+        // The way to approve is offered only while something is waiting to
+        // be, and what it costs is said for as long as anything is offered.
+        if let Some(title) = self.approval_row() {
+            screen = screen.rows([("approve", title, "", Glyph::Key)]);
         }
+        let offered = [exit_node, network]
+            .iter()
+            .any(|offer| matches!(offer, Offer::Starting | Offer::Waiting | Offer::Approved));
         if offered {
             screen = screen.secondary("A reader is slow at this. Once approved, the reader stays awake while Cobalt is open, down to 20% battery. It stops carrying traffic when it sleeps or Tailscale stops.");
         }
@@ -420,6 +488,35 @@ impl Tailscale {
             .build()
     }
 
+    /// The reader's page in the admin console as a code for the owner's
+    /// phone, with what to tick there.
+    ///
+    /// A machine cannot approve what it offers: that is the tailnet's to
+    /// say, in the console, and a switch that said only that it was waiting
+    /// left an owner with a reader and a phone nowhere to go. The code takes
+    /// the phone to the one page where the answer is given.
+    fn approve_screen(&self) -> Screen {
+        let asked = |offer| matches!(offer, Offer::Starting | Offer::Waiting);
+        let tick = match self.offers().map(asked) {
+            [true, true] => format!("Use as exit node and {}", self.status.shared),
+            [false, true] => self.status.shared.clone(),
+            _ => "Use as exit node".to_owned(),
+        };
+        ScreenBuilder::new("tailscale")
+            .top_bar(self.approval_title(asked).unwrap_or("Approve"))
+            .code(
+                &self.approve_page,
+                "Scan with your phone and sign in to Tailscale.",
+            )
+            .secondary(format!(
+                "On the page that opens, choose Edit route settings, tick {tick} and save."
+            ))
+            .secondary("Or open this address on any phone or computer:")
+            .command(&self.approve_page)
+            .secondary("This screen closes by itself within a minute of being approved.")
+            .build()
+    }
+
     fn sign_out_screen() -> Screen {
         about_builder()
             .confirm(
@@ -438,6 +535,7 @@ impl Tailscale {
             View::About => about_builder().build(),
             View::SignOut => Self::sign_out_screen(),
             View::Options => self.options_screen(),
+            View::Approve => self.approve_screen(),
         };
         // Supporting pages receive the runtime's Back before it can leave the
         // app; the status screen is the way out.
@@ -451,8 +549,10 @@ impl Tailscale {
         if fresh != self.status {
             // The runtime has spoken, so the start is not stalled.
             self.stalled = false;
+            self.gave_up = false;
         }
         self.status = fresh;
+        self.answer_offers(context);
         if self.waiting_for_approval() {
             // Opened once for each link: the owner switched Tailscale on and
             // is waiting for exactly this, but one who went back to the first
@@ -466,6 +566,41 @@ impl Tailscale {
             self.view = View::Status;
         }
         self.follow(context);
+    }
+
+    /// Opens the approval page for an offer the owner has just switched on
+    /// and the tailnet has not approved, and closes it once nothing is left
+    /// on it to approve.
+    fn answer_offers(&mut self, context: &mut Context) {
+        let offers = self.offers();
+        let mut open = false;
+        for (asked, offer) in self.just_asked.iter_mut().zip(offers) {
+            match offer {
+                Offer::Waiting => open |= std::mem::take(asked),
+                // The runtime has not said yet.
+                Offer::Starting => {}
+                // Approved before it was asked, not possible here, or
+                // switched off again: nothing to open a page for.
+                Offer::Off | Offer::Approved | Offer::Unavailable => *asked = false,
+            }
+        }
+        if open && self.view == View::Options {
+            self.open_approval(context);
+        } else if self.view == View::Approve {
+            let coming = matches!(
+                self.status.state.as_str(),
+                "" | "starting" | "downloading" | "running"
+            );
+            let unanswered = offers
+                .iter()
+                .any(|offer| matches!(offer, Offer::Starting | Offer::Waiting));
+            if !self.enabled || !coming {
+                // Stopped for a reason the first screen gives.
+                self.view = View::Status;
+            } else if !unanswered {
+                self.view = self.approve_from;
+            }
+        }
     }
 
     /// Asks the runtime to start again, which is done by saving the switch a
@@ -505,6 +640,7 @@ impl KoboApp for Tailscale {
     }
 
     fn on_foreground(&mut self, context: &mut Context) {
+        self.gave_up = false;
         context.store().load(STATUS);
     }
 
@@ -547,12 +683,18 @@ impl KoboApp for Tailscale {
             return;
         }
         if self.watch.waited() >= FOLLOW_LIMIT {
+            // Marked as given up, or the answer to the load below would
+            // start the watch again and the limit would limit nothing.
+            self.gave_up = true;
             self.watch.stop(context);
         }
         context.store().load(STATUS);
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        // The owner is here and doing something, so there is somebody to
+        // follow a start for again.
+        self.gave_up = false;
         if action == action_id("toggle") {
             self.enabled = !self.enabled;
             self.stalled = false;
@@ -575,8 +717,10 @@ impl KoboApp for Tailscale {
         } else if action == action_id("exit-node") || action == action_id("share-network") {
             if action == action_id("exit-node") {
                 self.exit_node = !self.exit_node;
+                self.just_asked[0] = self.exit_node;
             } else {
                 self.share_network = !self.share_network;
+                self.just_asked[1] = self.share_network;
             }
             // What the runtime said about the old choice is not about this
             // one, and it starts the daemon again to apply it.
@@ -584,6 +728,8 @@ impl KoboApp for Tailscale {
             self.status.network.clear();
             self.save(context);
             self.watch.start(context);
+        } else if action == action_id("approve") {
+            self.open_approval(context);
         } else if action == action_id("about") {
             self.view = View::About;
         } else if action == action_id("sign-out") {
@@ -604,6 +750,7 @@ impl KoboApp for Tailscale {
         } else if action == action_id("back") || action == ActionId::BACK {
             self.view = match self.view {
                 View::SignOut => View::About,
+                View::Approve => self.approve_from,
                 _ => View::Status,
             };
         }
@@ -624,7 +771,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kobo_sdk::{AppRunner, Command, StoreRequest};
+    use kobo_sdk::{AppRunner, Command, StoreRequest, Task};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
     fn screen(commands: &[Command]) -> &Screen {
@@ -936,10 +1083,7 @@ mod tests {
         let said = words(screen(&options));
         assert!(said.contains("Offer as an exit node"));
         assert!(said.contains("Share this network"));
-        assert!(
-            !said.contains("admin console"),
-            "approval asked for nothing"
-        );
+        assert!(!said.contains("Approve the"), "approval asked for nothing");
 
         let exit = runner.action(action_id("exit-node"));
         assert_eq!(
@@ -952,7 +1096,9 @@ mod tests {
             [(CONFIG.to_owned(), "true\nfalse\ntrue\ntrue\n".to_owned())]
         );
         let said = words(screen(&share));
-        assert!(said.contains("Approve it once in the Tailscale admin console"));
+        // The runtime has not put either to the tailnet yet, so there is
+        // nothing to approve, and what they cost is already said.
+        assert!(!said.contains("Approve the"));
         assert!(said.contains("stops carrying traffic when it sleeps"));
     }
 
@@ -963,7 +1109,7 @@ mod tests {
         for expected in [
             "Approved.",
             "Waiting for approval: 192.168.1.0/24",
-            "Approve it once in the Tailscale admin console",
+            "Approve the shared network",
         ] {
             assert!(said.contains(expected), "missing {expected:?} in {said}");
         }
@@ -976,9 +1122,9 @@ mod tests {
         );
         let said = words(&both.options_screen());
         assert!(said.contains("Shared: 192.168.1.0/24"));
-        // Nothing is waiting, so where to approve is no longer said. What
-        // it costs still is.
-        assert!(!said.contains("admin console"));
+        // Nothing is waiting, so the way to approve is no longer offered.
+        // What it costs still is said.
+        assert!(!said.contains("Approve the"));
         assert!(said.contains("stops carrying traffic when it sleeps"));
     }
 
@@ -993,10 +1139,7 @@ mod tests {
         assert!(said.contains("Not available on this reader."));
         assert!(said.contains("Not available here."));
         assert_eq!(said.matches("could not carry traffic").count(), 1);
-        assert!(
-            !said.contains("admin console"),
-            "approval asked for nothing"
-        );
+        assert!(!said.contains("Approve the"), "approval asked for nothing");
         assert!(!options
             .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
             .has_errors());
@@ -1007,7 +1150,186 @@ mod tests {
         );
         let said = words(&hotel.options_screen());
         assert!(said.contains("Waiting for approval."));
+        assert!(said.contains("Approve the exit node"));
         assert!(said.contains("not a private home network"));
+    }
+
+    const ASKED: &str =
+        "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\nwaiting\n\n\n\n\n";
+    const ALLOWED: &str =
+        "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\napproved\n\n\n\n\n";
+
+    /// What the runtime wrote, arriving at the app.
+    fn says(runner: &mut AppRunner<Tailscale>, status: &str) -> Vec<Command> {
+        runner.store_result(StoreResult::Loaded {
+            key: STATUS.to_owned(),
+            value: Some(status.as_bytes().to_vec()),
+        })
+    }
+
+    /// The nap the watch is in after `commands`, if it is still ticking.
+    fn nap(commands: &[Command]) -> Option<TaskId> {
+        let mut nap = None;
+        for command in commands {
+            match command {
+                Command::Spawn {
+                    task,
+                    work: Task::Sleep { .. },
+                } => nap = Some(*task),
+                Command::Cancel(task) if nap == Some(*task) => nap = None,
+                _ => {}
+            }
+        }
+        nap
+    }
+
+    #[test]
+    fn switching_an_offer_on_opens_a_code_for_the_page_it_is_approved_on() {
+        let mut runner = AppRunner::new(with_status(true, CONNECTED));
+        runner.action(action_id("options"));
+        let asked = runner.action(action_id("exit-node"));
+        // Nothing to approve until the runtime has put it to the tailnet.
+        assert_eq!(runner.app().view, View::Options);
+        assert!(!words(screen(&asked)).contains("Approve the"));
+
+        let waiting = says(&mut runner, ASKED);
+        assert_eq!(runner.app().view, View::Approve);
+        assert_eq!(
+            runner.app().approve_page,
+            "https://login.tailscale.com/admin/machines/100.64.0.7"
+        );
+        let page = screen(&waiting);
+        let said = words(page);
+        for expected in [
+            "Approve the exit node",
+            "Scan with your phone and sign in to Tailscale.",
+            "choose Edit route settings, tick Use as exit node and save.",
+            "closes by itself within a minute of being approved.",
+        ] {
+            assert!(said.contains(expected), "missing {expected:?} in {said}");
+        }
+        assert!(page.owns_back);
+        assert!(page
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
+
+        // Back is the owner saying not now. The switch's screen keeps the
+        // way in, and the page does not open over them a second time.
+        let back = runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Options);
+        assert!(words(screen(&back)).contains("Approve the exit node"));
+        says(&mut runner, ASKED);
+        assert_eq!(runner.app().view, View::Options);
+    }
+
+    #[test]
+    fn the_approval_page_closes_once_the_tailnet_has_approved() {
+        let mut runner = AppRunner::new(with_status(true, CONNECTED));
+        runner.action(action_id("options"));
+        runner.action(action_id("exit-node"));
+        says(&mut runner, ASKED);
+        assert_eq!(runner.app().view, View::Approve);
+
+        let approved = says(&mut runner, ALLOWED);
+        assert_eq!(runner.app().view, View::Options);
+        let said = words(screen(&approved));
+        assert!(said.contains("Approved."));
+        assert!(!said.contains("Approve the"));
+    }
+
+    #[test]
+    fn an_offer_the_tailnet_approves_by_itself_opens_no_page() {
+        // A tailnet can be set to approve its own members' offers.
+        let mut runner = AppRunner::new(with_status(true, CONNECTED));
+        runner.action(action_id("options"));
+        runner.action(action_id("exit-node"));
+        says(&mut runner, ALLOWED);
+        assert_eq!(runner.app().view, View::Options);
+        // Taken back later, it is the row's to offer, not a page opening
+        // over an owner who touched nothing.
+        let withdrawn = says(&mut runner, ASKED);
+        assert_eq!(runner.app().view, View::Options);
+        assert!(words(screen(&withdrawn)).contains("Approve the exit node"));
+    }
+
+    #[test]
+    fn the_first_screen_offers_the_approval_page_while_an_offer_waits() {
+        // The exit node approved, the network not.
+        let mut runner = AppRunner::new(routing_app(ROUTING));
+        assert!(words(&runner.app().status_screen()).contains("Approve the shared network"));
+        let page = runner.action(action_id("approve"));
+        let said = words(screen(&page));
+        assert!(said.contains("Approve the shared network"));
+        assert!(said.contains("tick 192.168.1.0/24 and save."));
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Status);
+
+        // Nothing waiting, nothing offered.
+        let settled = with_status(true, CONNECTED);
+        assert!(!words(&settled.status_screen()).contains("Approve"));
+    }
+
+    #[test]
+    fn both_offers_waiting_are_approved_on_one_page() {
+        let mut runner = AppRunner::new(routing_app(
+            "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\nwaiting\nwaiting\n192.168.1.0/24\n\n\n",
+        ));
+        let page = runner.action(action_id("approve"));
+        let said = words(screen(&page));
+        assert!(said.contains("Approve both offers"));
+        assert!(said.contains("tick Use as exit node and 192.168.1.0/24 and save."));
+        assert!(screen(&page)
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
+    }
+
+    #[test]
+    fn the_approval_page_gives_way_when_tailscale_stops() {
+        let mut runner = AppRunner::new(Tailscale {
+            exit_node: true,
+            ..with_status(true, ASKED)
+        });
+        runner.action(action_id("options"));
+        runner.action(action_id("approve"));
+        assert_eq!(runner.app().view, View::Approve);
+        let stopped = says(
+            &mut runner,
+            "refused\n\nA program called nc is listening on port 8099.\n\n\n",
+        );
+        assert_eq!(runner.app().view, View::Status);
+        assert!(words(screen(&stopped)).contains("listening on port 8099"));
+    }
+
+    #[test]
+    fn an_offer_nobody_approves_is_followed_for_twelve_minutes_and_no_longer() {
+        let mut runner = AppRunner::new(Tailscale {
+            exit_node: true,
+            ..with_status(true, ASKED)
+        });
+        let opened = runner.action(action_id("approve"));
+        let mut tick = nap(&opened).expect("the page is followed from when it opens");
+        let mut ticks = 0;
+        loop {
+            let ticked = runner.task_outcome(tick, TaskOutcome::Completed(Vec::new()));
+            ticks += 1;
+            // Every tick asks what the runtime last said, and is told the
+            // same thing.
+            let told = says(&mut runner, ASKED);
+            let Some(next) = nap(&told).or_else(|| nap(&ticked)) else {
+                break;
+            };
+            tick = next;
+            assert!(ticks < 1000, "followed for ever");
+        }
+        assert_eq!(ticks, 240, "three seconds a tick for twelve minutes");
+        assert_eq!(runner.app().view, View::Approve);
+
+        // The owner doing anything is somebody to follow it for again.
+        runner.action(ActionId::BACK);
+        let again = runner.action(action_id("approve"));
+        assert!(nap(&again).is_some());
     }
 
     #[test]

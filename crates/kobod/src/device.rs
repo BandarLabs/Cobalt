@@ -396,6 +396,9 @@ struct TailscaleService {
     retry_after: Option<Instant>,
     /// Whether this session has cleared what an earlier one may have left.
     swept: bool,
+    /// What ended waiting on the owner, so it is not started again until
+    /// they have done something.
+    settled: crate::tailscale::Settled,
 }
 
 impl TailscaleService {
@@ -407,17 +410,20 @@ impl TailscaleService {
             // failure, and whatever could not be arranged last time is asked
             // for again.
             self.retry_after = None;
+            self.settled.asked(self.running.is_some());
             crate::tailscale::try_staying_again();
         }
-        if let Some((started, _)) = &mut self.running {
+        if let Some((started, want)) = &mut self.running {
             match started.try_wait() {
                 // It reads the app's choices itself while it runs.
                 Ok(None) => return,
                 Ok(Some(status)) if !status.success() => {
                     trace("tailscale did not come up; trying again later");
                     self.retry_after = Some(Instant::now() + TAILSCALE_RETRY);
+                    self.settled.failed();
                 }
-                _ => {}
+                Ok(Some(_)) => self.settled.ended(*want),
+                Err(_) => {}
             }
             // Looked at again now rather than at the next interval: the step
             // that starts a kept supervisor ends in a second or two, and what
@@ -457,6 +463,14 @@ impl TailscaleService {
         let Some(want) = crate::tailscale::wanted() else {
             return;
         };
+        // Its status already says what it is waiting for, and nothing but
+        // the owner changes that. A supervisor kept outside the session is
+        // not this one's child, so for it the status is all there is to go
+        // by, and one that stopped for any other reason is started again.
+        let waiting = want == Want::Stay && crate::tailscale::waits_on_the_owner();
+        if self.settled.holds(want, waiting) {
+            return;
+        }
         if self.retry_after.is_some_and(|at| Instant::now() < at) {
             return;
         }

@@ -12,8 +12,11 @@ the reader can reach your own servers by name.
 </tr>
 </table>
 
-No Kobo has run this yet. Everything below has been tested against stand-ins
-for the Tailscale programs, not on a reader. The evidence bar in
+One reader has run this: a Clara BW on firmware 4.46.23852, approved from a
+phone and reached over its tailnet.
+[First run on a reader](#first-run-on-a-reader) says what that showed and
+what nobody has seen yet, the three options among it. The rest has been
+tested against stand-ins for the Tailscale programs. The evidence bar in
 [docs/DEVICES.md](../../docs/DEVICES.md) applies before it is called tested.
 
 ## Features
@@ -35,23 +38,17 @@ for the Tailscale programs, not on a reader. The evidence bar in
 
 ## Setup
 
-1. Set up the reader once over USB, if you have not already. Setup also
-   closes password login to the reader, which Tailscale requires before it
-   will start.
+Everything up to the last step happens on the reader and your phone.
 
-   ```sh
-   kobo setup
-   ```
-
-2. On the reader, open Tailscale and turn on the switch. The first time, the
+1. On the reader, open Tailscale and turn on the switch. The first time, the
    reader downloads Tailscale over Wi-Fi, about 37 MB, and checks it before
    running it.
 
-3. Scan the code on the reader with your phone, sign in to Tailscale and
+2. Scan the code on the reader with your phone, sign in to Tailscale and
    approve the reader. The screen then shows the reader's tailnet name and
    address.
 
-4. Save that address on your computer. After this, `kobo send` and `kobo clip`
+3. Save that address on your computer. After this, `kobo send` and `kobo clip`
    reach the reader from any network while Cobalt is open on it.
 
    ```sh
@@ -103,9 +100,13 @@ it is not available there.
 
 ### What the last two need, and their limits
 
-- **Approval, once.** In the Tailscale admin console, open this reader's
-  route settings and allow the exit node or the route. Until then the switch
-  says it is waiting.
+- **Approval, once, from your phone.** A device cannot approve what it
+  offers. Somebody who manages your tailnet does, in the Tailscale admin
+  console. Switching either on opens a code on the reader: scan it, sign in,
+  and on the page that opens choose **Edit route settings**, tick the exit
+  node or the network, and save. The screen closes within a minute of that.
+  Until then the switch says it is waiting, and **Approve** under the
+  switches and on the first screen shows the code again.
 - **A reader is slow at this.** It has one core and Wi-Fi. Expect a few
   megabits, not a router's speed.
 - **The reader stays awake for it while Cobalt is open.** Cobalt normally
@@ -163,8 +164,10 @@ accepts:
   it is how `kobo` reaches the reader. The server is asked what it would
   enforce for root arriving from a tailnet address, and must refuse root
   anything typed: password login off, and question-and-answer login off
-  wherever the server uses PAM. `kobo setup` arranges this. A server that
-  cannot be asked counts as open.
+  wherever the server uses PAM. `kobo setup` arranges this, and the reader
+  arranges it for itself when it has not been done: see
+  [Password login](#password-login). A server that cannot be asked counts as
+  open.
 - **Sync, while a sync is running**, recognised by the Sync engine being the
   program that holds the port. It accepts only the computers you paired.
 - **Tailscale's own listener** on the tailnet address.
@@ -187,6 +190,38 @@ stop the reader joining. If a reader you have added nothing to is refused,
 the program named is part of its firmware and the list above is one short:
 report the port and the name.
 
+### Password login
+
+The Kobo software's SSH server is off unless something turns it on, and
+`kobo setup` is what usually does. As Kobo ships it, that server lets root in
+with a password, including an empty one. `kobo setup` closes that once its
+key is in place. A reader set up before setup did so is still open.
+
+The first time you switch Tailscale on, the reader closes it for you, if a
+computer's key is already on the reader so that you are not shut out. It
+adds the same marked block `kobo setup` writes to `/etc/ssh/sshd_config`,
+between `# cobalt-hardening: key-only SSH for root.` and
+`# cobalt-hardening: end.`, has the server check the file before using it,
+restarts the server, and puts the file back if the server does not then
+refuse root a password. Every `kobo` command logs in with the key, so they
+work as before. Logging in to the reader by typing a password stops working,
+from your Wi-Fi as well as from the tailnet.
+
+Switching Tailscale off or signing out leaves the block where it is. To have
+password login back, delete those lines over SSH and restart the reader.
+
+A reader with the server on and no key the server would accept is left
+alone, because a password is then the only way in. So is one whose server
+was started with settings of its own, which its file does not decide.
+Tailscale does not start there, and says to run `kobo setup`.
+
+The reader can see that a key is there and that the server would take it.
+It cannot see whether you still have the other half. If you do not, logging
+in over SSH stops working until `kobo setup` is run again over USB, which
+needs no login.
+
+### What this does not cover
+
 This covers TCP. A program that only receives datagrams cannot be held to a
 list this way and stays reachable from the tailnet. On a stock reader that is
 the Wi-Fi address client, Tailscale itself, and Sync's discovery while a sync
@@ -200,13 +235,15 @@ the names of your tailnet's computers are kept in a marked block in
 
 ## What it keeps, and where
 
-- **The reader's key** is in `/var/lib/cobalt/tailscale` on the reader's own
+- **The reader's key** is in `/usr/local/cobalt/tailscale` on the reader's own
   system partition. It is not on the partition a computer sees over USB.
 - **It survives** a restart, a Cobalt update and reinstalling Cobalt, so the
   reader stays the same device on your tailnet and needs no second approval.
-- **A Kobo firmware update replaces that partition**, and the key with it.
-  The reader then asks to be approved again and appears as a new device,
-  usually named `kobo-cobalt-1`. Remove the old one in the admin console.
+- **A factory reset erases that partition**, and the key with it. The reader
+  then asks to be approved again and appears as a new device, usually named
+  `kobo-cobalt-1`. Remove the old one in the admin console. A firmware
+  update writes only its own files, so the key is expected to outlive one;
+  that has not been watched happen.
 - **Uninstalling Cobalt does not remove the key**, because uninstalling
   happens over USB and cannot reach that partition. Use **Sign out** in the
   app first. If the reader is offline when you sign out, also remove it in
@@ -215,7 +252,7 @@ the names of your tailnet's computers are kept in a marked block in
   partition beside the Sync engine, and downloaded again after each Cobalt
   update.
 - **They are run from the reader's system storage**, in
-  `/var/lib/cobalt/tailscale-bin`, when it has 110 MB free. The book
+  `/usr/local/cobalt/tailscale-bin`, when it has 110 MB free. The book
   partition can be rewritten by any computer the reader is plugged into, so
   the programs are copied from it, checked against pinned digests where they
   land, and checked again before every start. Switching Tailscale off, or
@@ -236,12 +273,13 @@ The app saves one word, on or off. The runtime does the rest
 (`crates/kobod/src/tailscale.rs`):
 
 1. Checks that the kernel has a tunnel driver and that everything listening
-   on the reader is something it can account for.
+   on the reader is something it can account for, closing password login
+   for root first where a key is there to keep you in.
 2. Downloads the pinned build, `tailscale_1.104.7_arm.tgz`, from
    `pkgs.tailscale.com` if it is not installed, four megabytes at a time
    straight to a file, and refuses anything that does not match the digests
    compiled into the runtime.
-3. Starts `tailscaled` with its state under `/var/lib/cobalt/tailscale`, log
+3. Starts `tailscaled` with its state under `/usr/local/cobalt/tailscale`, log
    upload and file transfer off, and a memory limit sized for a reader.
 4. Runs `tailscale up` with every leaf setting named and anything set by hand
    reset.
@@ -290,21 +328,62 @@ Files sent to the reader with Taildrop are not accepted.
 
 ## First run on a reader
 
-Nobody has done this yet, so a first run is evidence as well as a test. With
-the reader at `READER` on your Wi-Fi, capture these before switching
-Tailscale on, once it says **Connected**, and after leaving Cobalt:
+A Clara BW (N365, firmware 4.46.23852, kernel 4.9.77) has run this, been
+approved from a phone and been reached over its tailnet. What that showed:
+
+- The kernel has the tunnel driver, and the daemon brought `tailscale0` up
+  on it.
+- The reader closed password login for root itself, and logging in with the
+  key went on working, through the server's restart. The door was still
+  closed after the reader had been restarted.
+- The download arrived and matched its digests, and the programs ran from
+  system storage, which had 719 MB free. They and the daemon's folder were
+  still there after a restart.
+- With the programs already downloaded, the approval code was ready about
+  fifteen seconds after Cobalt opened.
+- Scanning the code with a phone and signing in connected the reader. The
+  screen showed its name and address, and `/etc/hosts` gained the tailnet's
+  names.
+- A computer on the tailnet pinged the reader and logged in to it at its
+  tailnet address, and the reader pinged the computer. Both were on the same
+  Wi-Fi and the path between them was direct. Asked at that address with no
+  key, the SSH server offered keys only.
+- The daemon held 30 MB while it waited for approval and 31 MB at most once
+  connected, with its `oom_score_adj` at 800 and the default route still on
+  Wi-Fi.
+- Leaving Cobalt stopped the daemon and removed its interface, the names
+  were gone from `/etc/hosts`, the reader no longer answered on the tailnet,
+  and Wi-Fi went on working in the Kobo software.
+- Opening Cobalt again connected it fifteen seconds later at the same
+  address, with no second approval.
+- A sign-in nobody finished closed after ten minutes and was not started
+  again until **Try again**.
+- Switched on as an exit node, the reader offered itself, with the daemon
+  carrying routed traffic itself and the kernel's forwarding switch still
+  off, and the tailnet listed the offer as not yet approved. The switch said
+  it was waiting and gave the owner nowhere to go, which is why approving
+  now has a code to scan.
+- A program left listening on a port was refused by name, once.
+
+Nobody has yet seen, on a reader: staying connected outside Cobalt, an
+approved exit node carrying traffic, the shared network, the reader reached
+from outside its own Wi-Fi, or the key outliving a restart (the folder it is
+kept in did). So a run that
+gets further is evidence as well as a test. With the reader at `READER` on your Wi-Fi,
+capture these before switching Tailscale on, once it says **Connected**, and
+after leaving Cobalt:
 
 ```sh
 kobo doctor --device READER
 ssh root@READER 'grep -E "MemTotal|MemAvailable" /proc/meminfo; grep tun /proc/misc; cat /etc/hosts; ip route'
 ssh root@READER 'pid=$(pidof tailscaled); grep -E "VmRSS|VmHWM" /proc/$pid/status; cat /proc/$pid/oom_score_adj'
-ssh root@READER 'cat /mnt/onboard/.adds/cobalt/state/tailscale/tailscale-status; tail -40 /var/lib/cobalt/tailscale/tailscaled.log'
+ssh root@READER 'cat /mnt/onboard/.adds/cobalt/state/tailscale/tailscale-status; tail -40 /usr/local/cobalt/tailscale/tailscaled.log'
 ```
 
 With an option on, also capture:
 
 ```sh
-ssh root@READER 'ls -la /var/lib/cobalt/tailscale-bin; df -h /; tr "\0" " " < /proc/$(cat /var/lib/cobalt/tailscale/supervisor.pid)/cmdline'
+ssh root@READER 'ls -la /usr/local/cobalt/tailscale-bin; df -h /; tr "\0" " " < /proc/$(cat /usr/local/cobalt/tailscale/supervisor.pid)/cmdline'
 ssh root@READER 'tr "\0" "\n" < /proc/$(pidof tailscaled)/environ | grep -E "NETSTACK|GOMEMLIMIT"; cat /proc/sys/net/ipv4/ip_forward'
 ```
 

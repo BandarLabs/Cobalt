@@ -6574,7 +6574,7 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
          turn SSH back on by hand and want password login back, delete the lines\n\
          from '{}' to '{}'.\n\n\
          If this reader was signed in to Tailscale, its key is on the root\n\
-         filesystem too, in /var/lib/cobalt/tailscale. Signing out in the Tailscale\n\
+         filesystem too, in /usr/local/cobalt/tailscale. Signing out in the Tailscale\n\
          app removes it. If Cobalt is already gone, remove the reader in your\n\
          Tailscale admin console and delete that folder over SSH.",
         harden::SENTINEL_BEGIN,

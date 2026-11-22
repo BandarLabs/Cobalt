@@ -142,6 +142,9 @@ fn reader(name: &str) -> (PathBuf, Layout) {
         proc: root.join("proc"),
         interfaces: root.join("interfaces"),
         sshd: root.join("sshd"),
+        sshd_config: root.join("sshd_config"),
+        passwd: root.join("passwd"),
+        system: root.join("system"),
         sync_engine: root.join("bin/syncthing"),
         engine: Engine {
             url: "https://example.invalid/never-fetched",
@@ -965,6 +968,444 @@ fn debug_services_are_refused_whatever_ssh_does() {
     assert!(status(&layout)[2].contains("Telnet or FTP"));
 }
 
+// Closing the password door from the reader.
+
+/// The firmware's own settings for its SSH server, as the reader this was
+/// first run on had them.
+const STOCK_FILE: &str = "AuthorizedKeysFile\t.ssh/authorized_keys\nSubsystem\tsftp\t/usr/libexec/sftp-server\nMatch User root\n\tForceCommand /etc/ssh/initial_ssh_setup.sh\nPermitRootLogin yes\nPermitEmptyPasswords yes\n";
+
+/// An SSH server that answers from its file, as the real one does: password
+/// login is off once the file says so, and question-and-answer login counts
+/// for something only where the test says the server was built with PAM. It
+/// can be made too old to know the second line, or deaf to its file.
+const SERVER_READING_ITS_FILE: &str = r#"#!/bin/sh
+root=$(dirname "$0")
+echo "$*" >> "$root/sshd-asked"
+if [ "$1" = "-t" ]; then
+  if [ -e "$root/sshd-too-old" ] && grep -q '^KbdInteractive' "$3"; then exit 255; fi
+  exit 0
+fi
+file="$root/sshd_config"
+if [ -e "$root/sshd-deaf" ]; then file=/dev/null; fi
+echo "port 22"
+echo "permitrootlogin yes"
+echo "authorizedkeysfile .ssh/authorized_keys"
+if grep -q '^PasswordAuthentication no' "$file"; then echo "passwordauthentication no"; else echo "passwordauthentication yes"; fi
+if [ -e "$root/sshd-has-pam" ]; then echo "usepam yes"; fi
+if grep -q '^KbdInteractiveAuthentication no' "$file"; then echo "kbdinteractiveauthentication no"; else echo "kbdinteractiveauthentication yes"; fi
+"#;
+
+/// The listening server as a process of its own. Told to hang up, it does
+/// what the real one does: closes its listening socket and opens another,
+/// which the kernel's table then shows under a new number.
+const LISTENING_SERVER: &str = r#"#!/bin/sh
+root=$(dirname "$0")
+again() {
+  echo reloaded >> "$root/sshd-reloads"
+  sed 's/ 1001 1 0 100 / 1101 1 0 100 /' "$root/proc/net/tcp" > "$root/proc/net/tcp.next"
+  mv "$root/proc/net/tcp.next" "$root/proc/net/tcp"
+  rm -f "$root/proc/$$/fd/0"
+  ln -s 'socket:[1101]' "$root/proc/$$/fd/0"
+}
+case "$1" in
+  deaf) trap '' HUP ;;
+  *) trap again HUP ;;
+esac
+: > "$root/listener-up"
+while :; do sleep 0.05; done
+"#;
+
+/// Ends the stand-in server when the test does, however the test ends.
+struct ListeningServer(Child);
+
+impl Drop for ListeningServer {
+    fn drop(&mut self) {
+        let _ignored = self.0.kill();
+        let _ignored = self.0.wait();
+    }
+}
+
+/// The public halves of two keys made for these tests. Their private halves
+/// were thrown away, so they let nobody in anywhere.
+const A_KEY: &str =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICuFQTUwQPbKpQUNR8cWZcaAFve2ua3OkHsNTnLNUX1c";
+const A_KEY_OF_ANOTHER_KIND: &str = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLk6GF9wtC5PrmwocbOvJW5YdvaEhs08LOp+koyVSUbb01iZPpJSrTELWHG3oc9VgVWCSfVexSZDL55pHtnmpd0=";
+
+/// A reader as `kobo setup` left it before setup closed the password door:
+/// the SSH server listening with its stock file, root's home at `/`, and one
+/// computer's key in it.
+fn reader_with_a_key(name: &str, server: &str) -> (PathBuf, Layout, ListeningServer) {
+    let (root, layout) = reader(name);
+    fs::write(root.join("proc/net/tcp"), SOCKETS).expect("sockets");
+    fs::write(&layout.sshd_config, STOCK_FILE).expect("settings");
+    fs::write(&layout.passwd, "root:x:0:0:root:/:/bin/sh\n").expect("accounts");
+    fs::create_dir_all(layout.system.join(".ssh")).expect("root's home");
+    fs::write(
+        layout.system.join(".ssh/authorized_keys"),
+        format!("{A_KEY} kobo-cobalt\n"),
+    )
+    .expect("key");
+    script(&layout.sshd, SERVER_READING_ITS_FILE);
+    script(&root.join("listening-server"), LISTENING_SERVER);
+    let child = Command::new(root.join("listening-server"))
+        .arg(server)
+        .stdin(Stdio::null())
+        .spawn()
+        .expect("listening server");
+    eventually("the listening server is up", || {
+        root.join("listener-up").exists()
+    });
+    process_holding(&root, child.id(), &layout.sshd, &[1001]);
+    std::os::unix::fs::symlink(
+        &layout.sshd,
+        root.join("proc").join(child.id().to_string()).join("exe"),
+    )
+    .expect("program");
+    (root, layout, ListeningServer(child))
+}
+
+fn settings_file(layout: &Layout) -> String {
+    fs::read_to_string(&layout.sshd_config).expect("settings")
+}
+
+#[test]
+fn a_reader_with_a_key_closes_password_login_itself_and_then_joins() {
+    let (root, layout, _server) = reader_with_a_key("door-closes", "listening");
+    switch(&layout, true);
+    fs::write(root.join("status.json"), RUNNING).expect("status");
+    assert_eq!(exposure(&layout, None), Exposure::PasswordLogin);
+    let supervisor = supervise_in_background(&layout);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    assert_eq!(
+        settings_file(&layout),
+        format!("{STOCK_FILE}{}", kobod::ssh_hardening::block(true))
+    );
+    // Once, and the server it was checked against is the one now listening.
+    assert_eq!(recorded(&root, "sshd-reloads"), ["reloaded"]);
+    assert!(!door_leftover(&layout).exists());
+    assert_eq!(exposure(&layout, None), Exposure::Acceptable);
+    stop(&layout, supervisor);
+    // Switching off does not open the door again.
+    assert!(settings_file(&layout).contains("PasswordAuthentication no"));
+}
+
+fn door_leftover(layout: &Layout) -> PathBuf {
+    let mut name = layout.sshd_config.clone().into_os_string();
+    name.push(".cobalt-new");
+    PathBuf::from(name)
+}
+
+#[test]
+fn a_reader_with_no_key_keeps_its_password_and_is_refused() {
+    let (root, layout, _server) = reader_with_a_key("door-no-key", "listening");
+    switch(&layout, true);
+    let keys = layout.system.join(".ssh/authorized_keys");
+    // No file, a file that holds no key, and a key where the server does
+    // not look: a password is still the only way in for each.
+    let elsewhere = layout.system.join("root/.ssh");
+    fs::create_dir_all(&elsewhere).expect("another home");
+    fs::copy(&keys, elsewhere.join("authorized_keys")).expect("a key elsewhere");
+    for holding in [None, Some("# keys go here\n\n")] {
+        match holding {
+            None => fs::remove_file(&keys).expect("no keys"),
+            Some(text) => fs::write(&keys, text).expect("no keys"),
+        }
+        assert!(door::close(&layout).is_err());
+        assert_eq!(settings_file(&layout), STOCK_FILE);
+    }
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "refused");
+    assert!(status(&layout)[2].contains("Run kobo setup on your computer"));
+    assert!(recorded(&root, "sshd-reloads").is_empty());
+    assert!(!root.join("daemon-args").exists(), "the daemon was started");
+}
+
+#[test]
+fn the_key_is_looked_for_where_the_server_and_the_accounts_say() {
+    let (root, layout, _server) = reader_with_a_key("door-home", "listening");
+    // Root at home in `/root`, which is where other readers keep it.
+    fs::write(&layout.passwd, "root:x:0:0:root:/root:/bin/sh\n").expect("accounts");
+    assert!(door::close(&layout).is_err(), "the key is not in that home");
+    fs::create_dir_all(layout.system.join("root/.ssh")).expect("home");
+    fs::rename(
+        layout.system.join(".ssh/authorized_keys"),
+        layout.system.join("root/.ssh/authorized_keys"),
+    )
+    .expect("moved");
+    assert_eq!(door::close(&layout), Ok(()));
+    assert_eq!(recorded(&root, "sshd-reloads"), ["reloaded"]);
+}
+
+#[test]
+fn a_server_too_old_for_the_second_line_still_gets_the_first() {
+    let (root, layout, _server) = reader_with_a_key("door-old", "listening");
+    fs::write(root.join("sshd-too-old"), b"").expect("old");
+    assert_eq!(door::close(&layout), Ok(()));
+    assert_eq!(
+        settings_file(&layout),
+        format!("{STOCK_FILE}{}", kobod::ssh_hardening::block(false))
+    );
+    assert_eq!(exposure(&layout, None), Exposure::Acceptable);
+}
+
+#[test]
+fn a_block_from_before_the_second_line_gains_it_where_that_is_what_is_open() {
+    let (root, layout, _server) = reader_with_a_key("door-upgrade", "listening");
+    fs::write(root.join("sshd-has-pam"), b"").expect("pam");
+    let earlier = format!("{STOCK_FILE}{}", kobod::ssh_hardening::block(false));
+    fs::write(&layout.sshd_config, &earlier).expect("settings");
+    assert_eq!(exposure(&layout, None), Exposure::PasswordLogin);
+    assert_eq!(door::close(&layout), Ok(()));
+    assert_eq!(
+        settings_file(&layout),
+        format!("{STOCK_FILE}{}", kobod::ssh_hardening::block(true))
+    );
+    assert_eq!(exposure(&layout, None), Exposure::Acceptable);
+}
+
+#[test]
+fn a_whole_block_that_leaves_the_door_open_is_not_written_a_second_time() {
+    let (root, layout, _server) = reader_with_a_key("door-twice", "listening");
+    // The server takes its settings from somewhere this does not know.
+    fs::write(root.join("sshd-deaf"), b"").expect("deaf");
+    let whole = format!("{STOCK_FILE}{}", kobod::ssh_hardening::block(true));
+    fs::write(&layout.sshd_config, &whole).expect("settings");
+    assert!(door::close(&layout).is_err());
+    assert_eq!(settings_file(&layout), whole);
+    assert!(recorded(&root, "sshd-reloads").is_empty());
+}
+
+#[test]
+fn a_file_the_server_does_not_enforce_is_put_back_as_it_was() {
+    let (root, layout, _server) = reader_with_a_key("door-deaf", "listening");
+    switch(&layout, true);
+    fs::write(root.join("sshd-deaf"), b"").expect("deaf");
+    assert!(door::close(&layout).is_err());
+    assert_eq!(settings_file(&layout), STOCK_FILE);
+    assert!(!door_leftover(&layout).exists());
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "refused");
+    assert!(!root.join("daemon-args").exists(), "the daemon was started");
+}
+
+#[test]
+fn a_server_that_does_not_start_again_has_its_file_put_back() {
+    let (root, mut layout, _server) = reader_with_a_key("door-no-restart", "deaf");
+    layout.timing.answer = Duration::from_secs(2);
+    assert!(door::close(&layout).is_err());
+    // The file said closed and the server on the port had never read it.
+    assert_eq!(settings_file(&layout), STOCK_FILE);
+    assert!(recorded(&root, "sshd-reloads").is_empty());
+    assert_eq!(exposure(&layout, None), Exposure::PasswordLogin);
+}
+
+#[test]
+fn text_that_is_not_a_plain_key_does_not_count_as_a_way_in() {
+    let (_, layout, _server) = reader_with_a_key("door-not-a-key", "listening");
+    let keys = layout.system.join(".ssh/authorized_keys");
+    let (kind, key) = A_KEY.split_once(' ').expect("a kind and a key");
+    for not_a_way_in in [
+        "not a key\n".to_owned(),
+        "ssh-ed25519 short\n".to_owned(),
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI!!!StandInStandInStandIn\n".to_owned(),
+        // Letters a key could be written in, which are not one.
+        "ssh-ed25519 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n".to_owned(),
+        // A key that lost its end in copying.
+        format!("{kind} {}\n", &key[..key.len() - 8]),
+        // A key filed under another kind's name.
+        format!("ssh-rsa {key}\n"),
+        // A key tied to one command lets its holder in to that and no more.
+        format!("command=\"/bin/false\" {A_KEY} kobo\n"),
+    ] {
+        fs::write(&keys, &not_a_way_in).expect("keys");
+        assert!(door::close(&layout).is_err(), "{not_a_way_in:?}");
+        assert_eq!(settings_file(&layout), STOCK_FILE);
+    }
+    // Among lines that are not, one that is.
+    fs::write(
+        &keys,
+        format!("# this computer\n\n{A_KEY_OF_ANOTHER_KIND} desk\n"),
+    )
+    .expect("keys");
+    assert_eq!(door::close(&layout), Ok(()));
+}
+
+#[test]
+fn a_key_of_a_kind_the_server_does_not_take_does_not_count_as_a_way_in() {
+    let (root, layout, _server) = reader_with_a_key("door-kind-not-taken", "listening");
+    let taking = |setting: &str| {
+        script(
+            &layout.sshd,
+            &SERVER_READING_ITS_FILE.replace(
+                "echo \"permitrootlogin yes\"",
+                &format!("echo \"permitrootlogin yes\"\necho \"{setting}\""),
+            ),
+        );
+    };
+    // The only key on the reader is of a kind this server was told not to
+    // take, under either name the setting has had.
+    for setting in [
+        "pubkeyacceptedalgorithms rsa-sha2-512,rsa-sha2-256",
+        "pubkeyacceptedkeytypes ssh-rsa,ecdsa-sha2-nistp256",
+    ] {
+        taking(setting);
+        assert!(door::close(&layout).is_err(), "{setting}");
+        assert_eq!(settings_file(&layout), STOCK_FILE);
+        assert!(recorded(&root, "sshd-reloads").is_empty());
+    }
+    // A second key of a kind it does take is a way in.
+    let keys = layout.system.join(".ssh/authorized_keys");
+    fs::write(
+        &keys,
+        format!("{A_KEY} kobo\n{A_KEY_OF_ANOTHER_KIND} desk\n"),
+    )
+    .expect("keys");
+    assert_eq!(door::close(&layout), Ok(()));
+}
+
+#[test]
+fn a_key_folder_linked_into_a_folder_anybody_can_write_does_not_count_as_a_way_in() {
+    let (root, layout, _server) = reader_with_a_key("door-linked-keys", "listening");
+    let mode = |path: &Path, mode: u32| {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("mode");
+    };
+    // The keys really live under a folder like /tmp, and root's key folder
+    // is a link to them. Every folder on the way by name is in order.
+    let shared = layout.system.join("tmp");
+    let real = shared.join("keys");
+    fs::create_dir_all(&real).expect("the real folder");
+    mode(&real, 0o700);
+    mode(&shared, 0o777);
+    let named = layout.system.join(".ssh");
+    fs::rename(named.join("authorized_keys"), real.join("authorized_keys")).expect("moved");
+    fs::remove_dir(&named).expect("the folder by name");
+    std::os::unix::fs::symlink(&real, &named).expect("link");
+    assert!(door::close(&layout).is_err());
+    assert_eq!(settings_file(&layout), STOCK_FILE);
+    assert!(recorded(&root, "sshd-reloads").is_empty());
+    // The same link into a folder only root can write is a way in.
+    mode(&shared, 0o755);
+    assert_eq!(door::close(&layout), Ok(()));
+}
+
+#[test]
+fn a_key_the_server_would_turn_away_does_not_count_as_a_way_in() {
+    let (root, layout, _server) = reader_with_a_key("door-unusable-key", "listening");
+    let keys = layout.system.join(".ssh/authorized_keys");
+    let folder = layout.system.join(".ssh");
+    let mode = |path: &Path, mode: u32| {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("mode");
+    };
+    // A file, or a folder above it, that others can write is one the server
+    // will not read keys from while it is being strict.
+    mode(&keys, 0o664);
+    assert!(door::close(&layout).is_err(), "a key file others can write");
+    mode(&keys, 0o600);
+    mode(&folder, 0o777);
+    assert!(door::close(&layout).is_err(), "a folder others can write");
+    mode(&folder, 0o700);
+    // A server that does not take keys at all.
+    script(
+        &layout.sshd,
+        &SERVER_READING_ITS_FILE.replace(
+            "echo \"permitrootlogin yes\"",
+            "echo \"permitrootlogin yes\"\necho \"pubkeyauthentication no\"",
+        ),
+    );
+    assert!(door::close(&layout).is_err(), "keys switched off");
+    assert_eq!(settings_file(&layout), STOCK_FILE);
+    assert!(recorded(&root, "sshd-reloads").is_empty());
+    // And one that is not strict reads the file whatever its mode.
+    script(
+        &layout.sshd,
+        &SERVER_READING_ITS_FILE.replace(
+            "echo \"permitrootlogin yes\"",
+            "echo \"permitrootlogin yes\"\necho \"strictmodes no\"",
+        ),
+    );
+    mode(&keys, 0o664);
+    assert_eq!(door::close(&layout), Ok(()));
+}
+
+#[test]
+fn a_server_started_with_settings_of_its_own_is_not_spoken_for_by_its_file() {
+    let (root, layout, server) = reader_with_a_key("door-own-settings", "listening");
+    let line = root
+        .join("proc")
+        .join(server.0.id().to_string())
+        .join("cmdline");
+    let started = |as_what: &[u8]| fs::write(&line, as_what).expect("cmdline");
+    // As the server shows itself once it is listening, and as one that has
+    // not renamed itself does. Another file, or a setting on the command
+    // line, decides what it enforces whatever the usual file says.
+    for own in [
+        &b"sshd: /usr/sbin/sshd -f /tmp/other_config [listener] 0 of 10-100 startups"[..],
+        b"sshd: /usr/sbin/sshd -o PasswordAuthentication=yes [listener] 0 of 10-100 startups",
+        b"/usr/sbin/sshd\0-D\0-oPasswordAuthentication=yes\0",
+    ] {
+        started(own);
+        assert!(door::close(&layout).is_err());
+        assert_eq!(settings_file(&layout), STOCK_FILE);
+    }
+    // A file that says closed says nothing about such a server either.
+    fs::write(
+        &layout.sshd_config,
+        format!("{STOCK_FILE}{}", kobod::ssh_hardening::block(true)),
+    )
+    .expect("settings");
+    assert_eq!(exposure(&layout, None), Exposure::SshUnreadable);
+    // Started the way the firmware starts it, or only told how to run.
+    for plain in [
+        &b"sshd: /usr/sbin/sshd [listener] 0 of 10-100 startups"[..],
+        b"sshd: /usr/sbin/sshd -D -e [listener] 0 of 10-100 startups",
+        b"/usr/sbin/sshd\0-D\0",
+    ] {
+        started(plain);
+        assert_eq!(exposure(&layout, None), Exposure::Acceptable);
+    }
+}
+
+#[test]
+fn two_servers_sharing_the_port_are_not_taken_for_one() {
+    let (root, layout, _server) = reader_with_a_key("door-two-servers", "listening");
+    // The same port listening a second time, for the other kind of address,
+    // on a socket the server found does not hold.
+    fs::write(
+        root.join("proc/net/tcp6"),
+        "  sl  local_address ...\n   0: 00000000000000000000000000000000:0016 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1009 1 0 100 0 0 10 0\n",
+    )
+    .expect("sockets");
+    assert!(door::close(&layout).is_err());
+    assert_eq!(settings_file(&layout), STOCK_FILE);
+    assert!(recorded(&root, "sshd-reloads").is_empty());
+}
+
+#[test]
+fn nothing_is_changed_when_the_listening_server_cannot_be_told() {
+    let (root, layout, server) = reader_with_a_key("door-no-server", "listening");
+    let entry = root.join("proc").join(server.0.id().to_string());
+    // Whatever holds the port was started from a program with the server's
+    // name that is not the server's program, and reads settings of its own.
+    let namesake = root
+        .join("opt")
+        .join(layout.sshd.file_name().expect("a name"));
+    fs::create_dir_all(root.join("opt")).expect("elsewhere");
+    fs::copy(&layout.sshd, &namesake).expect("a namesake");
+    fs::remove_file(entry.join("exe")).expect("program");
+    std::os::unix::fs::symlink(&namesake, entry.join("exe")).expect("program");
+    assert!(door::close(&layout).is_err());
+    // Or from another program altogether.
+    fs::remove_file(entry.join("exe")).expect("program");
+    std::os::unix::fs::symlink("/bin/busybox", entry.join("exe")).expect("program");
+    assert!(door::close(&layout).is_err());
+    // And nobody the reader can find holds it at all.
+    fs::remove_dir_all(&entry).expect("gone");
+    assert!(door::close(&layout).is_err());
+    assert_eq!(settings_file(&layout), STOCK_FILE);
+    assert!(!door_leftover(&layout).exists());
+    assert!(recorded(&root, "sshd-reloads").is_empty());
+}
+
 #[test]
 fn a_kernel_without_a_tunnel_driver_is_said_plainly_and_nothing_is_started() {
     let (root, mut layout) = reader("no-tun");
@@ -1510,6 +1951,86 @@ fn the_runtime_is_asked_to_run_only_what_the_owner_asked_for() {
     assert!(asks_for_the_service(CONFIG));
     assert!(asks_for_the_service(REQUEST));
     assert!(!asks_for_the_service(STATUS));
+}
+
+#[test]
+fn a_start_that_ended_waiting_on_the_owner_is_not_made_again_until_they_ask() {
+    let mut settled = Settled::default();
+    assert!(!settled.holds(Want::Run, false), "a session starts it once");
+    // Refused, or a sign-in nobody finished: ended, and not a failure.
+    settled.ended(Want::Run);
+    assert!(settled.holds(Want::Run, false));
+    // The owner taps Try again with nothing running.
+    settled.asked(false);
+    assert!(!settled.holds(Want::Run, false));
+    settled.ended(Want::Run);
+    assert!(settled.holds(Want::Run, false));
+}
+
+#[test]
+fn a_supervisor_that_left_for_a_choice_the_owner_changed_is_followed_by_the_next() {
+    let mut settled = Settled::default();
+    // Stay connected switched on while a supervisor that cannot do that
+    // was running: it leaves, and the other kind is what is wanted now.
+    settled.asked(true);
+    settled.ended(Want::Run);
+    assert!(!settled.holds(Want::Stay, false));
+    assert!(
+        !settled.holds(Want::Run, false),
+        "the same choice saved again"
+    );
+    // Only that once. What ends after it waits for the owner again.
+    settled.ended(Want::Run);
+    assert!(settled.holds(Want::Run, false));
+}
+
+#[test]
+fn a_reader_that_could_not_be_kept_connected_still_gets_the_session_supervisor() {
+    let mut settled = Settled::default();
+    // The step that arranges staying ended well and left a note that it
+    // could not, so what is wanted next is the supervisor that runs here.
+    settled.ended(Want::Stay);
+    assert!(!settled.holds(Want::Run, false));
+    assert!(!settled.holds(Want::Run, true));
+}
+
+#[test]
+fn a_kept_supervisor_is_started_again_unless_it_stopped_for_the_owner() {
+    let (_, layout) = reader("settled-kept");
+    let said = |state: &'static str| {
+        fs::write(
+            layout.app_state.join(STATUS),
+            Status::quiet(state, "Why.").render(),
+        )
+        .expect("status");
+        waits_on_the_owner_in(&layout)
+    };
+    let mut settled = Settled::default();
+    // Before the step that starts one has run, nothing holds it back,
+    // whatever an earlier session left in the status.
+    assert!(!settled.holds(Want::Stay, said("refused")));
+    settled.ended(Want::Stay);
+    // It is nobody's child, so how it ended is read from what it said. A
+    // download that failed or a daemon that died is tried again.
+    for passing in ["failed", "stopped", "starting", "running", "offline"] {
+        assert!(!settled.holds(Want::Stay, said(passing)), "{passing}");
+    }
+    // What only the owner can settle is left for them.
+    for theirs in ["refused", "unsupported", "timed-out", "needs-approval"] {
+        assert!(settled.holds(Want::Stay, said(theirs)), "{theirs}");
+    }
+    // And they have: Try again saves the switch.
+    settled.asked(false);
+    assert!(!settled.holds(Want::Stay, said("refused")));
+}
+
+#[test]
+fn a_failure_is_left_to_the_clock_and_forgets_that_the_owner_asked() {
+    let mut settled = Settled::default();
+    settled.asked(true);
+    settled.failed();
+    settled.ended(Want::Run);
+    assert!(settled.holds(Want::Run, false));
 }
 
 #[test]
@@ -2362,6 +2883,17 @@ fn a_session_runs_the_programs_from_the_root_filesystem_not_from_the_card() {
     let installed = layout.clone().on_the_root_filesystem();
     assert!(verify_engine(&installed).is_ok());
     assert!(verify_engine(&layout).is_err());
+}
+
+#[test]
+fn a_reader_that_has_never_run_this_still_finds_the_room_on_its_root_filesystem() {
+    let (root, mut layout) = reader("place-first-run");
+    // Neither the folder for the programs nor the one above it exists yet,
+    // which is every reader the first time Tailscale is switched on.
+    layout.kept_bin = root.join("usr-local/cobalt/tailscale-bin");
+    layout.system_room = 1;
+    assert!(!root.join("usr-local").exists());
+    assert_eq!(place(&layout).bin, layout.kept_bin);
 }
 
 #[test]

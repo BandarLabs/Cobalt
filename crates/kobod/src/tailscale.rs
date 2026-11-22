@@ -66,9 +66,12 @@
 //!   reachable from the tailnet, which is why [`exposure`] is asked before
 //!   the reader joins one.
 //!
-//! No reader has run this yet. The evidence bar in docs/DEVICES.md applies
-//! before any of it is called tested.
+//! One reader has run this, been approved from a phone and been reached
+//! over its tailnet: a Clara BW on firmware 4.46.23852. docs/DEVICES.md says
+//! what that showed and what it did not, and its evidence bar applies before
+//! any of the rest is called tested.
 
+mod door;
 mod hosts;
 #[cfg(test)]
 mod tests;
@@ -89,14 +92,23 @@ use std::time::{Duration, Instant};
 /// is ever written here.
 const APP_STATE: &str = "/mnt/onboard/.adds/cobalt/state/tailscale";
 /// The daemon's home on the root filesystem: the node key and the socket.
-const HOME: &str = "/var/lib/cobalt/tailscale";
+///
+/// Under `/usr/local`, beside the stock reader's own folder, and not under
+/// `/var/lib`, where this began. The firmware mounts a RAM disk of sixteen
+/// kilobytes over `/var/lib` at every start (seen on a Clara BW on
+/// 4.46.23852), so a key kept there was gone at the next restart, leaving the
+/// reader to be approved again and a dead entry behind in the tailnet, and
+/// the daemon's state did not fit in it to begin with. A folder here is on
+/// the flash, is not exported over USB, and is left alone by a firmware
+/// update, which only writes the files it carries.
+const HOME: &str = "/usr/local/cobalt/tailscale";
 /// The two programs, on the book partition beside the Sync engine.
 const BIN_DIR: &str = "/mnt/onboard/.adds/cobalt/bin/tailscale";
 /// The two programs again, with a copy of this runtime, on the root
 /// filesystem, for a reader that stays connected after Cobalt hands the
 /// screen back. Beside the daemon's home rather than inside it, so signing
 /// out, which empties the home, does not also mean downloading 70 MB again.
-const KEPT_BIN_DIR: &str = "/var/lib/cobalt/tailscale-bin";
+const KEPT_BIN_DIR: &str = "/usr/local/cobalt/tailscale-bin";
 /// The partition the stock reader hands to a computer over USB.
 const CARD: &str = "/mnt/onboard";
 
@@ -250,6 +262,12 @@ struct Layout {
     /// `/sys/class/net`, for loopback and for the tunnel's interface.
     interfaces: PathBuf,
     sshd: PathBuf,
+    /// The SSH server's settings file, which [`door::close`] adds a block to.
+    sshd_config: PathBuf,
+    /// The reader's list of accounts, for where root's home is.
+    passwd: PathBuf,
+    /// What root's home and the server's key files are found under.
+    system: PathBuf,
     /// The Sync engine, whose listening port is its own business and is
     /// allowed for as long as it is that program holding it.
     sync_engine: PathBuf,
@@ -282,6 +300,15 @@ impl Layout {
                 .map(PathBuf::from)
                 .find(|path| path.is_file())
                 .unwrap_or_else(|| PathBuf::from("/usr/sbin/sshd")),
+            // The firmware keeps its server's files in `/etc/ssh`; the bare
+            // `/etc` spelling is the other place the server is built to look.
+            sshd_config: ["/etc/ssh/sshd_config", "/etc/sshd_config"]
+                .iter()
+                .map(PathBuf::from)
+                .find(|path| path.is_file())
+                .unwrap_or_else(|| PathBuf::from("/etc/ssh/sshd_config")),
+            passwd: PathBuf::from("/etc/passwd"),
+            system: PathBuf::from("/"),
             sync_engine: PathBuf::from(crate::syncthing::ENGINE),
             engine: PINNED,
             card_room: ROOM_NEEDED,
@@ -590,6 +617,7 @@ const LEFT_COBALT: &str =
 const SIGNED_OUT: &str =
     "Signed out. If this reader is still listed in your Tailscale admin console, remove it there.";
 const STOPPED: &str = "Tailscale stopped. It starts again the next time you open Cobalt.";
+const CLOSING_PASSWORD_LOGIN: &str = "Closing password login to this reader over SSH.";
 const CANNOT_ROUTE: &str =
     "Tailscale on this reader could not carry traffic for other devices, so \
      it is not an exit node and does not share its network.";
@@ -711,6 +739,93 @@ impl Want {
             Self::SignOut => ["--tailscale", "sign-out"],
         }
     }
+}
+
+/// What a session remembers of a start that ended with nothing wrong, so it
+/// is not made again until the owner has done something.
+///
+/// A supervisor ends without failing when it is waiting on the owner: the
+/// reader was refused, nobody finished signing in, an admin has to approve
+/// it. The status says which, and starting again without them changes
+/// nothing. Yet the session's only question used to be whether the switch
+/// was on, so on a reader it started the next supervisor the moment one
+/// ended, around and around for as long as Cobalt was open: a refusal was
+/// checked for again every second or two, and a sign-in nobody finished
+/// never stopped its daemon, it only got a new link every ten minutes.
+///
+/// The one settled end that must be followed by a start is the supervisor
+/// leaving because the owner changed a choice it cannot take up while
+/// running. That is told apart by the owner having asked while it ran.
+///
+/// A reader kept connected outside Cobalt is a different case, because what
+/// the session runs for it is only the step that starts a supervisor of its
+/// own. That step ending well says a supervisor was started and nothing
+/// about how it ended, and it is nobody's child to ask. So for that one the
+/// session goes by what the supervisor last said: left alone while that is
+/// something only the owner can settle, started again when it stopped for
+/// any other reason, such as a download that failed.
+#[derive(Clone, Copy, Debug, Default)]
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub struct Settled {
+    ended: Option<Want>,
+    kept_started: bool,
+    asked_meanwhile: bool,
+}
+
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+impl Settled {
+    /// The owner saved something in the app. `running` says whether a
+    /// supervisor was there to see it.
+    pub fn asked(&mut self, running: bool) {
+        self.ended = None;
+        self.kept_started = false;
+        self.asked_meanwhile = running;
+    }
+
+    /// What was started for `want` ended without failing.
+    pub fn ended(&mut self, want: Want) {
+        if std::mem::take(&mut self.asked_meanwhile) {
+            return;
+        }
+        match want {
+            Want::Stay => self.kept_started = true,
+            Want::Run | Want::SignOut => self.ended = Some(want),
+        }
+    }
+
+    /// What was started failed, which is tried again by the clock.
+    pub fn failed(&mut self) {
+        self.asked_meanwhile = false;
+    }
+
+    /// Whether `want` has been done as far as it can be without the owner.
+    ///
+    /// Asked of what is wanted now, not of what ended: a step that could not
+    /// arrange for the reader to stay connected ends well too, and what is
+    /// wanted after it is the supervisor that runs with the session.
+    /// `waiting_on_owner` is what the status says, from [`waits_on_the_owner`],
+    /// and is only consulted for a reader kept connected.
+    #[must_use]
+    pub fn holds(self, want: Want, waiting_on_owner: bool) -> bool {
+        match want {
+            Want::Stay => self.kept_started && waiting_on_owner,
+            Want::Run | Want::SignOut => self.ended == Some(want),
+        }
+    }
+}
+
+/// Whether the last thing a supervisor said is something only the owner can
+/// settle, so that starting another would say it again.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub fn waits_on_the_owner() -> bool {
+    waits_on_the_owner_in(&Layout::device())
+}
+
+fn waits_on_the_owner_in(layout: &Layout) -> bool {
+    matches!(
+        read_status(layout).lines().next().unwrap_or_default(),
+        "refused" | "unsupported" | "timed-out" | "needs-approval"
+    )
 }
 
 /// Whether the service should be started, read from what the app saved.
@@ -1294,8 +1409,13 @@ impl<'a> Supervisor<'a> {
 fn place(layout: &Layout) -> Layout {
     let system = layout.clone().on_the_root_filesystem();
     let installed = system.daemon().is_file() && system.cli().is_file();
-    let room = kobo_abi::free_space(&system.bin)
-        .or_else(|| system.bin.parent().and_then(kobo_abi::free_space))
+    // Asked of the nearest folder that exists. On a reader that has never
+    // run this neither the folder nor the one above it does yet, and asking
+    // only those two put the first start on the card with room to spare.
+    let room = system
+        .bin
+        .ancestors()
+        .find_map(kobo_abi::free_space)
         // Not knowing is not room: this is the firmware's own partition.
         .is_some_and(|free| free >= system.room());
     if installed || room {
@@ -1513,7 +1633,7 @@ fn new_claim() -> String {
 
 fn supervise(supervisor: &Supervisor) -> End {
     let layout = supervisor.layout;
-    if let Some(refusal) = preflight(layout) {
+    if let Some(refusal) = preflight(supervisor) {
         supervisor.say(&refusal);
         return End::Settled;
     }
@@ -1562,7 +1682,13 @@ fn supervise(supervisor: &Supervisor) -> End {
 
 /// The reasons not to join a tailnet at all, checked before anything is
 /// downloaded or started, in words the owner can act on.
-fn preflight(layout: &Layout) -> Option<Status> {
+///
+/// One of them the reader can put right by itself. Root getting in with a
+/// password is closed here, where a key is already on the reader to keep its
+/// owner in, so switching Tailscale on does not send them to a computer for
+/// something the reader can do. See [`door`].
+fn preflight(supervisor: &Supervisor) -> Option<Status> {
+    let layout = supervisor.layout;
     if let Err(why) = ensure_tun(layout) {
         eprintln!("kobod: tailscale tunnel device: {why}");
         return Some(Status::quiet(
@@ -1570,7 +1696,18 @@ fn preflight(layout: &Layout) -> Option<Status> {
             "This reader's software has no tunnel support, so Tailscale cannot run on it.",
         ));
     }
-    refusal(layout, exposure(layout, None))
+    let mut found = exposure(layout, None);
+    if found == Exposure::PasswordLogin {
+        supervisor.say(&Status::quiet("starting", CLOSING_PASSWORD_LOGIN));
+        match door::close(layout) {
+            Ok(()) => {
+                eprintln!("kobod: tailscale: closed password login for root over SSH");
+                found = exposure(layout, None);
+            }
+            Err(why) => eprintln!("kobod: tailscale: password login left as it is: {why}"),
+        }
+    }
+    refusal(layout, found)
 }
 
 /// The words for a reader that should not be on a tailnet as it stands.
@@ -1682,7 +1819,14 @@ fn exposure(layout: &Layout, daemon: Option<u32>) -> Exposure {
             return Exposure::DebugServices;
         }
         match ssh.get_or_insert_with(|| ssh_door(layout)) {
-            SshDoor::Closed(ports) if ports.contains(&listener.port) => {}
+            SshDoor::Closed(ports) if ports.contains(&listener.port) => {
+                // That answer came from a fresh server reading the file. A
+                // listener started with settings of its own is not that
+                // server, and what it enforces has not been asked.
+                if !door::answers_for(layout, listener) {
+                    return Exposure::SshUnreadable;
+                }
+            }
             SshDoor::Open(ports) if ports.contains(&listener.port) => {
                 return Exposure::PasswordLogin
             }
@@ -1756,6 +1900,16 @@ fn holds_socket(layout: &Layout, pid: u32, inode: u64) -> bool {
     })
 }
 
+/// The process holding the socket numbered `inode`, found among everything
+/// the kernel says is running.
+fn holder_of(layout: &Layout, inode: u64) -> Option<u32> {
+    fs::read_dir(&layout.proc)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .find(|pid| holds_socket(layout, *pid, inode))
+}
+
 /// The program holding the listener on `port`, by the name it was started
 /// under.
 ///
@@ -1767,11 +1921,7 @@ fn who_listens(layout: &Layout, port: u16) -> Option<String> {
         .into_iter()
         .find(|listener| listener.port == port)?
         .inode?;
-    let holder = fs::read_dir(&layout.proc)
-        .ok()?
-        .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
-        .find(|pid| holds_socket(layout, *pid, inode))?;
+    let holder = holder_of(layout, inode)?;
     let line = fs::read(layout.proc.join(holder.to_string()).join("cmdline")).ok()?;
     let started_as = std::str::from_utf8(line.split(|byte| *byte == 0).next()?).ok()?;
     let name = Path::new(started_as).file_name()?.to_str()?;

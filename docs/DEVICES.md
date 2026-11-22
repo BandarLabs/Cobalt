@@ -308,6 +308,16 @@ How the reader is reached, and who else can reach it:
   a password by another name on a server built with PAM. A server that does
   not accept it gets the first line alone, and a reader set up before the
   second line existed is given it the next time `kobo setup` runs.
+- The runtime writes the same block from the reader, before it puts the
+  reader on a tailnet, when root can still log in with a password and a key
+  is already there. A reader set up before setup closed the door is in that
+  state, and so is one whose server file went back to stock. It cannot log
+  in to itself to prove the change, so it proves it another way: the server
+  checks the new file before it replaces the old one, the server asked
+  afterwards must say root gets nothing by typing, and the listening server
+  must be seen to start again, because a running server enforces what it
+  read when it started and not the file. Any of those failing puts the file
+  back. With no key on the reader it changes nothing.
 - `--no-key` skips the key and therefore the hardening, because without this
   computer's key there is no proof a key works. That leaves the firmware's
   password login as it shipped.
@@ -519,15 +529,32 @@ its passive soak has completed.
 
 ### Tailscale across a session
 
-No reader has run the Tailscale service yet. Everything about it has been
-tested against stand-ins for the two Tailscale programs, so every claim below
-about a kernel is a question, not an answer.
+One reader has run the Tailscale service: a Clara BW (N365) on firmware
+4.46.23852, kernel 4.9.77, approved from a phone and reached over its tailnet
+from a computer on the same Wi-Fi. Its three options, and everything on any
+other reader, have been tested against stand-ins for the two Tailscale
+programs, so a claim below about a kernel is a question unless it says it was
+seen.
+
+What that reader showed. Its kernel has the tunnel driver, registered in
+`/proc/misc` with `/dev/net/tun` already made, and the daemon brought its
+interface up on it. The firmware mounts a RAM disk of sixteen kilobytes over
+`/var/lib` at every start, so nothing kept there survives a restart or has
+room to begin with, which is why the daemon's home is under
+`/usr/local/cobalt`. Its SSH server was at the firmware's stock settings
+with a computer's key beside them, and the runtime closed password login
+itself before joining. Approved, it took its tailnet address on the kernel's
+interface and routed to the other machines through the daemon's own table,
+with the packet filter left alone, and a computer on the tailnet pinged it
+and logged in to it. Ending the session stopped the daemon, removed the
+interface and left Wi-Fi working under the stock reader. Opening Cobalt again
+connected it fifteen seconds later with no second approval.
 
 The service needs the kernel's tunnel driver, and nothing in the repository
-says which firmware builds have it. The two kernels in the support matrix,
-4.9.77 on the MediaTek readers and 4.1.15 on the i.MX6 ones, are both recent
-enough for the Tailscale programs themselves, which need 3.2. Whether either
-was built with the driver is unknown. `kobo doctor` reads what it can without
+says which other firmware builds have it. The two kernels in the support
+matrix, 4.9.77 on the MediaTek readers and 4.1.15 on the i.MX6 ones, are both
+recent enough for the Tailscale programs themselves, which need 3.2. Whether
+the i.MX6 kernel was built with the driver is unknown. `kobo doctor` reads what it can without
 touching anything: the driver being registered in `/proc/misc` is certain,
 and its absence there is not proof, because a module would only load when the
 device node is first opened. The supervisor opens the node before it does
@@ -553,12 +580,14 @@ The exit node and the shared network do not depend on the kernel's packet
 filter: the daemon carries that traffic itself. `kobo doctor` still reports
 what each kernel offers for it, the forwarding switch, connection tracking
 and the packet filter, because a kernel that has them could do the forwarding
-faster and nobody has looked. What has not been
-measured on any reader: the daemon's memory beside a running app, whether its
-link monitoring disturbs the hand-back, how long a reconnect takes after the
-radio returns, and whether the daemon's routing works without the packet
-filter tools the firmware lacks. The app's README lists the evidence to
-capture on a first run.
+faster and nobody has looked. The daemon held 30 MB on the Clara BW while it
+waited to be approved and 31 MB at most once connected, beside the launcher
+and the Tailscale app. What has not been measured on any reader: its memory
+beside a heavier app, whether its link monitoring disturbs the hand-back when
+it stays connected, how long a reconnect takes after the radio returns, and
+whether the daemon carries an exit node's or a shared network's traffic
+without the packet filter tools the firmware lacks. The app's README lists
+the evidence to capture on a first run.
 
 ### The three watchdogs
 
