@@ -46,6 +46,9 @@ shift
 case "$verb" in
   status)
     cat "$root/status.json" 2>/dev/null || exit 1 ;;
+  metrics)
+    echo asked >> "$root/metrics-asked"
+    cat "$root/metrics.txt" 2>/dev/null || exit 1 ;;
   logout)
     : > "$root/logged-out" ;;
   up)
@@ -1454,8 +1457,9 @@ fn a_signed_in_reader_comes_up_and_is_taken_down_with_the_session() {
         ]
     );
     // Nothing was asked for beyond being on the tailnet, so the lines about
-    // staying connected, the exit node and the shared network are empty.
-    assert_eq!(status(&layout).len(), 11);
+    // staying connected, the exit node, the shared network and what has been
+    // carried are empty.
+    assert_eq!(status(&layout).len(), 12);
     assert!(status(&layout)[5..].iter().all(String::is_empty));
     eventually("the tailnet names are written", || {
         fs::read_to_string(&layout.hosts).is_ok_and(|hosts| hosts.contains("desk.example.ts.net"))
@@ -2575,7 +2579,7 @@ fn each_routing_switch_changes_its_own_flag_and_no_other() {
 fn what_is_switched_on_waits_for_the_admin_console_and_then_says_approved() {
     let (root, layout, supervisor) = routing_reader("approval", true, true);
     assert_eq!(
-        status(&layout)[6..],
+        status(&layout)[6..11],
         ["waiting", "waiting", "192.168.1.0/24", "", ""]
     );
     // Approved in the admin console: the tailnet now routes both to it.
@@ -2590,6 +2594,85 @@ fn what_is_switched_on_waits_for_the_admin_console_and_then_says_approved() {
     eventually("the approval is seen", || {
         status(&layout)[6..8] == ["approved", "approved"]
     });
+    stop(&layout, supervisor);
+}
+
+/// The daemon's own counts, as a reader that had been an exit node for two
+/// hours printed them, less the lines that count other things.
+const COUNTS: &str = r#"tailscaled_advertised_routes 0
+tailscaled_inbound_bytes_total{path="derp"} 44868
+tailscaled_inbound_bytes_total{path="direct_ipv4"} 63843544
+tailscaled_inbound_bytes_total{path="direct_ipv6"} 3387320
+tailscaled_inbound_packets_total{path="direct_ipv4"} 133169
+tailscaled_outbound_bytes_total{path="derp"} 247696
+tailscaled_outbound_bytes_total{path="direct_ipv4"} 248934348
+tailscaled_outbound_bytes_total{path="direct_ipv6"} 75125140
+tailscaled_outbound_packets_total{path="direct_ipv4"} 225847
+"#;
+
+#[test]
+fn what_the_daemon_has_carried_is_its_bytes_in_and_out_over_every_road() {
+    assert_eq!(parse_carried(COUNTS), Some((67_275_732, 324_307_184)));
+    // A count large enough to be written with an exponent, and one with no
+    // road named.
+    assert_eq!(
+        parse_carried(
+            "tailscaled_inbound_bytes_total{path=\"direct_ipv4\"} 6.3843544e+07\n\
+             tailscaled_outbound_bytes_total 1e+03\n"
+        ),
+        Some((63_843_544, 1000))
+    );
+    // A longer name that starts the same way counts something else.
+    assert_eq!(
+        parse_carried(
+            "tailscaled_inbound_bytes_total_by_peer{peer=\"a\"} 5\n\
+             tailscaled_inbound_bytes_total{path=\"derp\"} 7\n\
+             tailscaled_outbound_bytes_total{path=\"derp\"} 9\n"
+        ),
+        Some((7, 9))
+    );
+    // A build from before the daemon counted, or half an answer, is no
+    // figure at all, not a nought.
+    assert_eq!(parse_carried("tailscaled_health_messages 0\n"), None);
+    assert_eq!(
+        parse_carried("tailscaled_inbound_bytes_total{path=\"derp\"} 7\n"),
+        None
+    );
+    assert_eq!(
+        parse_carried(
+            "tailscaled_inbound_bytes_total{path=\"derp\"} lots\n\
+             tailscaled_outbound_bytes_total{path=\"derp\"} 9\n"
+        ),
+        None
+    );
+}
+
+#[test]
+fn an_approved_offer_says_how_much_has_been_carried_and_a_waiting_one_is_not_asked() {
+    let (root, layout, supervisor) = routing_reader("carried", true, false);
+    fs::write(root.join("metrics.txt"), COUNTS).expect("counts");
+    assert_eq!(status(&layout)[6], "waiting");
+    assert_eq!(status(&layout)[11], "");
+    assert!(
+        recorded(&root, "metrics-asked").is_empty(),
+        "asked what a waiting offer had carried"
+    );
+    fs::write(
+        root.join("status.json"),
+        r#"{"BackendState":"Running","TUN":true,"Health":[],
+            "Self":{"DNSName":"kobo-cobalt.example.ts.net.","TailscaleIPs":["100.64.0.7"],
+                    "ExitNodeOption":true,
+                    "AllowedIPs":["100.64.0.7/32","0.0.0.0/0","::/0"]}}"#,
+    )
+    .expect("status");
+    eventually("what was carried is said", || {
+        status(&layout)[11] == "67275732 324307184"
+    });
+    assert_eq!(status(&layout)[6], "approved");
+    // A daemon that stops answering the question leaves the line empty
+    // rather than standing on an old figure.
+    fs::remove_file(root.join("metrics.txt")).expect("no counts");
+    eventually("the figure is withdrawn", || status(&layout)[11].is_empty());
     stop(&layout, supervisor);
 }
 
@@ -2610,7 +2693,7 @@ fn a_daemon_that_is_not_carrying_traffic_itself_is_never_left_advertising() {
     // Taken back at once: the reader is a plain leaf again.
     assert_eq!(recorded(&root, "up-args"), LEAF_FLAGS);
     assert_eq!(
-        status(&layout)[6..],
+        status(&layout)[6..11],
         ["unavailable", "unavailable", "", CANNOT_ROUTE, CANNOT_ROUTE]
     );
     stop(&layout, supervisor);
@@ -2740,7 +2823,7 @@ fn a_network_that_cannot_be_shared_says_why_and_the_exit_node_is_unaffected() {
     let supervisor = supervise_in_background(&layout);
     eventually("the tunnel comes up", || state(&layout) == "running");
     assert_eq!(
-        status(&layout)[6..],
+        status(&layout)[6..11],
         [
             "waiting",
             "unavailable",

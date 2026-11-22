@@ -96,6 +96,9 @@ struct ServiceStatus {
     shared: String,
     exit_node_why: String,
     network_why: String,
+    /// The bytes the daemon has carried since it started, in from the
+    /// tailnet's devices and then out to them, while the runtime knows.
+    carried: String,
 }
 
 impl ServiceStatus {
@@ -114,7 +117,21 @@ impl ServiceStatus {
             shared: next(),
             exit_node_why: next(),
             network_why: next(),
+            carried: next(),
         }
+    }
+
+    /// Whether the runtime has said something new about the tunnel itself.
+    ///
+    /// A count that moved is not that. It moves every minute for as long as
+    /// anything goes through the reader, and taken for news it would start a
+    /// wait over that had already run its limit.
+    fn says_more_than(&self, earlier: &Self) -> bool {
+        let but_the_count = |status: &Self| Self {
+            carried: String::new(),
+            ..status.clone()
+        };
+        but_the_count(self) != but_the_count(earlier)
     }
 
     /// Whether the supervisor is still on its way somewhere, so the screen
@@ -170,6 +187,10 @@ struct Tailscale {
     /// The watch ran its whole limit, so it stays stopped until the owner
     /// does something or the runtime says something new.
     gave_up: bool,
+    /// Ticks while the reader is carrying for its tailnet, so the figures on
+    /// the first screen keep up. Slowly, because the runtime asks the
+    /// daemon for it once a minute.
+    meter: Heartbeat,
 }
 
 impl Default for Tailscale {
@@ -188,6 +209,7 @@ impl Default for Tailscale {
             approve_page: String::new(),
             approve_from: View::Status,
             gave_up: false,
+            meter: Heartbeat::every(30),
         }
     }
 }
@@ -229,6 +251,37 @@ impl Tailscale {
         } else {
             self.watch.stop(context);
         }
+        if self.connected() && self.offers().contains(&Offer::Approved) {
+            self.meter.start(context);
+        } else {
+            self.meter.stop(context);
+        }
+    }
+
+    /// How much the reader has received from its tailnet's devices and sent
+    /// to them since Tailscale last started, once the tailnet has approved
+    /// something for it to carry and the runtime has said how much that
+    /// came to.
+    ///
+    /// The two apart, because they are rarely alike: an exit node sends its
+    /// devices several times what they send it, and an owner minding a data
+    /// plan wants the larger one by itself. Said the way every network tool
+    /// says them, received and then sent, on the one line.
+    fn carried(&self) -> Option<String> {
+        if !(self.connected() && self.offers().contains(&Offer::Approved)) {
+            return None;
+        }
+        let mut counts = self.status.carried.split(' ').map(str::parse::<u64>);
+        let (Some(Ok(received)), Some(Ok(sent)), None) =
+            (counts.next(), counts.next(), counts.next())
+        else {
+            return None;
+        };
+        Some(format!(
+            "Rx {}, Tx {}",
+            megabytes(received),
+            megabytes(sent)
+        ))
     }
 
     /// Where each offer stands, the exit node first.
@@ -371,7 +424,7 @@ impl Tailscale {
         }
         rows.push(("options", "Options", "", Glyph::Settings));
         rows.push(("about", "About Tailscale", "", Glyph::Globe));
-        let mut facts = Vec::with_capacity(3);
+        let mut facts = Vec::with_capacity(4);
         if self.enabled {
             facts.push(("Status", self.state_words().to_owned()));
         }
@@ -381,6 +434,9 @@ impl Tailscale {
             }
             if !self.status.address.is_empty() {
                 facts.push(("Address", self.status.address.clone()));
+            }
+            if let Some(traffic) = self.carried() {
+                facts.push(("Traffic", traffic));
             }
         }
         screen
@@ -546,7 +602,7 @@ impl Tailscale {
         let fresh = value
             .map(|bytes| ServiceStatus::parse(&String::from_utf8_lossy(bytes)))
             .unwrap_or_default();
-        if fresh != self.status {
+        if fresh.says_more_than(&self.status) {
             // The runtime has spoken, so the start is not stalled.
             self.stalled = false;
             self.gave_up = false;
@@ -613,6 +669,17 @@ impl Tailscale {
     }
 }
 
+/// A count of bytes the way an owner reads one: megabytes, and gigabytes to
+/// one place once there are a thousand of those.
+fn megabytes(bytes: u64) -> String {
+    let megabytes = bytes / 1_000_000;
+    match megabytes {
+        0 => "Under 1 MB".to_owned(),
+        1..=999 => format!("{megabytes} MB"),
+        _ => format!("{}.{} GB", megabytes / 1000, megabytes % 1000 / 100),
+    }
+}
+
 /// The page that says what the service is for and what it opens, which the
 /// sign-out question is also asked over, so the owner answers it looking at
 /// the page they asked from.
@@ -669,6 +736,12 @@ impl KoboApp for Tailscale {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if self.meter.on_task(context, task, &outcome) {
+            if !matches!(outcome, TaskOutcome::Cancelled) {
+                context.store().load(STATUS);
+            }
+            return;
+        }
         if !self.watch.on_task(context, task, &outcome) {
             return;
         }
@@ -1330,6 +1403,155 @@ mod tests {
         runner.action(ActionId::BACK);
         let again = runner.action(action_id("approve"));
         assert!(nap(&again).is_some());
+    }
+
+    const CARRYING: &str = "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\napproved\n\n\n\n\n67275732 324307184\n";
+
+    fn exit_node_app(status: &str) -> Tailscale {
+        Tailscale {
+            exit_node: true,
+            ..with_status(true, status)
+        }
+    }
+
+    #[test]
+    fn a_reader_carrying_for_its_tailnet_says_how_much_on_the_first_screen() {
+        let said = words(&exit_node_app(CARRYING).status_screen());
+        assert!(said.contains("Traffic Rx 67 MB, Tx 324 MB"), "{said}");
+        assert!(exit_node_app(CARRYING)
+            .status_screen()
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
+        for (why, status) in [
+            // Nothing can have gone through an offer nobody has approved.
+            ("waiting", CARRYING.replace("approved", "waiting")),
+            // A runtime from before the figure says nothing about it.
+            ("an older runtime", ALLOWED.to_owned()),
+            (
+                "half a figure",
+                CARRYING.replace("67275732 324307184", "67275732"),
+            ),
+            (
+                "not a figure",
+                CARRYING.replace("67275732 324307184", "a lot"),
+            ),
+            ("not connected", CARRYING.replace("running", "offline")),
+        ] {
+            let said = words(&exit_node_app(&status).status_screen());
+            assert!(!said.contains("Traffic"), "{why}: {said}");
+        }
+        // The switch being off is the end of it, whatever the file still says.
+        let said = words(&with_status(true, CARRYING).status_screen());
+        assert!(!said.contains("Traffic"), "{said}");
+    }
+
+    #[test]
+    fn bytes_are_said_in_megabytes_and_then_gigabytes() {
+        for (bytes, said) in [
+            (0, "Under 1 MB"),
+            (999_999, "Under 1 MB"),
+            (1_000_000, "1 MB"),
+            (391_582_916, "391 MB"),
+            (999_999_999, "999 MB"),
+            (1_000_000_000, "1.0 GB"),
+            (1_250_000_000, "1.2 GB"),
+            (23_960_000_000, "23.9 GB"),
+        ] {
+            assert_eq!(megabytes(bytes), said);
+        }
+    }
+
+    #[test]
+    fn the_figure_is_looked_at_again_every_half_minute_while_something_is_approved() {
+        let mut runner = AppRunner::new(exit_node_app(""));
+        let carrying = says(&mut runner, CARRYING);
+        let tick = nap(&carrying).expect("the figure is followed");
+        assert!(carrying.iter().any(|command| matches!(
+            command,
+            Command::Spawn {
+                work: Task::Sleep { seconds: 30 },
+                ..
+            }
+        )));
+        // A tick asks the runtime's file again and waits for the next.
+        let ticked = runner.task_outcome(tick, TaskOutcome::Completed(Vec::new()));
+        assert!(ticked.iter().any(|command| matches!(
+            command,
+            Command::Store(StoreRequest::Load { key }) if key == STATUS
+        )));
+        let later = says(
+            &mut runner,
+            &CARRYING.replace("67275732 324307184", "100000000 900000000"),
+        );
+        assert!(words(screen(&later)).contains("Rx 100 MB, Tx 900 MB"));
+        // Approval taken back: nothing is being carried, so nothing is
+        // looked for.
+        let next = nap(&ticked).expect("the next tick");
+        let withdrawn = says(&mut runner, &CARRYING.replace("approved", "waiting"));
+        assert!(withdrawn
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == next)));
+    }
+
+    /// The nap of the clock that ticks every `seconds`, if it is still
+    /// ticking after `commands`.
+    fn nap_of(commands: &[Command], seconds: u32) -> Option<TaskId> {
+        let mut nap = None;
+        for command in commands {
+            match command {
+                Command::Spawn {
+                    task,
+                    work: Task::Sleep { seconds: every },
+                } if *every == seconds => nap = Some(*task),
+                Command::Cancel(task) if nap == Some(*task) => nap = None,
+                _ => {}
+            }
+        }
+        nap
+    }
+
+    #[test]
+    fn a_count_that_moves_does_not_start_a_wait_for_approval_over() {
+        // The exit node approved and carrying, the network still waiting.
+        let mixed = |carried: &str| {
+            format!(
+                "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\napproved\nwaiting\n192.168.1.0/24\n\n\n{carried}\n"
+            )
+        };
+        let mut runner = AppRunner::new(routing_app(""));
+        let first = says(&mut runner, &mixed("1000000 2000000"));
+        let mut tick = nap_of(&first, 3).expect("the waiting offer is followed");
+        assert!(nap_of(&first, 30).is_some(), "the count is followed too");
+        // Nobody approves the network, and all the while the count moves.
+        let mut megabytes = 3;
+        while !runner.app().gave_up {
+            let ticked = runner.task_outcome(tick, TaskOutcome::Completed(Vec::new()));
+            megabytes += 1;
+            let told = says(&mut runner, &mixed(&format!("1000000 {megabytes}000000")));
+            assert!(megabytes < 1000, "followed for ever");
+            if let Some(next) = nap_of(&told, 3).or_else(|| nap_of(&ticked, 3)) {
+                tick = next;
+            }
+        }
+        assert_eq!(
+            megabytes,
+            3 + 240,
+            "three seconds a tick for twelve minutes"
+        );
+
+        // More goes through. The figure keeps up and the wait stays over.
+        let more = says(&mut runner, &mixed("1000000 900000000"));
+        assert!(words(screen(&more)).contains("Rx 1 MB, Tx 900 MB"));
+        assert!(nap_of(&more, 3).is_none(), "the wait was started over");
+        assert!(runner.app().gave_up);
+
+        // The tailnet saying something about the offer is news.
+        says(
+            &mut runner,
+            &mixed("1000000 900000000").replace("waiting", "approved"),
+        );
+        assert!(!runner.app().gave_up);
     }
 
     #[test]

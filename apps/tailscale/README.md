@@ -14,10 +14,11 @@ the reader can reach your own servers by name.
 
 One reader has run this: a Clara BW on firmware 4.46.23852, approved from a
 phone and reached over its tailnet.
-[First run on a reader](#first-run-on-a-reader) says what that showed and
-what nobody has seen yet, the three options among it. The rest has been
-tested against stand-ins for the Tailscale programs. The evidence bar in
-[docs/DEVICES.md](../../docs/DEVICES.md) applies before it is called tested.
+[First run on a reader](#first-run-on-a-reader) says what that showed, the
+exit node carrying traffic among it, and what nobody has seen yet. The rest
+has been tested against stand-ins for the Tailscale programs. The evidence
+bar in [docs/DEVICES.md](../../docs/DEVICES.md) applies before it is called
+tested.
 
 ## Features
 
@@ -121,9 +122,18 @@ it is not available there.
   until you pick another.
 - **TCP, UDP and ping only.** The Tailscale program carries each connection
   itself and makes it again from the reader.
-- **Unverified on any reader.** If the reader turns out not to be able to
-  carry traffic, the switch says it is not available and nothing is offered
-  to your tailnet.
+- **How much it has carried.** Once your tailnet has approved either, the
+  first screen has a **Traffic** line: Rx is what the reader has received
+  from your devices and Tx what it has sent to them since Tailscale last
+  started, which is what they downloaded through it. It looks again about
+  once a minute. Tailscale
+  counts everything that crossed the tailnet to and from the reader, not the
+  exit node's share alone, which on a reader is nearly the same thing. The
+  counts start again whenever Tailscale does. It needs a Cobalt newer than
+  0.3.40.
+- **One reader has carried traffic as an exit node,** and none has shared a
+  network yet. If a reader turns out not to be able to carry traffic, the
+  switch says it is not available and nothing is offered to your tailnet.
 
 ## Reaching your own servers from apps
 
@@ -363,13 +373,17 @@ approved from a phone and been reached over its tailnet. What that showed:
   off, and the tailnet listed the offer as not yet approved. The switch said
   it was waiting and gave the owner nowhere to go, which is why approving
   now has a code to scan.
+- Approved as an exit node from the code on its screen, it carried 391 MB
+  for the owner's other devices in a little over two hours, 324 MB to them
+  and 67 MB from them, and answered 1,253 name lookups. The daemon's memory
+  peaked at 63 MB against a limit of 96, and the battery went from 81% to
+  70% with Cobalt open throughout.
 - A program left listening on a port was refused by name, once.
 
-Nobody has yet seen, on a reader: staying connected outside Cobalt, an
-approved exit node carrying traffic, the shared network, the reader reached
-from outside its own Wi-Fi, or the key outliving a restart (the folder it is
-kept in did). So a run that
-gets further is evidence as well as a test. With the reader at `READER` on your Wi-Fi,
+Nobody has yet seen, on a reader: staying connected outside Cobalt, the
+shared network, the reader reached from outside its own Wi-Fi, or the key
+outliving a restart (the folder it is kept in did). So a run that gets
+further is evidence as well as a test. With the reader at `READER` on your Wi-Fi,
 capture these before switching Tailscale on, once it says **Connected**, and
 after leaving Cobalt:
 
