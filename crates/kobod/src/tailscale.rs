@@ -1375,8 +1375,13 @@ impl<'a> Supervisor<'a> {
 fn place(layout: &Layout) -> Layout {
     let system = layout.clone().on_the_root_filesystem();
     let installed = system.daemon().is_file() && system.cli().is_file();
-    let room = kobo_abi::free_space(&system.bin)
-        .or_else(|| system.bin.parent().and_then(kobo_abi::free_space))
+    // Asked of the nearest folder that exists. On a reader that has never
+    // run this neither the folder nor the one above it does yet, and asking
+    // only those two put the first start on the card with room to spare.
+    let room = system
+        .bin
+        .ancestors()
+        .find_map(kobo_abi::free_space)
         // Not knowing is not room: this is the firmware's own partition.
         .is_some_and(|free| free >= system.room());
     if installed || room {

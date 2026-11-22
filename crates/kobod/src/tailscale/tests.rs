@@ -2656,6 +2656,17 @@ fn a_session_runs_the_programs_from_the_root_filesystem_not_from_the_card() {
 }
 
 #[test]
+fn a_reader_that_has_never_run_this_still_finds_the_room_on_its_root_filesystem() {
+    let (root, mut layout) = reader("place-first-run");
+    // Neither the folder for the programs nor the one above it exists yet,
+    // which is every reader the first time Tailscale is switched on.
+    layout.kept_bin = root.join("usr-local/cobalt/tailscale-bin");
+    layout.system_room = 1;
+    assert!(!root.join("usr-local").exists());
+    assert_eq!(place(&layout).bin, layout.kept_bin);
+}
+
+#[test]
 fn a_reader_without_room_on_its_root_filesystem_runs_them_from_the_card() {
     let (root, mut layout) = reader("placed-card");
     layout.system_room = u64::MAX;
