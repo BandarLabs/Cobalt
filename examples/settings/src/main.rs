@@ -14,6 +14,10 @@ use std::process::ExitCode;
 const BLUETOOTH: &str = "bluetooth";
 const WIFI: &str = "wifi";
 const BATTERY: &str = "battery";
+const LIGHT: &str = "light";
+/// The two ends of the brightness control.
+const DIMMER: &str = "light-dimmer";
+const BRIGHTER: &str = "light-brighter";
 const ABOUT: &str = "about";
 const UPDATE: &str = "update";
 const CHECK: &str = "check";
@@ -71,6 +75,10 @@ const READER_ADDRESS_VARIABLE: &str = "KOBO_READER_ADDRESS";
 /// The version this binary was compiled as, which is the version installed:
 /// the binaries and the installer travel together.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The name of the home list's last group: the update and About rows, headed
+/// by the installed version.
+const COBALT_GROUP: &str = "Cobalt";
 /// Where releases are published.
 const RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases/latest";
 /// Only the newest few releases, because a hundred of them is a megabyte and
@@ -140,6 +148,7 @@ enum View {
     Wifi,
     WifiPassword,
     Battery,
+    Light,
     About,
     Update,
     /// The standing update choices: the channel and the two switches.
@@ -208,6 +217,77 @@ impl RadioState {
 
     fn enabled(self) -> bool {
         self == Self::On
+    }
+}
+
+/// What Settings knows of the front light.
+///
+/// `Unsupported` is settled the way an unsupported radio is: the runtime
+/// answered that it cannot drive a light on this reader, which no later
+/// reading will change, so the row says so and the page draws no control.
+/// Any other refusal or failure leaves the level where it was, because the
+/// next request may be answered.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum LightState {
+    /// The runtime has not answered yet.
+    #[default]
+    Unread,
+    /// The level the runtime last answered, 0 to 100.
+    Level(u8),
+    Unsupported,
+}
+
+/// A step the light was asked to take and has not yet shown on a reading.
+///
+/// The runtime answers a set with the level it was asked for, whether or
+/// not the reader took it. Only a reading afterwards says where the light
+/// is, so each step is remembered until that reading comes back, and a
+/// light still at `from` is a step that was not taken.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LightStep {
+    from: u8,
+    to: u8,
+    /// Whether the set has been answered. A reading asked for before the
+    /// tap can come back after it, and says nothing about the step.
+    answered: bool,
+}
+
+/// Said when a reading after a step finds the light where it was.
+const LIGHT_DID_NOT_CHANGE: &str = "The light did not change. Try again.";
+
+/// The light one step brighter, stopping at full.
+///
+/// The reading screen steps in tens, which suits a nudge while a page
+/// waits. Here the owner is choosing the level to read by, and the dim end
+/// is where a ten is too much: in a dark room 10% is already bright, and one
+/// step of ten down from it is off. So the lowest ten go by ones and the
+/// rest by fives. A step lands on a five, so a level the Kobo reader left at
+/// 37% is one tap from 40% and the top is always exactly 100%.
+const fn brighter(level: u8) -> u8 {
+    if level < 10 {
+        level + 1
+    } else if level >= 100 {
+        100
+    } else {
+        (level / 5 + 1) * 5
+    }
+}
+
+/// The light one step dimmer, stopping at off.
+const fn dimmer(level: u8) -> u8 {
+    if level <= 10 {
+        level.saturating_sub(1)
+    } else {
+        (level - 1) / 5 * 5
+    }
+}
+
+/// A level as the row and the control both say it.
+fn light_words(level: u8) -> String {
+    if level == 0 {
+        "Off".to_owned()
+    } else {
+        format!("{level}%")
     }
 }
 
@@ -287,6 +367,7 @@ enum Topic {
     Bluetooth,
     Wifi,
     Battery,
+    Light,
     About,
 }
 
@@ -306,6 +387,9 @@ impl Topic {
             | DeviceRequest::JoinWifi { .. }
             | DeviceRequest::DisconnectWifi => Some(Self::Wifi),
             DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Some(Self::Battery),
+            DeviceRequest::ReadFrontlight | DeviceRequest::SetFrontlight { .. } => {
+                Some(Self::Light)
+            }
             DeviceRequest::ReadIdentity => Some(Self::About),
             _ => None,
         }
@@ -381,6 +465,8 @@ struct Settings {
     selected_ssid: Option<String>,
     password: Keyboard,
     battery: Option<BatteryDetail>,
+    light: LightState,
+    light_step: Option<LightStep>,
     identity: Option<DeviceIdentity>,
     about_page: usize,
     /// This reader's address on the local network, when the runtime said.
@@ -429,6 +515,7 @@ impl Settings {
             View::Wifi => self.wifi_for(context),
             View::WifiPassword => self.wifi_password(),
             View::Battery => self.battery(),
+            View::Light => self.light(),
             View::About => self.about_for(context),
             View::Update => self.update(),
             View::UpdateOptions => self.update_options_for(context),
@@ -529,8 +616,10 @@ impl Settings {
                 Glyph::Battery,
             )
             .measured_as("100% · Not charging"),
+            SettingsRow::new(None, LIGHT, "Light", self.light_summary(), Glyph::Light)
+                .measured_as("Not available in this version of Cobalt"),
             SettingsRow::new(
-                None,
+                Some(COBALT_GROUP),
                 UPDATE,
                 "Software update",
                 self.update_summary(),
@@ -539,11 +628,11 @@ impl Settings {
             .measured_as("Stable · Cobalt and apps update on their own"),
             SettingsRow::new(None, ABOUT, "About", "Model and versions", Glyph::Reader),
         ];
-        // After Battery, once the runtime has said it keeps a zone.
+        // After Battery and Light, once the runtime has said it keeps a zone.
         if self.time_zone != ZoneChoice::Unread {
             let chosen = self.time_zone.city();
             rows.insert(
-                3,
+                4,
                 SettingsRow::new(
                     None,
                     TIME_ZONE,
@@ -749,22 +838,52 @@ impl Settings {
             .and_then(kobo_policy::zones::find);
     }
 
+    /// The home rows of each page.
+    ///
+    /// The list is laid out a page at a time by what fits, and that alone
+    /// once left About by itself overleaf: six rows fitted a six inch panel,
+    /// a seventh did not, and the page turn fell inside the last group. A
+    /// group cut in two by a turn is moved whole to the later page when it
+    /// fits there and leaves something behind, so the two rows about Cobalt
+    /// itself travel together and the first page ends at the end of a group.
     fn home_pages(&self, context: &Context) -> Vec<Vec<usize>> {
         let rows = self.home_rows();
         let measured: Vec<_> = rows
             .iter()
             .map(|row| (row.section, row.title.as_str(), row.measure.as_str()))
             .collect();
-        let around = ScreenBuilder::new("settings")
-            .top_bar("Settings")
-            .section_with_value("Cobalt", VERSION)
-            .build();
-        context.paginate_rows_in_sections_under(
-            &measured,
-            false,
-            kobo_sdk::Position::AtTheFoot,
-            &around,
-        )
+        let around = ScreenBuilder::new("settings").top_bar("Settings").build();
+        let paginate = |measured: &[(Option<&str>, &str, &str)]| {
+            context.paginate_rows_in_sections_under(
+                measured,
+                false,
+                kobo_sdk::Position::AtTheFoot,
+                &around,
+            )
+        };
+        let mut pages = paginate(&measured);
+        for page in 0..pages.len().saturating_sub(1) {
+            let continues = pages[page + 1]
+                .first()
+                .is_some_and(|&first| rows[first].section.is_none());
+            let Some(start) = pages[page]
+                .iter()
+                .rposition(|&index| rows[index].section.is_some())
+            else {
+                continue;
+            };
+            if !continues || start == 0 {
+                continue;
+            }
+            let mut whole = pages[page][start..].to_vec();
+            whole.extend_from_slice(&pages[page + 1]);
+            let group: Vec<_> = whole.iter().map(|&index| measured[index]).collect();
+            if paginate(&group).len() == 1 {
+                pages[page].truncate(start);
+                pages[page + 1] = whole;
+            }
+        }
+        pages
     }
 
     fn home_for(&self, context: &Context) -> Screen {
@@ -774,8 +893,13 @@ impl Settings {
         let mut screen = ScreenBuilder::new("settings").top_bar("Settings");
         let mut remaining = pages[page].as_slice();
         while let Some((&first, rest)) = remaining.split_first() {
-            if let Some(section) = rows[first].section {
-                screen = screen.section(section);
+            match rows[first].section {
+                // The installed version heads the group about Cobalt itself.
+                // It closed the page as a line of its own, under rows it had
+                // nothing to do with; here it labels the two it describes.
+                Some(COBALT_GROUP) => screen = screen.section_with_value(COBALT_GROUP, VERSION),
+                Some(section) => screen = screen.section(section),
+                None => {}
             }
             let count = rest
                 .iter()
@@ -784,7 +908,6 @@ impl Settings {
             screen = screen.rows(remaining[..count].iter().map(|&index| rows[index].as_row()));
             remaining = &remaining[count..];
         }
-        screen = screen.section_with_value("Cobalt", VERSION);
         page_controls(screen, page, pages.len()).build()
     }
 
@@ -1470,6 +1593,134 @@ impl Settings {
         screen.build()
     }
 
+    /// One line for the home row: the level, or why there is none.
+    fn light_summary(&self) -> String {
+        match self.light {
+            LightState::Level(level) => light_words(level),
+            LightState::Unsupported => "Not available in this version of Cobalt".to_owned(),
+            // A reading that was refused is not still on its way.
+            LightState::Unread if self.banner_for(Topic::Light).is_some() => {
+                "Could not be read".to_owned()
+            }
+            LightState::Unread => "Reading".to_owned(),
+        }
+    }
+
+    /// The front light: one control, and how long what it sets will last.
+    ///
+    /// The control is drawn only from a level the runtime has answered. A
+    /// reader whose light the runtime cannot drive gets the sentence the
+    /// Bluetooth page gives an unsupported radio, and a reading that was
+    /// refused gets its banner and the way to read again. Neither gets a
+    /// control that would do nothing.
+    ///
+    /// Brightness is a section of its own so that a second control, should
+    /// the runtime learn to set one, goes under it as another section
+    /// rather than into a page that was laid out for one.
+    fn light(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-light")
+            .top_bar("Light")
+            .owns_back(true);
+        let level = match self.light {
+            LightState::Unsupported => {
+                return screen
+                    .text("This version of Cobalt cannot set the light on this reader.")
+                    .build();
+            }
+            LightState::Level(level) => Some(level),
+            LightState::Unread => None,
+        };
+        let trouble = self.banner_for(Topic::Light);
+        if let Some(trouble) = &trouble {
+            screen = screen.banner(BannerLevel::Error, trouble.clone());
+            // With a control on the page, tapping it again is the way to try
+            // again. With none, the banner carries the only way forward.
+            if level.is_none() {
+                screen = screen.banner_action(RESCAN, "Read again");
+            }
+        }
+        let Some(level) = level else {
+            if trouble.is_some() {
+                return screen.build();
+            }
+            return screen.text("Reading the light.").build();
+        };
+        screen
+            .section("Brightness")
+            .stepper(
+                light_words(level),
+                DIMMER,
+                Glyph::Minus,
+                BRIGHTER,
+                Glyph::Plus,
+            )
+            .stepper_ends(level > 0, level < 100)
+            .stepper_track(level)
+            // The runtime puts the light back as it found it when the
+            // session ends, so a level chosen here is not the reader's for
+            // good, and the page says so before somebody wonders why the
+            // Kobo reader came back brighter.
+            .secondary("Lasts until Cobalt closes. The Kobo reader keeps its own level.")
+            .build()
+    }
+
+    /// Asks for the light one step up or down from where it stands.
+    ///
+    /// Nothing is drawn on the tap. The page shows the level the runtime
+    /// answers, so a step the reader did not take is never shown as taken.
+    ///
+    /// A second tap can arrive before the first is answered, and stepping
+    /// both from the level on the panel would ask for the same level twice.
+    /// The second steps on from where the first was headed.
+    fn step_light(&mut self, context: &mut Context, up: bool) {
+        let LightState::Level(level) = self.light else {
+            return;
+        };
+        let standing = self.light_step.map_or(level, |step| step.to);
+        let to = if up {
+            brighter(standing)
+        } else {
+            dimmer(standing)
+        };
+        if to == standing {
+            return;
+        }
+        self.light_step = Some(LightStep {
+            from: self.light_step.map_or(level, |step| step.from),
+            to,
+            answered: false,
+        });
+        context.device().set_frontlight(to);
+    }
+
+    /// Takes a level the runtime answered, and checks a step against it.
+    ///
+    /// The answer to a set is followed by a reading, because the reading is
+    /// the one that comes from the light itself. When that reading finds the
+    /// light where it was before the tap, the step was not taken, and the
+    /// page says so over a control that shows the level the light is at.
+    fn took_light_level(&mut self, context: &mut Context, request: &DeviceRequest, level: u8) {
+        self.light = LightState::Level(level.min(100));
+        self.settled(Topic::Light);
+        match request {
+            DeviceRequest::SetFrontlight { .. } => {
+                if let Some(step) = &mut self.light_step {
+                    step.answered = true;
+                }
+                context.device().read_frontlight();
+            }
+            DeviceRequest::ReadFrontlight => {
+                if let Some(step) = self.light_step.filter(|step| step.answered) {
+                    self.light_step = None;
+                    if level == step.from {
+                        self.fail(Topic::Light, LIGHT_DID_NOT_CHANGE);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     #[cfg(test)]
     fn about(&self) -> Screen {
         self.about_for(&Context::default())
@@ -1598,6 +1849,7 @@ impl Settings {
         context.device().read_auto_update();
         context.device().read_update_channel();
         context.device().read_time_zone();
+        context.device().read_frontlight();
     }
 
     /// Asks GitHub what the newest published release is. Nothing is
@@ -1823,6 +2075,9 @@ impl Settings {
         match topic {
             Topic::Bluetooth => self.bluetooth_state = RadioState::Unsupported,
             Topic::Wifi => self.wifi_state = RadioState::Unsupported,
+            // Not a radio, but the same settled answer: a light the runtime
+            // cannot drive on this reader will not be driven later either.
+            Topic::Light => self.light = LightState::Unsupported,
             Topic::Battery | Topic::About => {}
         }
     }
@@ -2068,6 +2323,9 @@ impl Settings {
         }
         match request {
             DeviceRequest::SetBluetooth { .. } => self.bluetooth_switching = None,
+            DeviceRequest::SetFrontlight { .. } | DeviceRequest::ReadFrontlight => {
+                self.light_step = None;
+            }
             DeviceRequest::PairBluetooth { .. }
             | DeviceRequest::ConnectBluetooth { .. }
             | DeviceRequest::DisconnectBluetooth { .. } => self.bluetooth_busy = None,
@@ -2094,9 +2352,15 @@ impl KoboApp for Settings {
     /// The battery screen reads the gauge again whenever Settings comes
     /// back to the front or the reader wakes, which is what its refresh mark
     /// used to be pressed for.
+    ///
+    /// The light page does the same. Books has a light control of its own
+    /// and the Kobo reader is still running underneath, so the level may
+    /// have moved while Settings was away.
     fn on_foreground(&mut self, context: &mut Context) {
-        if self.view == View::Battery {
-            context.device().read_battery_detail();
+        match self.view {
+            View::Battery => context.device().read_battery_detail(),
+            View::Light => context.device().read_frontlight(),
+            _ => {}
         }
     }
 
@@ -2153,6 +2417,14 @@ impl KoboApp for Settings {
             self.view = View::Battery;
             context.device().read_battery_detail();
             self.show(context);
+        } else if action == action_id(LIGHT) {
+            self.view = View::Light;
+            context.device().read_frontlight();
+            self.show(context);
+        } else if action == action_id(DIMMER) {
+            self.step_light(context, false);
+        } else if action == action_id(BRIGHTER) {
+            self.step_light(context, true);
         } else if action == action_id(ABOUT) {
             self.view = View::About;
             self.about_page = 0;
@@ -2203,6 +2475,7 @@ impl KoboApp for Settings {
                 | View::Home
                 | View::WifiPassword
                 | View::Battery
+                | View::Light
                 | View::About
                 | View::Update
                 | View::UpdateOptions
@@ -2223,6 +2496,7 @@ impl KoboApp for Settings {
                     self.delay_refresh(context, Pending::WifiRefresh);
                 }
                 View::Battery => context.device().read_battery_detail(),
+                View::Light => context.device().read_frontlight(),
                 View::About => context.device().read_identity(),
                 View::Update => {
                     context.device().read_auto_update();
@@ -2325,6 +2599,9 @@ impl KoboApp for Settings {
                 self.battery = Some(detail);
                 self.settled(Topic::Battery);
             }
+            DeviceResult::Frontlight { percent } => {
+                self.took_light_level(context, &request, percent);
+            }
             DeviceResult::AutoUpdate { cobalt, apps } => {
                 self.auto_update = Some((cobalt, apps));
                 self.choice_trouble = None;
@@ -2366,7 +2643,6 @@ impl KoboApp for Settings {
             },
             DeviceResult::Granted { .. }
             | DeviceResult::Battery { .. }
-            | DeviceResult::Frontlight { .. }
             | DeviceResult::Cover { .. }
             | DeviceResult::Audio { .. }
             | DeviceResult::Dictionary { .. }
@@ -2813,13 +3089,14 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        RadioState, Settings, Topic, View, ZoneChoice, AUTO_APPS, AUTO_COBALT, CANCEL_CHANNEL,
-        CHANNEL_BETA, CHANNEL_STABLE, CONFIRM_CHANNEL, MORE, PREVIOUS, RESCAN, TOGGLE, VERSION,
+        LightState, RadioState, Settings, Topic, View, ZoneChoice, AUTO_APPS, AUTO_COBALT,
+        CANCEL_CHANNEL, CHANNEL_BETA, CHANNEL_STABLE, CONFIRM_CHANNEL, MORE, PREVIOUS, RESCAN,
+        TOGGLE, VERSION,
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
-        DenyReason, DeviceIdentity, DeviceRequest, DeviceResult, Emphasis, Glyph, Node,
-        UpdateChannel, WifiNetwork, CLARA_BW_METRICS,
+        ControlState, DenyReason, DeviceIdentity, DeviceRequest, DeviceResult, Emphasis, Glyph,
+        Node, UpdateChannel, WifiNetwork, CLARA_BW_METRICS,
     };
 
     fn bluetooth_device(index: usize) -> BluetoothDevice {
@@ -3667,7 +3944,17 @@ mod tests {
             super::Topic::of(&DeviceRequest::ScanBluetooth),
             Some(super::Topic::Bluetooth)
         );
-        assert_eq!(super::Topic::of(&DeviceRequest::ReadFrontlight), None);
+        // The light has a page now. Before it did, a refused reading of it
+        // had nowhere honest to be said and was dropped.
+        assert_eq!(
+            super::Topic::of(&DeviceRequest::ReadFrontlight),
+            Some(super::Topic::Light)
+        );
+        assert_eq!(
+            super::Topic::of(&DeviceRequest::SetFrontlight { percent: 40 }),
+            Some(super::Topic::Light)
+        );
+        assert_eq!(super::Topic::of(&DeviceRequest::ReadCover), None);
     }
 
     #[test]
@@ -5005,6 +5292,55 @@ mod tests {
     }
 
     #[test]
+    fn a_page_turn_never_leaves_one_home_row_alone_when_its_group_fits_overleaf() {
+        // Six rows fitted a six inch panel and the seventh, Light, did not,
+        // so About stood by itself on a second page under no heading at all.
+        for metrics in every_size_and_pose() {
+            let context = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics).context();
+            let settings = Settings {
+                time_zone: super::ZoneChoice::Unset,
+                ..Settings::default()
+            };
+            let rows = settings.home_rows();
+            let pages = settings.home_pages(&context);
+            assert_eq!(
+                pages.iter().flatten().copied().collect::<Vec<_>>(),
+                (0..rows.len()).collect::<Vec<_>>(),
+                "{metrics:?}"
+            );
+            for (page, indices) in pages.iter().enumerate().skip(1) {
+                let continues = rows[indices[0]].section.is_none();
+                let start = pages[page - 1]
+                    .iter()
+                    .rposition(|&index| rows[index].section.is_some())
+                    .expect("every page before the last begins or holds a group");
+                let group = pages[page - 1].len() - start + indices.len();
+                assert!(
+                    !continues || start == 0 || group > indices.len().max(pages[page - 1].len()),
+                    "{metrics:?}: page {page} begins inside a group that would have fitted on it"
+                );
+            }
+        }
+        // On a Clara at the default size: the connections and the device on
+        // the first page, Cobalt's own two rows on the second.
+        let metrics = kobo_sdk::DisplayMetrics::default();
+        let context = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics).context();
+        let settings = Settings {
+            time_zone: super::ZoneChoice::Unset,
+            ..Settings::default()
+        };
+        let rows = settings.home_rows();
+        let pages = settings.home_pages(&context);
+        let titles = |page: &Vec<usize>| {
+            page.iter()
+                .map(|&index| rows[index].title.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(pages.len(), 2);
+        assert_eq!(titles(&pages[1]), ["Software update", "About"]);
+    }
+
+    #[test]
     fn wifi_signal_is_described_in_words() {
         use super::signal_words;
         assert_eq!(signal_words(-50), "Strong signal");
@@ -5023,6 +5359,492 @@ mod tests {
         let text = drawn_words(&settings.wifi());
         assert!(!text.contains("dBm"), "{text}");
         assert!(text.contains("Strong signal"), "{text}");
+    }
+
+    /// The brightness control as a screen declares it: its reading, whether
+    /// the minus and the plus still answer, and how far the track is filled.
+    fn brightness(screen: &kobo_sdk::Screen) -> Option<(String, bool, bool, Option<u8>)> {
+        screen.nodes.iter().find_map(|node| match node {
+            Node::Stepper {
+                label,
+                less_state,
+                more_state,
+                fill,
+                ..
+            } => Some((
+                label.clone(),
+                *less_state == ControlState::Enabled,
+                *more_state == ControlState::Enabled,
+                *fill,
+            )),
+            _ => None,
+        })
+    }
+
+    /// The levels the light was asked for since the commands were last taken.
+    fn levels_asked(context: &mut kobo_sdk::Context) -> Vec<u8> {
+        context
+            .take_commands()
+            .into_iter()
+            .filter_map(|command| match command {
+                kobo_sdk::Command::Device(DeviceRequest::SetFrontlight { percent }) => {
+                    Some(percent)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Settings on its light page with the light read at `level`.
+    fn light_at(level: u8) -> Settings {
+        Settings {
+            view: View::Light,
+            light: LightState::Level(level),
+            ..Settings::default()
+        }
+    }
+
+    fn summary_of_the_light_row(settings: &Settings) -> String {
+        settings
+            .home_rows()
+            .into_iter()
+            .find(|row| row.action == super::LIGHT)
+            .expect("the light row")
+            .summary
+    }
+
+    #[test]
+    fn the_light_goes_by_ones_at_the_dim_end_and_by_fives_above_it() {
+        use super::{brighter, dimmer};
+        let mut up = vec![0];
+        while *up.last().unwrap() < 100 {
+            up.push(brighter(*up.last().unwrap()));
+        }
+        assert_eq!(
+            up,
+            [
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70,
+                75, 80, 85, 90, 95, 100
+            ]
+        );
+        // The way down passes through the same levels, so a step too far is
+        // undone by one tap on the other end.
+        let mut down = vec![100];
+        while *down.last().unwrap() > 0 {
+            down.push(dimmer(*down.last().unwrap()));
+        }
+        down.reverse();
+        assert_eq!(down, up);
+        assert_eq!(brighter(100), 100);
+        assert_eq!(dimmer(0), 0);
+        // A level the Kobo reader left between two fives joins them on the
+        // first tap either way.
+        assert_eq!((dimmer(37), brighter(37)), (35, 40));
+        assert_eq!((dimmer(11), brighter(11)), (10, 15));
+        assert_eq!((dimmer(99), brighter(99)), (95, 100));
+    }
+
+    #[test]
+    fn the_light_row_says_the_level_and_says_off_at_nothing() {
+        let mut settings = Settings::default();
+        assert_eq!(summary_of_the_light_row(&settings), "Reading");
+        settings.light = LightState::Level(40);
+        assert_eq!(summary_of_the_light_row(&settings), "40%");
+        settings.light = LightState::Level(0);
+        assert_eq!(summary_of_the_light_row(&settings), "Off");
+        // Next to Battery, in the same group.
+        let titles: Vec<_> = settings
+            .home_rows()
+            .into_iter()
+            .map(|row| (row.section, row.title))
+            .collect();
+        let battery = titles
+            .iter()
+            .position(|(_, title)| title == "Battery")
+            .expect("the battery row");
+        assert_eq!(titles[battery].0, Some("Device"));
+        assert_eq!(titles[battery + 1], (None, "Light".to_owned()));
+    }
+
+    #[test]
+    fn the_light_is_read_when_settings_opens_and_when_its_page_does() {
+        use kobo_sdk::KoboApp;
+        let reads = |context: &mut kobo_sdk::Context| {
+            context
+                .take_commands()
+                .iter()
+                .filter(|command| {
+                    matches!(
+                        command,
+                        kobo_sdk::Command::Device(DeviceRequest::ReadFrontlight)
+                    )
+                })
+                .count()
+        };
+        let mut settings = Settings::default();
+        let mut context = kobo_sdk::Context::default();
+        settings.on_start(&mut context);
+        assert_eq!(reads(&mut context), 1, "the home row needs a level to say");
+        settings.on_action(&mut context, action_id(super::LIGHT));
+        assert_eq!(settings.view, View::Light);
+        assert_eq!(reads(&mut context), 1);
+        // Books has a light control too, so the level may have moved while
+        // Settings was behind it.
+        settings.on_foreground(&mut context);
+        assert_eq!(reads(&mut context), 1);
+        settings.on_action(&mut context, kobo_sdk::ActionId::BACK);
+        assert_eq!(settings.view, View::Home);
+        settings.on_foreground(&mut context);
+        assert_eq!(reads(&mut context), 0);
+    }
+
+    #[test]
+    fn a_tap_asks_for_the_next_level_and_the_page_shows_what_the_runtime_answers() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_at(20);
+        let mut context = kobo_sdk::Context::default();
+        assert_eq!(
+            brightness(&settings.light()),
+            Some(("20%".to_owned(), true, true, Some(20)))
+        );
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        assert_eq!(levels_asked(&mut context), [25]);
+        // Asked for, not answered: the page still says where the light is.
+        assert_eq!(settings.light, LightState::Level(20));
+
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetFrontlight { percent: 25 },
+            DeviceResult::Frontlight { percent: 25 },
+        );
+        assert_eq!(
+            brightness(&settings.light()),
+            Some(("25%".to_owned(), true, true, Some(25)))
+        );
+        // The answer to a set is what was asked for. The reading after it is
+        // what the light is at.
+        assert!(context.take_commands().iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Device(DeviceRequest::ReadFrontlight)
+        )));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadFrontlight,
+            DeviceResult::Frontlight { percent: 25 },
+        );
+        assert_eq!(settings.light, LightState::Level(25));
+        assert!(settings.banner_for(Topic::Light).is_none());
+        assert_eq!(summary_of_the_light_row(&settings), "25%");
+
+        settings.on_action(&mut context, action_id(super::DIMMER));
+        assert_eq!(levels_asked(&mut context), [20]);
+    }
+
+    /// The runtime answers a set with the level asked for even when the
+    /// reader did not take it, so the answer alone would leave the page
+    /// showing a brightness the panel is not at.
+    #[test]
+    fn a_step_the_reader_did_not_take_is_said_over_the_level_the_light_is_at() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_at(40);
+        let mut context = kobo_sdk::Context::default();
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetFrontlight { percent: 45 },
+            DeviceResult::Frontlight { percent: 45 },
+        );
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadFrontlight,
+            DeviceResult::Frontlight { percent: 40 },
+        );
+        let screen = settings.light();
+        assert_eq!(
+            brightness(&screen),
+            Some(("40%".to_owned(), true, true, Some(40)))
+        );
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Banner { level: BannerLevel::Error, text, action: None, .. }
+                if text == "The light did not change. Try again."
+        )));
+        assert!(settings.banner_for(Topic::Battery).is_none());
+
+        // Trying again is a tap on the control, and a step that is taken
+        // clears the words.
+        let _ = context.take_commands();
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        assert_eq!(levels_asked(&mut context), [45]);
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetFrontlight { percent: 45 },
+            DeviceResult::Frontlight { percent: 45 },
+        );
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadFrontlight,
+            DeviceResult::Frontlight { percent: 45 },
+        );
+        assert!(settings.banner_for(Topic::Light).is_none());
+        assert_eq!(settings.light, LightState::Level(45));
+    }
+
+    #[test]
+    fn a_reading_asked_for_before_the_tap_is_not_taken_as_the_step_failing() {
+        use kobo_sdk::KoboApp;
+        let mut settings = Settings {
+            light: LightState::Level(40),
+            ..Settings::default()
+        };
+        let mut context = kobo_sdk::Context::default();
+        // Opening the page reads the light, and the owner taps before that
+        // reading is back. It says 40% because it was taken before the step.
+        settings.on_action(&mut context, action_id(super::LIGHT));
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadFrontlight,
+            DeviceResult::Frontlight { percent: 40 },
+        );
+        assert!(settings.banner_for(Topic::Light).is_none());
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetFrontlight { percent: 45 },
+            DeviceResult::Frontlight { percent: 45 },
+        );
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadFrontlight,
+            DeviceResult::Frontlight { percent: 45 },
+        );
+        assert!(settings.banner_for(Topic::Light).is_none());
+        assert_eq!(settings.light, LightState::Level(45));
+    }
+
+    #[test]
+    fn a_second_tap_before_the_first_is_answered_steps_on_from_the_first() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_at(8);
+        let mut context = kobo_sdk::Context::default();
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        assert_eq!(levels_asked(&mut context), [9, 10, 15]);
+    }
+
+    #[test]
+    fn each_end_of_the_range_stops_answering_at_its_stop() {
+        use kobo_sdk::KoboApp;
+        let mut context = kobo_sdk::Context::default();
+
+        let mut off = light_at(0);
+        assert_eq!(
+            brightness(&off.light()),
+            Some(("Off".to_owned(), false, true, Some(0)))
+        );
+        off.on_action(&mut context, action_id(super::DIMMER));
+        assert!(levels_asked(&mut context).is_empty());
+        off.on_action(&mut context, action_id(super::BRIGHTER));
+        assert_eq!(levels_asked(&mut context), [1]);
+
+        let mut full = light_at(100);
+        assert_eq!(
+            brightness(&full.light()),
+            Some(("100%".to_owned(), true, false, Some(100)))
+        );
+        full.on_action(&mut context, action_id(super::BRIGHTER));
+        assert!(levels_asked(&mut context).is_empty());
+        full.on_action(&mut context, action_id(super::DIMMER));
+        assert_eq!(levels_asked(&mut context), [95]);
+    }
+
+    #[test]
+    fn a_reader_whose_light_cobalt_cannot_drive_gets_a_sentence_and_no_control() {
+        use kobo_sdk::KoboApp;
+        let mut settings = Settings::default();
+        let mut context = kobo_sdk::Context::default();
+        settings.on_action(&mut context, action_id(super::LIGHT));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadFrontlight,
+            DeviceResult::Denied(DenyReason::Unsupported),
+        );
+        assert_eq!(settings.light, LightState::Unsupported);
+        let screen = settings.light();
+        assert_eq!(brightness(&screen), None);
+        assert_eq!(
+            text_of(&screen),
+            "This version of Cobalt cannot set the light on this reader."
+        );
+        assert_eq!(
+            summary_of_the_light_row(&settings),
+            "Not available in this version of Cobalt"
+        );
+        // Nothing on the page asks for a light that is not there.
+        let _ = context.take_commands();
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        assert!(context.take_commands().is_empty());
+    }
+
+    #[test]
+    fn a_refused_light_reading_is_said_on_its_page_with_the_way_to_read_again() {
+        use kobo_sdk::KoboApp;
+        let mut settings = Settings::default();
+        let mut context = kobo_sdk::Context::default();
+        settings.on_action(&mut context, action_id(super::LIGHT));
+        assert_eq!(text_of(&settings.light()), "Reading the light.");
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadFrontlight,
+            DeviceResult::Denied(DenyReason::NotDeclared),
+        );
+        // Not settled the way an unsupported light is: this one may be read
+        // yet, so the page offers to.
+        assert_eq!(settings.light, LightState::Unread);
+        let screen = settings.light();
+        assert_eq!(brightness(&screen), None);
+        assert_eq!(text_of(&screen), "", "nothing is being read any more");
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Banner { level: BannerLevel::Error, text, action: Some(action), .. }
+                if text == "Cobalt did not allow Settings to do that."
+                    && action.action == action_id(RESCAN)
+                    && action.label == "Read again"
+        )));
+        assert_eq!(summary_of_the_light_row(&settings), "Could not be read");
+        assert!(!drawn_words(&settings.battery()).contains("did not allow"));
+
+        let _ = context.take_commands();
+        settings.on_action(&mut context, action_id(RESCAN));
+        assert!(context.take_commands().iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Device(DeviceRequest::ReadFrontlight)
+        )));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadFrontlight,
+            DeviceResult::Frontlight { percent: 20 },
+        );
+        let screen = settings.light();
+        assert_eq!(
+            brightness(&screen),
+            Some(("20%".to_owned(), true, true, Some(20)))
+        );
+        assert!(!screen
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::Banner { .. })));
+    }
+
+    #[test]
+    fn a_light_the_reader_failed_to_set_keeps_its_control_under_the_reason() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_at(40);
+        let mut context = kobo_sdk::Context::default();
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetFrontlight { percent: 45 },
+            DeviceResult::Failed(kobo_sdk::DeviceError::Backend),
+        );
+        let screen = settings.light();
+        assert_eq!(
+            brightness(&screen),
+            Some(("40%".to_owned(), true, true, Some(40)))
+        );
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Banner { level: BannerLevel::Error, text, action: None, .. }
+                if text == "The reader could not finish that. Try again."
+        )));
+        // The failed step is forgotten, so the next tap starts from the
+        // level on the panel and not from the one that was never reached.
+        let _ = context.take_commands();
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        assert_eq!(levels_asked(&mut context), [45]);
+    }
+
+    /// The Clara in both poses at every text size, with the narrowest and
+    /// coarsest panel Cobalt has a profile for, the Nia, and the widest, the
+    /// Elipsa.
+    fn every_panel_the_light_page_is_drawn_on() -> Vec<kobo_sdk::DisplayMetrics> {
+        let mut scale = CLARA_BW_METRICS.text_scale;
+        while let Some(smaller) = scale.smaller() {
+            scale = smaller;
+        }
+        let mut scales = vec![scale];
+        while let Some(larger) = scale.larger() {
+            scale = larger;
+            scales.push(scale);
+        }
+        scales
+            .into_iter()
+            .flat_map(|text_scale| {
+                [
+                    (1072, 1448, 300),
+                    (1448, 1072, 300),
+                    (758, 1024, 212),
+                    (1404, 1872, 227),
+                ]
+                .map(
+                    |(width, height, pixels_per_inch)| kobo_sdk::DisplayMetrics {
+                        width,
+                        height,
+                        pixels_per_inch,
+                        text_scale,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_state_of_the_light_page_fits_every_panel_with_both_ends_in_reach() {
+        let refused = |light| Settings {
+            light,
+            trouble: Some((
+                Topic::Light,
+                "Something else is using that right now. Try again in a moment.".to_owned(),
+            )),
+            ..Settings::default()
+        };
+        for metrics in every_panel_the_light_page_is_drawn_on() {
+            let _runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+            for (what, settings) in [
+                ("reading", Settings::default()),
+                ("off", light_at(0)),
+                ("dim", light_at(7)),
+                ("full", light_at(100)),
+                ("refused before a level", refused(LightState::Unread)),
+                ("refused over a level", refused(LightState::Level(40))),
+                (
+                    "unsupported",
+                    Settings {
+                        light: LightState::Unsupported,
+                        ..Settings::default()
+                    },
+                ),
+            ] {
+                let screen = settings.light();
+                fits(&screen, metrics, what);
+                let Some((_, less, more, _)) = brightness(&screen) else {
+                    continue;
+                };
+                let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+                for (name, answers) in [(super::DIMMER, less), (super::BRIGHTER, more)] {
+                    let Some(rect) = layout.rect_of_action(action_id(name)) else {
+                        assert!(!answers, "{what} on {metrics:?}: {name} is not drawn");
+                        continue;
+                    };
+                    assert!(
+                        rect.height >= metrics.touch_target_minimum()
+                            && rect.width >= metrics.touch_target_minimum(),
+                        "{what} on {metrics:?}: {name} is {rect:?}"
+                    );
+                }
+            }
+        }
     }
 }
 

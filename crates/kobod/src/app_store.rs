@@ -178,6 +178,7 @@ const SYSTEM_APPS: &[BuiltinApp] = &[
         capabilities: &[
             "network",
             "battery-read",
+            "frontlight-control",
             "bluetooth-control",
             "wifi-control",
         ],
