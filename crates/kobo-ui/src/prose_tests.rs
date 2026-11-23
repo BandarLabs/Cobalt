@@ -429,7 +429,7 @@ fn content_starts_below_the_band_rather_than_under_the_title() {
             .map(|node| node.rect)
     };
     let bar = find(&banded, LayoutKind::TopBar).expect("the bar was laid out");
-    let rule = find(&banded, LayoutKind::Divider).expect("the rule under the bar");
+    let rule = find(&banded, LayoutKind::BarRule).expect("the rule under the bar");
     let text = find(&banded, LayoutKind::Text).expect("the paragraph was laid out");
     assert!(
         text.y >= bar.y + bar.height,

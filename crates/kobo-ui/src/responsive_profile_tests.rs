@@ -4,12 +4,12 @@ fn panels() -> Vec<(String, DisplayMetrics)> {
     kobo_profile::SUPPORTED_PROFILES
         .iter()
         .flat_map(|profile| {
-            let portrait = DisplayMetrics {
-                width: i32::try_from(profile.width).expect("profile width fits layout"),
-                height: i32::try_from(profile.height).expect("profile height fits layout"),
-                pixels_per_inch: i32::from(profile.pixels_per_inch),
-                text_scale: TextScale::Default,
-            };
+            let portrait = DisplayMetrics::for_panel(
+                i32::try_from(profile.width).expect("profile width fits layout"),
+                i32::try_from(profile.height).expect("profile height fits layout"),
+                i32::from(profile.pixels_per_inch),
+                TextScale::Default,
+            );
             let landscape = DisplayMetrics {
                 width: portrait.height,
                 height: portrait.width,
@@ -719,5 +719,62 @@ fn rich_document_overflow_is_reported_without_sacrificing_controls() {
             "{name}: fully visible rich text reported overflow: {:?}",
             fitting.issues
         );
+    }
+}
+
+#[test]
+fn a_six_inch_reader_is_drawn_life_size_and_a_larger_one_a_little_over() {
+    let scale = |profile: &kobo_profile::DeviceProfile| {
+        interface_scale_percent(
+            i32::try_from(profile.width).expect("profile width"),
+            i32::try_from(profile.height).expect("profile height"),
+            i32::from(profile.pixels_per_inch),
+        )
+    };
+    // Every six inch panel, at 212 and at 300 pixels to the inch.
+    for profile in [
+        &kobo_profile::CLARA_BW_391,
+        &kobo_profile::CLARA_COLOUR_393,
+        &kobo_profile::CLARA_HD_376,
+        &kobo_profile::NIA_382,
+    ] {
+        assert_eq!(scale(profile), 100, "{}", profile.id);
+    }
+    assert_eq!(scale(&kobo_profile::LIBRA_COLOUR_390), 106);
+    assert_eq!(scale(&kobo_profile::LIBRA_2_388), 106);
+    assert_eq!(scale(&kobo_profile::ELIPSA_2E_389), 125);
+    // An eight inch panel, 1440 by 1920 at 300, which no measured profile has.
+    assert_eq!(interface_scale_percent(1440, 1920, 300), 111);
+}
+
+#[test]
+fn the_interface_scale_is_the_same_whichever_way_up_and_never_under_life_size() {
+    assert_eq!(
+        interface_scale_percent(1404, 1872, 227),
+        interface_scale_percent(1872, 1404, 227)
+    );
+    // A five inch panel is not drawn smaller: a target under a finger's
+    // width is wrong at any distance.
+    assert_eq!(interface_scale_percent(600, 800, 200), 100);
+    // A panel larger than anything Kobo makes stops growing.
+    assert_eq!(interface_scale_percent(2200, 2933, 227), 130);
+    // No density at all is a caller's mistake, not a division by zero.
+    assert_eq!(interface_scale_percent(1072, 1448, 0), 100);
+}
+
+#[test]
+fn a_larger_panel_keeps_the_proportions_of_a_six_inch_one() {
+    // The bar is the same share of the panel's height on an Elipsa as it is
+    // on a Clara, to within a tenth: at life size it was a little over half.
+    let clara = DisplayMetrics::for_panel(1072, 1448, 300, TextScale::Default);
+    let elipsa = DisplayMetrics::for_panel(1404, 1872, 227, TextScale::Default);
+    assert_eq!(clara.pixels_per_inch, 300);
+    assert_eq!(elipsa.pixels_per_inch, 284);
+    let share = |metrics: &DisplayMetrics| metrics.top_bar_height() * 10_000 / metrics.height;
+    assert!(share(&elipsa) * 10 >= share(&clara) * 7);
+    assert!(share(&elipsa) <= share(&clara));
+    // And a finger still fits everything it has to press.
+    for metrics in [clara, elipsa] {
+        assert!(metrics.touch_target_minimum() * 254 >= 70 * metrics.pixels_per_inch - 254);
     }
 }

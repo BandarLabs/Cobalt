@@ -1054,8 +1054,9 @@ impl ScreenBuilder {
     /// Gives this screen a colour of its own, on readers that have one.
     ///
     /// One of a closed set, never a value: see [`Accent`]. On a colour panel
-    /// the top bar takes the accent's tint and the primary control and every
-    /// selected state its strong shade; on a greyscale panel nothing changes.
+    /// the line under the top bar, the primary control and every selected
+    /// state take the accent's strong shade; on a greyscale panel nothing
+    /// changes.
     /// Most applications set it once for every screen with
     /// [`crate::KoboApp::accent`] rather than here, and use this only for a
     /// screen that should differ from the rest.
@@ -1065,8 +1066,8 @@ impl ScreenBuilder {
         self
     }
 
-    /// Keeps this screen's bar on paper and its controls in the platform's
-    /// cobalt even though the application has an accent.
+    /// Keeps the grey rule under this screen's bar and its controls in the
+    /// platform's cobalt even though the application has an accent.
     ///
     /// For a page that is somebody else's work rather than the application's:
     /// a reader's page, a photograph, a letter. Without this a screen that

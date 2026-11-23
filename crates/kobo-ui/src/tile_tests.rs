@@ -54,7 +54,7 @@ fn tile_rows_sit_no_further_apart_than_the_grid_sits_below_the_bar() {
         let rule = layout
             .nodes
             .iter()
-            .find(|node| node.kind == LayoutKind::Divider)
+            .find(|node| node.kind == LayoutKind::BarRule)
             .map(|node| node.rect.y + node.rect.height)
             .expect("a rule under the bar");
         let above = tops[0].0 - rule;

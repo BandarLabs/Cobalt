@@ -374,12 +374,12 @@ mod tests {
     #[test]
     fn the_keys_under_a_terminal_stay_on_the_panel() {
         for profile in kobo_profile::SUPPORTED_PROFILES {
-            let portrait = kobo_ui::DisplayMetrics {
-                width: i32::try_from(profile.width).expect("profile width fits layout"),
-                height: i32::try_from(profile.height).expect("profile height fits layout"),
-                pixels_per_inch: i32::from(profile.pixels_per_inch),
-                text_scale: kobo_ui::TextScale::Default,
-            };
+            let portrait = kobo_ui::DisplayMetrics::for_panel(
+                i32::try_from(profile.width).expect("profile width fits layout"),
+                i32::try_from(profile.height).expect("profile height fits layout"),
+                i32::from(profile.pixels_per_inch),
+                kobo_ui::TextScale::Default,
+            );
             for (orientation, metrics) in [
                 ("portrait", portrait),
                 (
@@ -497,12 +497,12 @@ mod tests {
         let rows = paperterm_rows();
 
         for profile in kobo_profile::SUPPORTED_PROFILES {
-            let portrait = DisplayMetrics {
-                width: i32::try_from(profile.width).expect("profile width fits layout"),
-                height: i32::try_from(profile.height).expect("profile height fits layout"),
-                pixels_per_inch: i32::from(profile.pixels_per_inch),
-                text_scale: TextScale::Default,
-            };
+            let portrait = DisplayMetrics::for_panel(
+                i32::try_from(profile.width).expect("profile width fits layout"),
+                i32::try_from(profile.height).expect("profile height fits layout"),
+                i32::from(profile.pixels_per_inch),
+                TextScale::Default,
+            );
             for (orientation, metrics) in [
                 ("portrait", portrait),
                 (
@@ -735,12 +735,12 @@ mod tests {
     #[test]
     fn rich_claude_terminal_keeps_its_grid_with_optional_controls() {
         for profile in kobo_profile::SUPPORTED_PROFILES {
-            let portrait = DisplayMetrics {
-                width: i32::try_from(profile.width).expect("profile width fits layout"),
-                height: i32::try_from(profile.height).expect("profile height fits layout"),
-                pixels_per_inch: i32::from(profile.pixels_per_inch),
-                text_scale: TextScale::Default,
-            };
+            let portrait = DisplayMetrics::for_panel(
+                i32::try_from(profile.width).expect("profile width fits layout"),
+                i32::try_from(profile.height).expect("profile height fits layout"),
+                i32::from(profile.pixels_per_inch),
+                TextScale::Default,
+            );
             assert_claude_terminal(&format!("{} portrait", profile.id), portrait);
             assert_claude_terminal(
                 &format!("{} landscape", profile.id),
@@ -825,12 +825,12 @@ mod tests {
     #[test]
     fn terminal_keyboard_density_is_profile_and_orientation_driven() {
         for profile in kobo_profile::SUPPORTED_PROFILES {
-            let portrait = DisplayMetrics {
-                width: i32::try_from(profile.width).expect("profile width fits layout"),
-                height: i32::try_from(profile.height).expect("profile height fits layout"),
-                pixels_per_inch: i32::from(profile.pixels_per_inch),
-                text_scale: TextScale::Default,
-            };
+            let portrait = DisplayMetrics::for_panel(
+                i32::try_from(profile.width).expect("profile width fits layout"),
+                i32::try_from(profile.height).expect("profile height fits layout"),
+                i32::from(profile.pixels_per_inch),
+                TextScale::Default,
+            );
             assert_dense_terminal_keyboard(&format!("{} portrait", profile.id), portrait, false);
             assert_dense_terminal_keyboard(
                 &format!("{} landscape", profile.id),

@@ -313,14 +313,34 @@ impl Palette {
         }
     }
 
-    /// The top bar's field. Paper unless the screen named an accent: the
-    /// platform's own screens keep a quiet bar, and only an application with a
-    /// colour of its own wears it across the top.
+    /// The top bar's field: paper, on every panel.
+    ///
+    /// It wore the accent's tint for a while, a band of the application's
+    /// colour across the top of every screen. A reflective colour panel
+    /// renders a tint as a dull wash, and a wash ten millimetres tall under a
+    /// white status band was the heaviest thing on the screen and said the
+    /// least. The stock reader on the same panel keeps its bars on paper and
+    /// spends its one colour on the thing that is current; this does the
+    /// same, and the accent moved to the line under the bar
+    /// ([`Self::bar_rule`]).
     #[must_use]
     pub const fn bar(self) -> Paint {
+        Paint::Grey(tone::PAPER)
+    }
+
+    /// The line that closes the top bar, when it is drawn in colour.
+    ///
+    /// The accent's strong shade on a colour panel, for a screen that named
+    /// one, and `None` everywhere else, which draws the grey rule every
+    /// screen has always had. A line of a strong shade keeps its colour on
+    /// the panel where a tint loses it, and it carries the application's
+    /// colour the way a newspaper carries a section's: a rule under the
+    /// running head, not a banner.
+    #[must_use]
+    pub const fn bar_rule(self) -> Option<Paint> {
         match self.accent {
-            Some(accent) if self.colour() => Paint::Colour(accent.shades().tint),
-            _ => Paint::Grey(tone::PAPER),
+            Some(accent) if self.colour() => Some(Paint::Colour(accent.shades().strong)),
+            _ => None,
         }
     }
 
