@@ -69,7 +69,9 @@ pub enum Cause {
     OutOfCredit,
     /// The reader has no network at all.
     Offline,
-    /// A server on the home network did not answer.
+    /// A server on the owner's own network did not answer: one at a home
+    /// address, or one named by a single word, which a home router and a
+    /// tailnet both hand out.
     AwayFromHome,
     /// A server on the internet did not answer, or its certificate was not
     /// one the reader trusts.
@@ -292,11 +294,24 @@ impl<'a> Service<'a> {
     /// home routers hand out. The radio cannot say which network the reader
     /// is on, but it does not need to: a home server that does not answer is
     /// far more often a reader that has left home than a server that is down.
+    ///
+    /// A single-label host is the one of these that may not be at home at
+    /// all: a reader on its owner's tailnet resolves each tailnet computer's
+    /// short name too. It still counts here, and the message for it names
+    /// both ways of reaching it.
     #[must_use]
     pub fn on_home_network(&self) -> bool {
         self.server
             .and_then(host_of)
             .is_some_and(|host| home_host(&host))
+    }
+
+    /// Whether the server is named by one word with no dots, such as
+    /// `nas` or `homeassistant`.
+    fn named_by_one_word(&self) -> bool {
+        self.server
+            .and_then(host_of)
+            .is_some_and(|host| !host.contains('.') && host.parse::<std::net::IpAddr>().is_err())
     }
 
     fn account_fix(&self) -> String {
@@ -353,6 +368,15 @@ impl<'a> Service<'a> {
                 "This reader is not on Wi-Fi. Join Wi-Fi and try again.".to_owned(),
                 true,
                 StandardState::Offline,
+            ),
+            // A one-word name is how a home router names a computer and also
+            // how a tailnet does, and the address cannot say which. Calling
+            // it the home network told an owner whose reader was on their
+            // tailnet, away from home, to go home.
+            Cause::AwayFromHome if self.named_by_one_word() => (
+                format!("{name} did not answer. The reader must be on the same Wi-Fi as it, or on your tailnet with Tailscale on, and the server must be running."),
+                true,
+                StandardState::Error,
             ),
             Cause::AwayFromHome => (
                 format!("{name} did not answer. It is on your home network, so the reader must be at home on the same Wi-Fi, and the server must be running."),
@@ -547,7 +571,6 @@ mod tests {
             "https://10.0.0.4",
             "https://172.20.1.1/miniflux",
             "https://nas.local",
-            "https://homeassistant:8123",
             "https://[fd12:3456::1]:8443",
             "https://books.home.arpa",
         ] {
@@ -555,6 +578,25 @@ mod tests {
             assert_eq!(problem.cause, Cause::AwayFromHome, "{server}");
             assert!(problem.message.contains("home network"), "{server}");
             assert!(!problem.needs_account());
+        }
+    }
+
+    #[test]
+    fn a_server_named_by_one_word_may_be_on_the_tailnet_and_is_not_called_a_home_server() {
+        // The reader resolves a tailnet computer's short name while its
+        // Tailscale switch is on, so "nas" may be a computer the reader
+        // reaches from anywhere. Telling its owner to go home was wrong.
+        for server in [
+            "https://homeassistant:8123",
+            "https://nas",
+            "https://Studio/",
+        ] {
+            let problem = readeck(server).explain(TaskError::Unreachable);
+            assert_eq!(problem.cause, Cause::AwayFromHome, "{server}");
+            assert!(problem.retryable, "{server}");
+            assert!(problem.message.contains("same Wi-Fi"), "{server}");
+            assert!(problem.message.contains("tailnet"), "{server}");
+            assert!(!problem.message.contains("home"), "{server}");
         }
     }
 

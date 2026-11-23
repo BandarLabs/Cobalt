@@ -2,6 +2,13 @@
 use kobo_sdk::keyboard::Keyboard;
 use kobo_sdk::{FieldKind, Screen, ScreenBuilder, Space};
 
+/// Where the computer has to be for a session to reach this Kobo.
+///
+/// This used to say "on the same network", which stopped being the whole
+/// truth when the reader could join its owner's tailnet: a computer at home
+/// and a reader in a cafe are on different networks and Paperterm works.
+const REACHABLE: &str = "The computer runs the session. Keep it awake, on the same Wi-Fi or on your tailnet.";
+
 pub(super) fn welcome(error: Option<&str>) -> Screen {
     ScreenBuilder::new("paperterm-welcome")
         .top_bar("Paperterm")
@@ -9,7 +16,7 @@ pub(super) fn welcome(error: Option<&str>) -> Screen {
         .text("Read a terminal session on your Kobo. Type from either device when keyboard access is enabled.")
         .primary_button("setup", "Connect a computer")
         .button("preview", "Try a preview")
-        .secondary(error.unwrap_or("The computer runs the session. Keep it awake and on the same network."))
+        .secondary(error.unwrap_or(REACHABLE))
         .build()
 }
 // These three pages are the same recipe as `kobo stream` with no arguments,
