@@ -3308,6 +3308,17 @@ const BAR_TITLE: FontSize = FontSize::Title;
 /// tab. The extra is taken upwards out of the bar, so nothing under it moves.
 const BAR_ACCENT_TENTH_MM: i32 = 8;
 
+/// Where the accent is painted, given the rule under the bar: the same foot
+/// and the same width, thickened upwards into the bar.
+fn bar_accent_rect(rule: Rect, metrics: &DisplayMetrics) -> Rect {
+    let thickness = max(rule.height, metrics.tenth_mm(BAR_ACCENT_TENTH_MM));
+    Rect {
+        y: rule.y + rule.height - thickness,
+        height: thickness,
+        ..rule
+    }
+}
+
 /// How far a bar control's target hangs outside the margin so that the ink
 /// of its mark ends on it.
 struct BarHang {
@@ -3474,27 +3485,12 @@ fn layout_top_bar(
             width: metrics.width,
             height: metrics.rule_thickness(),
         },
-        kind: LayoutKind::Divider,
-        text_lines: Vec::new(),
-    });
-    // The same line again, at the weight it has when it carries a colour.
-    // Laid out on every panel so a colour reader and a grey one hold the same
-    // nodes, and drawn only where there is a colour to draw it in. Its extra
-    // thickness rises into the bar, so the rule's foot and everything under
-    // it stay where they were.
-    let accent = max(
-        metrics.rule_thickness(),
-        metrics.tenth_mm(BAR_ACCENT_TENTH_MM),
-    );
-    layout.nodes.push(LayoutNode {
-        id: top_bar.id,
-        rect: Rect {
-            x: 0,
-            y: top + height + metrics.rule_thickness() - accent,
-            width: metrics.width,
-            height: accent,
-        },
-        kind: LayoutKind::BarAccent,
+        // Its own kind and not a plain divider, so the painter can tell the
+        // one rule that may carry a screen's accent from every other rule on
+        // the page. It is still one node where there was one: applications'
+        // routes address a screen's nodes by position, and a second node for
+        // the accent moved every one of them along by a place.
+        kind: LayoutKind::BarRule,
         text_lines: Vec::new(),
     });
     // Where the bar ends, not how tall it is. Returning the height was right
@@ -6047,10 +6043,11 @@ pub enum LayoutKind {
     PagedList,
     TopBar,
     TopBarTitle,
-    /// The line under the top bar at the weight it is drawn in colour. A
-    /// colour panel paints a screen's accent here, over the grey rule; a
-    /// grey panel paints nothing and the rule shows.
-    BarAccent,
+    /// The line that closes the top bar. A rule like any other on a grey
+    /// panel and under a screen with no accent; on a colour panel a screen's
+    /// accent is drawn here, heavier, rising into the bar from the rule's
+    /// own foot.
+    BarRule,
     /// Emitted only by the runtime, never by an application.
     Back,
     BarAction(ActionId),
@@ -18598,11 +18595,12 @@ fn paint_layout(
             // screen in the same colour and the content between them would
             // be the quietest thing on the panel.
             LayoutKind::TopBar => fill_clipped(surface, node.rect, palette.bar(), clip),
-            LayoutKind::BarAccent => {
-                if let Some(accent) = palette.bar_rule() {
-                    fill_clipped(surface, node.rect, accent, clip);
+            LayoutKind::BarRule => match palette.bar_rule() {
+                Some(accent) => {
+                    fill_clipped(surface, bar_accent_rect(node.rect, metrics), accent, clip)
                 }
-            }
+                None => fill_clipped(surface, node.rect, tone::RULE, clip),
+            },
             LayoutKind::NavBar => fill_clipped(surface, node.rect, tone::PAPER, clip),
             // Paper, not surface. The band is the quietest thing on the panel
             // and a tinted strip across the top of every screen is a permanent

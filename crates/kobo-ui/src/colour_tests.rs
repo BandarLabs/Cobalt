@@ -411,8 +411,8 @@ fn an_accented_bar_stays_paper_and_wears_its_colour_as_the_line_under_it() {
     assert_eq!(count_colour(&surface, tint), 0);
     // The line under it is the strong shade, edge to edge, and ends exactly
     // where the grey rule ends, so the page under it has not moved.
-    let accent = rect_of(&screen, |kind| *kind == LayoutKind::BarAccent);
-    let rule = rect_of(&screen, |kind| *kind == LayoutKind::Divider);
+    let rule = rect_of(&screen, |kind| *kind == LayoutKind::BarRule);
+    let accent = bar_accent_rect(rule, &CLARA_BW_METRICS);
     assert_eq!(accent.y + accent.height, rule.y + rule.height);
     assert!(accent.height > rule.height);
     for y in accent.y..accent.y + accent.height {
@@ -441,8 +441,8 @@ fn an_accented_bar_stays_paper_and_wears_its_colour_as_the_line_under_it() {
 fn a_grey_panel_draws_the_plain_rule_under_an_accented_bar() {
     let screen = kitchen_sink(Some(Accent::Orange));
     let surface = paint(&screen, Appearance::Grey);
-    let accent = rect_of(&screen, |kind| *kind == LayoutKind::BarAccent);
-    let rule = rect_of(&screen, |kind| *kind == LayoutKind::Divider);
+    let rule = rect_of(&screen, |kind| *kind == LayoutKind::BarRule);
+    let accent = bar_accent_rect(rule, &CLARA_BW_METRICS);
     let at = |x: i32, y: i32| surface.pixels[y as usize * surface.width + x as usize];
     // Above the rule, where the accent would have risen into the bar, the
     // bar is still paper; the rule itself is the grey it always was.
@@ -462,7 +462,8 @@ fn a_screen_with_no_accent_is_drawn_in_cobalt_with_a_paper_bar() {
     assert!(count_colour(&surface, Accent::Cobalt.shades().strong) > 0);
     assert_eq!(count_colour(&surface, Accent::Cobalt.shades().tint), 0);
     // No accent, so the line under the bar is the grey rule.
-    let accent = rect_of(&screen, |kind| *kind == LayoutKind::BarAccent);
+    let rule = rect_of(&screen, |kind| *kind == LayoutKind::BarRule);
+    let accent = bar_accent_rect(rule, &CLARA_BW_METRICS);
     assert_eq!(
         surface.rgb_at(accent.y as usize * surface.width + 1),
         Some([tone::PAPER; 3])
