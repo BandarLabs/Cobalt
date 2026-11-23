@@ -1,0 +1,15 @@
+# What the launcher shows once after an update, under "What's new in Cobalt".
+#
+# The first line that is not a comment is the version these notes describe.
+# Every line after it is one change: a lead of at most four words, a colon,
+# then one sentence that ends in a full stop. The lead is set bold.
+#
+# Two to five changes, the one most worth knowing first: a large text size
+# drops changes from the end. Rewrite the whole file when the version is
+# bumped (docs/RELEASE-TRAIN.md). `cargo test -p kobo-launcher` checks it.
+
+0.3.41
+Light: set the front light's brightness from Settings.
+A calmer top bar: screen titles are larger, and an app's colour is a line under the bar.
+Larger readers: everything is drawn a little bigger on 7 inch and 10 inch panels.
+Tailscale: the app shows how much data the reader has received and sent.

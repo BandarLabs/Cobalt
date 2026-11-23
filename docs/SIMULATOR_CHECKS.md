@@ -90,6 +90,17 @@ documents from the `library` folder beside the per-app shelves
 (`$KOBO_SIM_DATA/library`, or `$TMPDIR/cobalt-sim-data/library`). The sweep
 puts a sample EPUB there for Books.
 
+The launcher shows What's new only when `examples/launcher/whats-new.txt` is
+for the running version. In a debug build `KOBO_LAUNCHER_NOTES_VERSION`, set to
+the version the file names, stands in for the running one, so the sheet can be
+captured and `examples/launcher/drive-whats-new.kobo` run between releases.
+
+A harness that starts the launcher on fresh state stands for a reader whose
+owner has read those notes, and says so with
+`python3 scripts/sim-notes-read.py "$TMPDIR"` before it starts the simulator.
+The sweep's seed does this for the launcher, so a route about the sheet itself
+is run with `--bare`.
+
 ## Route steps for whole flows
 
 Beyond taps and typing, a route can do what an owner does around the app:
