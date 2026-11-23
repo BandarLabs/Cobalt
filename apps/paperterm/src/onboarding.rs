@@ -7,7 +7,8 @@ use kobo_sdk::{FieldKind, Screen, ScreenBuilder, Space};
 /// This used to say "on the same network", which stopped being the whole
 /// truth when the reader could join its owner's tailnet: a computer at home
 /// and a reader in a cafe are on different networks and Paperterm works.
-const REACHABLE: &str = "The computer runs the session. Keep it awake, on the same Wi-Fi or on your tailnet.";
+const REACHABLE: &str =
+    "The computer runs the session. Keep it awake, on the same Wi-Fi or on your tailnet.";
 
 pub(super) fn welcome(error: Option<&str>) -> Screen {
     ScreenBuilder::new("paperterm-welcome")
