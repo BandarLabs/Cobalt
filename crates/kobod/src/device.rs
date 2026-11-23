@@ -154,6 +154,70 @@ impl Drop for FrontlightGuard {
     }
 }
 
+/// Answers a front light request from the lamp itself: its brightness, and
+/// its warmth on a reader whose profile maps one.
+///
+/// The answer to a set is what the lamp took, which is not always what was
+/// asked for, because a percentage does not divide evenly into every
+/// control's range. A set the lamp refused is answered as a failure. It used
+/// to be traced and then answered with the level that was asked for, so an
+/// application drew a brightness the panel was not at and had no way to know.
+///
+/// Warmth has two ways of not happening and they are answered apart. A reader
+/// with no mapping, or whose light is not the control its mapping describes,
+/// is refused as unsupported: that is settled, and an application draws no
+/// control for it. A control that failed this time is a failure, and the next
+/// request may work.
+fn light_request(
+    light: Option<&kobo_hal::frontlight::Frontlight>,
+    warmth: kobo_profile::Warmth,
+    request: &kobo_protocol::DeviceRequest,
+    services: &mut DeviceServices,
+) -> kobo_protocol::DeviceResult {
+    use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+    let Some(light) = light else {
+        return DeviceResult::Denied(DenyReason::Unsupported);
+    };
+    let reading = match request {
+        DeviceRequest::SetFrontlight { percent } => {
+            return match light.set(*percent) {
+                Ok(percent) => {
+                    services.observe_frontlight(percent);
+                    DeviceResult::Frontlight { percent }
+                }
+                Err(error) => {
+                    trace(&format!("frontlight refused: {error}"));
+                    DeviceResult::Failed(DeviceError::Backend)
+                }
+            };
+        }
+        DeviceRequest::ReadFrontlight => {
+            // A level that cannot be read just now is answered with the last
+            // one that was, as it always has been.
+            if let Some(percent) = light.percent() {
+                services.observe_frontlight(percent);
+            }
+            return services.handle(DeviceRequest::ReadFrontlight);
+        }
+        DeviceRequest::SetWarmth { percent } => light.set_warmth(warmth, *percent),
+        DeviceRequest::ReadWarmth => light.warmth(warmth),
+        _ => return DeviceResult::Failed(DeviceError::InvalidInput),
+    };
+    match reading {
+        Ok(reading) => DeviceResult::Warmth {
+            percent: reading.percent,
+            steps: reading.steps,
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+            DeviceResult::Denied(DenyReason::Unsupported)
+        }
+        Err(error) => {
+            trace(&format!("warmth refused: {error}"));
+            DeviceResult::Failed(DeviceError::Backend)
+        }
+    }
+}
+
 /// How long the reader is given to stop, and to come back.
 const STOP_GRACE: Duration = Duration::from_secs(15);
 const START_GRACE: Duration = Duration::from_secs(45);
@@ -3831,36 +3895,6 @@ fn host_applications(
                                 }
                                 battery_read_at = Instant::now();
                             }
-                            // Once caller identity and declared capabilities
-                            // pass, drive the light before forming the reply so
-                            // the application is told what the hardware
-                            // actually took. Percentages do not divide evenly
-                            // into every control's range.
-                            if !not_declared {
-                                if let Some(light) = &frontlight {
-                                    match request {
-                                        kobo_protocol::DeviceRequest::SetFrontlight { percent }
-                                            if apps[index]
-                                                .declared
-                                                .holds(Capability::FrontlightControl)
-                                                && services.may(Capability::FrontlightControl) =>
-                                        {
-                                            match light.set(percent) {
-                                                Ok(set) => services.observe_frontlight(set),
-                                                Err(error) => {
-                                                    trace(&format!("frontlight refused: {error}"));
-                                                }
-                                            }
-                                        }
-                                        kobo_protocol::DeviceRequest::ReadFrontlight => {
-                                            if let Some(percent) = light.percent() {
-                                                services.observe_frontlight(percent);
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
                             // What a notice request leaves to do once it has
                             // been answered: the launcher hears its answer
                             // before the list that follows from it.
@@ -3904,6 +3938,20 @@ fn host_applications(
                                             kobo_protocol::DenyReason::Busy,
                                         )
                                     }
+                                    // Reached only once the caller's
+                                    // declaration, the battery and the
+                                    // backend have all allowed it, so the
+                                    // lamp is never moved for a request that
+                                    // is then refused.
+                                    kobo_protocol::DeviceRequest::SetFrontlight { .. }
+                                    | kobo_protocol::DeviceRequest::ReadFrontlight
+                                    | kobo_protocol::DeviceRequest::SetWarmth { .. }
+                                    | kobo_protocol::DeviceRequest::ReadWarmth => light_request(
+                                        frontlight,
+                                        display.profile().warmth,
+                                        &request,
+                                        &mut services,
+                                    ),
                                     kobo_protocol::DeviceRequest::ReadBluetooth => {
                                         bluetooth.as_ref().map_or(
                                             kobo_protocol::DeviceResult::Denied(
@@ -6761,6 +6809,9 @@ mod tests;
 
 #[cfg(test)]
 mod hosting_tests;
+
+#[cfg(test)]
+mod light_tests;
 
 #[cfg(test)]
 mod text_field_tests;

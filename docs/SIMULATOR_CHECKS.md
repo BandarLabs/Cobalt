@@ -81,6 +81,20 @@ from the same moment, so a run can be placed on any day. The status bar
 follows `clock advance` steps; an application's clock does not, so restart
 the simulator to move an application to another day.
 
+## The front light
+
+`device frontlight 40` and `device warmth 70` move the simulated light, as
+the inspector's two fields do, and `/device` reports both as
+`frontlightPercent` and `warmthPercent`. Warmth has eleven settings and starts
+in the middle, so a value between two lands on the nearer.
+
+Warmth is simulated only where the selected profile maps one. Under any other
+profile, for example `KOBO_SIM_PROFILE=nia-382`, a warmth request is refused
+as unsupported the way the runtime refuses it on that reader, `warmthPercent`
+is null and `device warmth` is an error, which is how a page's words for a
+reader whose warmth cannot be set are checked. The sweep runs every route
+under the default profile, so that state is checked by hand or in unit tests.
+
 ## Built-in apps and the library
 
 Books, Settings, Terminal, Launcher and Store hold what the runtime gives

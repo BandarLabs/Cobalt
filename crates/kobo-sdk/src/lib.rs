@@ -2721,6 +2721,46 @@ impl Device<'_> {
         self.request(DeviceRequest::ReadFrontlight);
     }
 
+    /// Sets the warmth of the front light, where 0 is the coolest light the
+    /// reader makes and 100 the warmest.
+    ///
+    /// The lamp has few settings, eleven on every reader known, so the
+    /// runtime takes the one nearest `percent` and the reply says where that
+    /// is: [`DeviceResult::Warmth`], with the percentage the lamp is now at
+    /// and how many settings it has. To move one setting at a time, work the
+    /// next percentage out from that count and not from a fixed step.
+    ///
+    /// A reader whose warmth this runtime cannot set answers
+    /// [`DeviceResult::Denied`] with [`DenyReason::Unsupported`], whether or
+    /// not its brightness can be set. Draw no control for it.
+    ///
+    /// Asked for under `frontlight-control`, as the brightness is, and like
+    /// the brightness it lasts for the session: the runtime puts the light
+    /// back as it found it when the session ends. A warmth set here is kept
+    /// through later brightness changes, including to 100, which otherwise
+    /// moves the balance between the lamps to light them all.
+    ///
+    /// Behind the `runtime-settings` switch for now. The request travels on
+    /// a tag that runtimes released before it cannot read, and such a
+    /// runtime ends the session of an application that sends one, so it is
+    /// offered only to the settings application that ships with the runtime.
+    #[cfg(feature = "runtime-settings")]
+    pub fn set_warmth(&mut self, percent: u8) {
+        self.request(DeviceRequest::SetWarmth {
+            percent: percent.min(100),
+        });
+    }
+
+    /// Asks where the warmth of the front light stands. The reply is
+    /// [`DeviceResult::Warmth`], or a refusal as [`Self::set_warmth`]
+    /// describes.
+    ///
+    /// Behind the `runtime-settings` switch, for the same reason.
+    #[cfg(feature = "runtime-settings")]
+    pub fn read_warmth(&mut self) {
+        self.request(DeviceRequest::ReadWarmth);
+    }
+
     /// Asks whether Bluetooth is available and powered, including remembered
     /// devices when the backend can enumerate them without scanning.
     pub fn read_bluetooth(&mut self) {
@@ -4080,6 +4120,23 @@ mod tests {
             .filter(|command| matches!(command, Command::Device(DeviceRequest::Update { .. })))
             .count();
         assert_eq!(queued, 1, "only the well-formed request may be queued");
+    }
+
+    #[cfg(feature = "runtime-settings")]
+    #[test]
+    fn the_warmth_helpers_queue_requests_the_protocol_can_carry() {
+        let mut context = Context::default();
+        context.device().set_warmth(70);
+        context.device().set_warmth(u8::MAX);
+        context.device().read_warmth();
+        assert_eq!(
+            context.take_commands(),
+            vec![
+                Command::Device(DeviceRequest::SetWarmth { percent: 70 }),
+                Command::Device(DeviceRequest::SetWarmth { percent: 100 }),
+                Command::Device(DeviceRequest::ReadWarmth),
+            ]
+        );
     }
 
     #[test]
