@@ -1389,6 +1389,7 @@ impl Default for SimulatedApps {
                     "battery-read",
                     "bluetooth-control",
                     "wifi-control",
+                    "frontlight-control",
                 ],
                 true,
             ),
