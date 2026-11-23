@@ -18597,7 +18597,7 @@ fn paint_layout(
             LayoutKind::TopBar => fill_clipped(surface, node.rect, palette.bar(), clip),
             LayoutKind::BarRule => match palette.bar_rule() {
                 Some(accent) => {
-                    fill_clipped(surface, bar_accent_rect(node.rect, metrics), accent, clip)
+                    fill_clipped(surface, bar_accent_rect(node.rect, metrics), accent, clip);
                 }
                 None => fill_clipped(surface, node.rect, tone::RULE, clip),
             },
