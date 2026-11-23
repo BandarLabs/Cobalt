@@ -17,11 +17,12 @@
 
 use kobo_sdk::{
     action_id, ActionId, AppInfo, Capability, Context, DeviceIdentity, DeviceRequest, DeviceResult,
-    Glyph, KoboApp, ScreenBuilder, Tile, TileShape,
+    Glyph, KoboApp, ScreenBuilder, StoreResult, Tile, TileShape,
 };
 use std::process::ExitCode;
 
 mod notices;
+mod whats_new;
 
 /// One entry in the launcher.
 ///
@@ -156,6 +157,18 @@ struct Launcher {
     fresh: Vec<u64>,
     /// Why the last row tapped could not be opened, said over the list.
     notice_trouble: Option<&'static str>,
+    /// The notes this installation was built with and the version it is.
+    release: whats_new::Release,
+    /// The notes the owner has yet to put away, once the store has said
+    /// they were not seen. Held rather than drawn at once because only the
+    /// grid carries the sheet: an answer that arrives while something is
+    /// starting waits for the grid to come back.
+    unseen: Option<whats_new::Notes>,
+    /// Whether the screen last sent carries the sheet. Notes can be owed
+    /// and not showing: over another screen, or at a text size that leaves
+    /// no room for them between the bars. Only a sheet that is up can be
+    /// put away, and only putting it away says the notes were seen.
+    sheet_up: bool,
 }
 
 impl Launcher {
@@ -175,6 +188,7 @@ impl Launcher {
                 self.notice_trouble,
             ),
         };
+        self.sheet_up = matches!(self.view, View::Home) && screen.overlay.is_some();
         context.set_screen(screen);
     }
 
@@ -265,7 +279,7 @@ impl Launcher {
                 screen = screen.top_bar_action(notices::OPEN_LIST, label);
             }
         }
-        Self::app_grid(screen, entries)
+        let screen = Self::app_grid(screen, entries)
             .page_turns("previous", "next")
             .page_position(page_number, page_count)
             .nav_bar_marked(
@@ -276,8 +290,14 @@ impl Launcher {
                     ("settings", "Settings", Glyph::Settings),
                     ("reader", "Kobo reader", Glyph::Reader),
                 ],
-            )
-            .build()
+            );
+        // The sheet goes on last, after everything that takes an identifier,
+        // so the screen under it is node for node the screen without it and
+        // nothing that addresses the grid by position has to know about it.
+        self.unseen
+            .as_ref()
+            .and_then(|notes| whats_new::over(&screen, notes, &context.metrics()))
+            .unwrap_or_else(|| screen.build())
     }
 
     /// Painted between tapping a tile and that application appearing.
@@ -389,7 +409,33 @@ impl KoboApp for Launcher {
     fn on_start(&mut self, context: &mut Context) {
         context.applications().installed();
         context.device().read_identity();
+        // Asked only when there are notes for this version to show. Every
+        // other start, which is nearly all of them once a release has no
+        // notes of its own, costs the store nothing.
+        if self.release.notes().is_some() {
+            context.store().load(whats_new::SEEN);
+        }
         self.show(context);
+    }
+
+    /// The store's answer to what was last put away.
+    ///
+    /// A key never written is the answer on a reader that has just been
+    /// updated from a release without this sheet, and it is owed the notes
+    /// like any other. A refusal is not: a store that cannot be read
+    /// probably cannot be written either, and a sheet that could not record
+    /// being put away would come back at every start.
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key != whats_new::SEEN {
+            return;
+        }
+        let StoreResult::Loaded { value, .. } = result else {
+            return;
+        };
+        self.unseen = self.release.unseen(value.as_deref()).cloned();
+        if self.unseen.is_some() {
+            self.show(context);
+        }
     }
 
     /// Puts the list back the moment the panel is handed over.
@@ -437,6 +483,9 @@ impl KoboApp for Launcher {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.sheet_action(context, action) {
+            return;
+        }
         if self.notice_action(context, action) {
             return;
         }
@@ -550,6 +599,24 @@ impl KoboApp for Launcher {
 }
 
 impl Launcher {
+    /// Puts the sheet away for good. Returns whether `action` was its own.
+    ///
+    /// Its button and the runtime's Back both close it, and either is the
+    /// owner saying they have seen it, so the version is written down at
+    /// once. The sheet goes whether or not the write lands: one that failed
+    /// costs the owner the same sheet at the next start, which is better
+    /// than a sheet that will not close.
+    fn sheet_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if !self.sheet_up || (action != action_id(whats_new::DONE) && action != ActionId::BACK) {
+            return false;
+        }
+        if let Some(notes) = self.unseen.take() {
+            context.store().save(whats_new::SEEN, notes.version);
+        }
+        self.show(context);
+        true
+    }
+
     /// Opens the list and tells the runtime it has been seen.
     fn open_notices(&mut self, context: &mut Context) {
         self.fresh.clear();
@@ -655,8 +722,29 @@ impl Launcher {
     }
 }
 
+/// The launcher as a reader runs it.
+///
+/// A debug build, which is what the simulator runs, lets
+/// `KOBO_LAUNCHER_NOTES_VERSION` stand in for the running version, so the
+/// sheet can be drawn and driven between releases, when the notes are for
+/// the version that comes next. A release build never reads it.
+fn launcher() -> Launcher {
+    #[cfg(debug_assertions)]
+    {
+        let launcher = Launcher::default();
+        Launcher {
+            release: launcher
+                .release
+                .running_as(std::env::var("KOBO_LAUNCHER_NOTES_VERSION").ok()),
+            ..launcher
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    Launcher::default()
+}
+
 fn main() -> ExitCode {
-    match kobo_sdk::run("launcher", Launcher::default()) {
+    match kobo_sdk::run("launcher", launcher()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("launcher: {error}");
@@ -667,13 +755,15 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    use super::whats_new::{parse, Change, Release, DONE, SEEN};
     use super::{opening, Entry, Launcher, View, BOOKS, ENTRIES, SETTINGS};
     use kobo_sdk::{
         action_id, AppInfo, AppRunner, Command, DeviceRequest, DeviceResult, Glyph, Lifecycle,
+        StoreRequest, StoreResult,
     };
     use kobo_ui::{
-        render_with, tone, Chrome, DisplayMetrics, LayoutKind, Node, Surface, TextScale, TileShape,
-        CLARA_BW_METRICS,
+        render_with, tone, Chrome, DisplayMetrics, LayoutIssueKind, LayoutKind, Node, Surface,
+        TextScale, TileShape, CLARA_BW_METRICS,
     };
 
     /// Where the App Store sits in [`ENTRIES`]: the first entry with a tile.
@@ -688,12 +778,12 @@ mod tests {
         kobo_profile::SUPPORTED_PROFILES
             .iter()
             .flat_map(|profile| {
-                let portrait = DisplayMetrics {
-                    width: i32::try_from(profile.width).expect("profile width fits layout"),
-                    height: i32::try_from(profile.height).expect("profile height fits layout"),
-                    pixels_per_inch: i32::from(profile.pixels_per_inch),
-                    text_scale: TextScale::Default,
-                };
+                let portrait = DisplayMetrics::for_panel(
+                    i32::try_from(profile.width).expect("profile width fits layout"),
+                    i32::try_from(profile.height).expect("profile height fits layout"),
+                    i32::from(profile.pixels_per_inch),
+                    TextScale::Default,
+                );
                 let landscape = DisplayMetrics {
                     width: portrait.height,
                     height: portrait.width,
@@ -1518,6 +1608,620 @@ mod tests {
             .join(" ");
         assert!(words.contains("Can keep the reader awake"), "{words}");
         assert!(!words.contains("keep-awake"), "{words}");
+    }
+
+    /// Notes for a release, as a file would hold them.
+    const NOTES: &str = "\
+0.3.41
+Light: set the front light's brightness from Settings.
+A calmer top bar: screen titles are larger, and an app's colour is a line under the bar.
+Larger readers: everything is drawn a little bigger on 7 inch and 10 inch panels.
+Tailscale: the app shows how much data the reader has received and sent.
+";
+
+    /// A launcher built with `notes`, running as `running`.
+    fn released(notes: &str, running: &str) -> Launcher {
+        Launcher {
+            release: Release::new(parse(notes).ok(), running),
+            ..Launcher::default()
+        }
+    }
+
+    /// A launcher that has just been updated to the release [`NOTES`] are
+    /// for, on `metrics`.
+    fn updated(metrics: DisplayMetrics) -> AppRunner<Launcher> {
+        AppRunner::with_metrics(released(NOTES, "0.3.41"), metrics)
+    }
+
+    /// The store's answer to what was last put away.
+    fn seen(value: Option<&str>) -> StoreResult {
+        StoreResult::Loaded {
+            key: SEEN.to_owned(),
+            value: value.map(|value| value.as_bytes().to_vec()),
+        }
+    }
+
+    fn asks_what_was_seen(commands: &[Command]) -> bool {
+        commands.iter().any(
+            |command| matches!(command, Command::Store(StoreRequest::Load { key }) if key == SEEN),
+        )
+    }
+
+    /// The version written down as seen by these commands, if one was.
+    fn written_down(commands: &[Command]) -> Option<String> {
+        commands.iter().find_map(|command| match command {
+            Command::Store(StoreRequest::Save { key, value }) if key == SEEN => {
+                Some(String::from_utf8_lossy(value).into_owned())
+            }
+            _ => None,
+        })
+    }
+
+    /// The screen as a reader draws it, status band and all.
+    fn laid_out(screen: &kobo_sdk::Screen, metrics: &DisplayMetrics) -> kobo_ui::Layout {
+        screen.layout_with(metrics, &Chrome::measuring(false))
+    }
+
+    /// The sheet's title as the panel draws it, if the sheet is up.
+    fn sheet_title(screen: &kobo_sdk::Screen, metrics: &DisplayMetrics) -> Option<String> {
+        laid_out(screen, metrics)
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::OverlayTitle)
+            .map(|node| node.text_lines.join(" ").replace('\u{a0}', " "))
+    }
+
+    /// Every change on the sheet, each as the words the panel drew for it,
+    /// in order.
+    fn changes_drawn(screen: &kobo_sdk::Screen, metrics: &DisplayMetrics) -> Vec<String> {
+        let layout = laid_out(screen, metrics);
+        let overlay = screen.overlay.as_ref().expect("the sheet is up");
+        overlay
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::RichText { id, .. } => Some(*id),
+                _ => None,
+            })
+            .map(|id| {
+                layout
+                    .nodes
+                    .iter()
+                    .filter(|node| node.id == id && matches!(node.kind, LayoutKind::RichText(_)))
+                    .flat_map(|node| node.text_lines.iter())
+                    .flat_map(|run| run.split_whitespace())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .filter(|words| !words.is_empty())
+            .collect()
+    }
+
+    fn offers_done(screen: &kobo_sdk::Screen, metrics: &DisplayMetrics) -> bool {
+        laid_out(screen, metrics).nodes.iter().any(
+            |node| matches!(node.kind, LayoutKind::Button(action, ..) if action == action_id(DONE)),
+        )
+    }
+
+    #[test]
+    fn an_updated_reader_is_shown_what_is_new_over_the_grid_once_the_store_has_answered() {
+        let mut runner = updated(CLARA_BW_METRICS);
+        let started = runner.start();
+        assert!(asks_what_was_seen(&started));
+        let home = painted(started);
+        assert!(
+            home.overlay.is_none(),
+            "a sheet before the store said it was owed"
+        );
+
+        // Nothing under that key is a reader updated from a release that had
+        // no sheet, which is every reader the first time.
+        let shown = painted(runner.store_result(seen(None)));
+        assert_eq!(
+            sheet_title(&shown, &CLARA_BW_METRICS).as_deref(),
+            Some("What's new in Cobalt 0.3.41")
+        );
+        let notes = parse(NOTES).expect("well formed");
+        let written: Vec<String> = notes.changes.iter().map(Change::written).collect();
+        assert_eq!(changes_drawn(&shown, &CLARA_BW_METRICS), written);
+        for lead in [
+            "Light:",
+            "A calmer top bar:",
+            "Larger readers:",
+            "Tailscale:",
+        ] {
+            assert!(says(&shown, lead), "{lead} is not on the sheet");
+        }
+        assert!(offers_done(&shown, &CLARA_BW_METRICS));
+
+        // A space under the title, the changes, one button, and nothing
+        // else to press, read or look at.
+        let overlay = shown.overlay.as_ref().expect("the sheet is up");
+        assert_eq!(overlay.nodes.len(), notes.changes.len() + 2);
+        assert!(matches!(overlay.nodes.first(), Some(Node::Spacer { .. })));
+        assert!(matches!(
+            overlay.nodes.last(),
+            Some(Node::Button { label, .. }) if label == "Done"
+        ));
+    }
+
+    #[test]
+    fn the_screen_under_the_sheet_is_the_screen_without_it() {
+        let mut runner = updated(CLARA_BW_METRICS);
+        let home = painted(runner.start());
+        let shown = painted(runner.store_result(seen(None)));
+        assert_eq!(
+            kobo_sdk::Screen {
+                overlay: None,
+                ..shown.clone()
+            },
+            home,
+            "showing the sheet changed the screen under it"
+        );
+        // And a launcher that owes no sheet sends exactly what it sent
+        // before there was one to owe.
+        let mut quiet = AppRunner::new(released(NOTES, "0.3.40"));
+        assert_eq!(painted(quiet.start()), home);
+        let after = painted(runner.action(action_id(DONE)));
+        assert_eq!(after, home, "putting the sheet away left something behind");
+    }
+
+    #[test]
+    fn done_puts_the_sheet_away_and_writes_the_version_down() {
+        let mut runner = updated(CLARA_BW_METRICS);
+        runner.start();
+        let shown = painted(runner.store_result(seen(None)));
+        // The button is under the finger, not under something else.
+        let layout = laid_out(&shown, &CLARA_BW_METRICS);
+        let button = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Button(action, ..) if action == action_id(DONE)))
+            .expect("the sheet has its button")
+            .rect;
+        assert_eq!(
+            layout.hit_test(button.x + button.width / 2, button.y + button.height / 2),
+            Some(action_id(DONE))
+        );
+
+        let commands = runner.action(action_id(DONE));
+        assert_eq!(written_down(&commands).as_deref(), Some("0.3.41"));
+        assert!(painted(commands).overlay.is_none());
+        // Nothing brings it back while the launcher runs: not the list of
+        // apps arriving, not the panel coming back from an application.
+        runner.device_result(installed(&LONG_NAMES));
+        runner.action(action_id(&opening(ENTRIES[STORE].name)));
+        let behind = painted(runner.lifecycle(Lifecycle::Background));
+        assert!(behind.overlay.is_none());
+        assert!(repainted(runner.lifecycle(Lifecycle::Foreground))
+            .is_none_or(|screen| screen.overlay.is_none()));
+    }
+
+    #[test]
+    fn the_runtimes_back_puts_the_sheet_away_as_done_does() {
+        let mut runner = updated(CLARA_BW_METRICS);
+        runner.start();
+        runner.store_result(seen(None));
+        let commands = runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(written_down(&commands).as_deref(), Some("0.3.41"));
+        assert!(painted(commands).overlay.is_none());
+        // With no sheet up, Back on the grid writes nothing.
+        assert_eq!(written_down(&runner.action(kobo_sdk::ActionId::BACK)), None);
+    }
+
+    #[test]
+    fn a_sheet_that_was_put_away_does_not_come_back_at_the_next_start() {
+        let mut runner = updated(CLARA_BW_METRICS);
+        assert!(asks_what_was_seen(&runner.start()));
+        assert!(repainted(runner.store_result(seen(Some("0.3.41")))).is_none());
+        assert!(runner.app().unseen.is_none());
+        // What was seen for the release before does not count for this one.
+        let mut runner = updated(CLARA_BW_METRICS);
+        runner.start();
+        assert!(painted(runner.store_result(seen(Some("0.3.40"))))
+            .overlay
+            .is_some());
+    }
+
+    #[test]
+    fn notes_for_another_version_are_never_shown_and_the_store_is_never_asked() {
+        // A release cut without new notes: the file still describes the
+        // release before it, or the one after.
+        for running in ["0.3.40", "0.3.42"] {
+            let mut runner = AppRunner::new(released(NOTES, running));
+            let started = runner.start();
+            assert!(!asks_what_was_seen(&started), "{running}");
+            assert!(painted(started).overlay.is_none(), "{running}");
+        }
+        // The same for a file that does not parse.
+        let mut runner = AppRunner::new(released("0.3.41\nNo lead here.\n", "0.3.41"));
+        assert!(!asks_what_was_seen(&runner.start()));
+    }
+
+    #[test]
+    fn this_build_asks_the_store_only_if_its_own_notes_are_for_its_own_version() {
+        let notes = parse(include_str!("../whats-new.txt")).expect("the committed notes parse");
+        let mut runner = AppRunner::new(Launcher::default());
+        assert_eq!(
+            asks_what_was_seen(&runner.start()),
+            notes.version == env!("CARGO_PKG_VERSION")
+        );
+    }
+
+    #[test]
+    fn a_store_that_cannot_be_read_shows_no_sheet() {
+        let mut runner = updated(CLARA_BW_METRICS);
+        runner.start();
+        let commands = runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        assert!(repainted(commands).is_none());
+        assert!(runner.app().unseen.is_none());
+    }
+
+    #[test]
+    fn the_sheet_is_drawn_over_the_grid_and_over_nothing_else() {
+        // The answer arrives while an application is starting: the splash
+        // stays as it is, and the sheet is on the grid when the grid is back.
+        let mut runner = updated(CLARA_BW_METRICS);
+        runner.start();
+        let splash = painted(runner.action(action_id(&opening(ENTRIES[STORE].name))));
+        assert!(splash.overlay.is_none());
+        assert!(repainted(runner.store_result(seen(None))).is_none_or(|screen| screen == splash));
+        assert!(matches!(runner.app().view, View::Starting(STORE)));
+        let home = painted(runner.action(action_id("back")));
+        assert!(sheet_title(&home, &CLARA_BW_METRICS).is_some());
+
+        // The Notifications list and its question never carry it, and the
+        // question is the only dialogue on that screen.
+        let list = painted(runner.notices(kept(true)));
+        assert!(list.overlay.is_none());
+        let asking = painted(runner.action(action_id("clear-notifications")));
+        assert_eq!(
+            sheet_title(&asking, &CLARA_BW_METRICS).as_deref(),
+            Some("Clear all notifications?")
+        );
+        // Back in the list is the list's own, and writes nothing down.
+        runner.action(action_id("keep-notifications"));
+        let home = runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(written_down(&home), None);
+        assert!(sheet_title(&painted(home), &CLARA_BW_METRICS).is_some());
+
+        // Leaving for the reader paints its own screen, without it.
+        assert!(painted(runner.action(action_id("reader")))
+            .overlay
+            .is_none());
+    }
+
+    /// How many changes the sheet on `screen` was sent with.
+    fn changes_sent(screen: &kobo_sdk::Screen) -> usize {
+        screen.overlay.as_ref().map_or(0, |sheet| {
+            sheet
+                .nodes
+                .iter()
+                .filter(|node| matches!(node, Node::RichText { .. }))
+                .count()
+        })
+    }
+
+    /// Fails unless the sheet's frame lies between the two bars with a
+    /// screen margin to spare at each end.
+    fn assert_between_the_bars(screen: &kobo_sdk::Screen, metrics: &DisplayMetrics, what: &str) {
+        let layout = laid_out(screen, metrics);
+        let frame = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Overlay)
+            .unwrap_or_else(|| panic!("{what}: the sheet has no frame"))
+            .rect;
+        let under_the_top_bar = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::TopBar | LayoutKind::BarRule))
+            .map(|node| node.rect.y + node.rect.height)
+            .max()
+            .unwrap_or_else(|| panic!("{what}: no top bar"));
+        let over_the_bottom_bar = layout
+            .nodes
+            .iter()
+            .filter(|node| node.kind == LayoutKind::NavBar)
+            .map(|node| node.rect.y)
+            .min()
+            .unwrap_or_else(|| panic!("{what}: no bottom bar"));
+        let clearance = metrics.screen_margin();
+        assert!(
+            frame.y >= under_the_top_bar + clearance,
+            "{what}: the sheet starts at {}, and the top bar ends at {under_the_top_bar}",
+            frame.y
+        );
+        assert!(
+            frame.y + frame.height <= over_the_bottom_bar - clearance,
+            "{what}: the sheet ends at {}, and the bottom bar starts at {over_the_bottom_bar}",
+            frame.y + frame.height
+        );
+    }
+
+    /// Fails unless nothing a finger can do writes the notes down as seen.
+    fn assert_nothing_is_written_down(runner: &mut AppRunner<Launcher>, what: &str) {
+        for action in [action_id(DONE), kobo_sdk::ActionId::BACK] {
+            assert_eq!(
+                written_down(&runner.action(action)),
+                None,
+                "{what}: notes that were never shown were marked as seen"
+            );
+        }
+        assert!(
+            runner.app().unseen.is_some(),
+            "{what}: the notes were let go"
+        );
+    }
+
+    /// Names the panel a test process was started to check.
+    const PANEL: &str = "KOBO_LAUNCHER_TEST_PANEL";
+
+    /// Runs the ignored test `test` once for every supported panel, each in
+    /// a process of its own.
+    ///
+    /// Type is sized once for a whole process, for the first panel a runner
+    /// is made for. A loop over the panels in one process therefore measures
+    /// every one of them in a Clara's type, which on a Nia's coarser panel
+    /// is two fifths too large: such a loop said this sheet had room for one
+    /// change where a Nia draws three. What is asked here is whether words
+    /// fit, so each panel is asked in its own type.
+    fn on_every_panel_in_a_process_of_its_own(test: &str) {
+        let tests = std::env::current_exe().expect("the test binary has a path");
+        for profile in kobo_profile::SUPPORTED_PROFILES {
+            let output = std::process::Command::new(&tests)
+                .args([&format!("tests::{test}"), "--exact", "--ignored"])
+                .env(PANEL, profile.id)
+                .output()
+                .expect("the test binary runs");
+            let said = String::from_utf8_lossy(&output.stdout);
+            // A name that matches nothing runs nothing and succeeds.
+            assert!(
+                output.status.success() && said.contains("1 passed"),
+                "{}:\n{said}",
+                profile.id
+            );
+        }
+    }
+
+    /// The panel this process was started for, upright and then sideways:
+    /// the Clara BW when it was started for none, which is the panel every
+    /// other test here sizes its type for.
+    fn this_panel() -> [(String, DisplayMetrics); 2] {
+        let id = std::env::var(PANEL).unwrap_or_else(|_| "clara-bw-391".to_owned());
+        let mut poses = panels().into_iter().filter(|(name, _)| {
+            name.strip_suffix(" portrait") == Some(id.as_str())
+                || name.strip_suffix(" landscape") == Some(id.as_str())
+        });
+        let upright = poses.next().expect("the panel is a supported one");
+        let sideways = poses.next().expect("every panel has two poses");
+        [upright, sideways]
+    }
+
+    /// In both poses, so on the six inch Nia's 758 by 1024 pixels as well,
+    /// which upright or sideways is the least room any supported reader has.
+    #[test]
+    fn at_every_text_size_on_every_panel_the_sheet_is_whole_between_the_bars_or_is_not_there() {
+        on_every_panel_in_a_process_of_its_own(
+            "at_every_text_size_this_panel_shows_the_sheet_whole_between_the_bars_or_not_at_all",
+        );
+    }
+
+    #[test]
+    #[ignore = "run once for each panel, in a process of its own, by the test above"]
+    fn at_every_text_size_this_panel_shows_the_sheet_whole_between_the_bars_or_not_at_all() {
+        let notes = parse(NOTES).expect("well formed");
+        let written: Vec<String> = notes.changes.iter().map(Change::written).collect();
+        for (name, metrics) in this_panel() {
+            for scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    text_scale: scale,
+                    ..metrics
+                };
+                let what = format!("{name} {scale:?}");
+                let mut runner = updated(metrics);
+                let home = painted(runner.start());
+                // The grid is already showing, so no sheet is no new screen.
+                let Some(shown) = repainted(runner.store_result(seen(None))) else {
+                    assert_nothing_is_written_down(&mut runner, &what);
+                    continue;
+                };
+                assert_eq!(
+                    sheet_title(&shown, &metrics).as_deref(),
+                    Some("What's new in Cobalt 0.3.41"),
+                    "{what}: the title was cut"
+                );
+                assert!(
+                    offers_done(&shown, &metrics),
+                    "{what}: the sheet cannot be closed"
+                );
+                // What is drawn is the first changes, each to its last
+                // word: one given up is given up whole, from the end.
+                let drawn = changes_drawn(&shown, &metrics);
+                assert_eq!(
+                    drawn,
+                    written[..drawn.len()],
+                    "{what}: a change was cut short"
+                );
+                assert_eq!(
+                    drawn.len(),
+                    changes_sent(&shown),
+                    "{what}: a change was sent and not drawn"
+                );
+                assert!(
+                    !drawn.is_empty(),
+                    "{what}: the sheet has a title and nothing under it"
+                );
+                assert_between_the_bars(&shown, &metrics, &what);
+                // The sheet gives the renderer nothing new to say about the
+                // screen but one thing: the grid's own inks and the sheet's
+                // surface make five by its count, which is advice about
+                // telling greys apart and not about anything being lost.
+                let chrome = Chrome::measuring(false);
+                let under = home.diagnostics(&metrics, &chrome).issues;
+                let issues = shown.diagnostics(&metrics, &chrome).issues;
+                assert!(
+                    issues.iter().all(|issue| under.contains(issue)
+                        || matches!(issue.kind, LayoutIssueKind::ToneBudget { .. })),
+                    "{what}: {issues:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn at_the_largest_text_size_changes_are_given_up_to_keep_the_sheet_off_the_bars() {
+        let metrics = DisplayMetrics {
+            text_scale: TextScale::Largest,
+            ..CLARA_BW_METRICS
+        };
+        let mut runner = updated(metrics);
+        runner.start();
+        let shown = painted(runner.store_result(seen(None)));
+        let drawn = changes_drawn(&shown, &metrics);
+        // All four would be drawn whole on this panel, but only by a sheet
+        // that lies across the launcher's name and its bell.
+        assert!(
+            (1..4).contains(&drawn.len()),
+            "{} changes at the largest size",
+            drawn.len()
+        );
+        assert_eq!(
+            drawn[0],
+            "Light: set the front light's brightness from Settings."
+        );
+        assert_between_the_bars(&shown, &metrics, "Clara BW at the largest size");
+        assert!(offers_done(&shown, &metrics));
+    }
+
+    #[test]
+    fn where_not_one_change_fits_between_the_bars_there_is_no_sheet_and_nothing_is_marked_seen() {
+        // No reader is this short. It stands for any panel and text size
+        // with less room between the bars than a title, a change and a
+        // button take.
+        let cramped = DisplayMetrics {
+            height: 620,
+            text_scale: TextScale::Largest,
+            ..CLARA_BW_METRICS
+        };
+        let mut runner = updated(cramped);
+        let home = painted(runner.start());
+        assert!(home.overlay.is_none());
+        assert!(
+            repainted(runner.store_result(seen(None))).is_none(),
+            "a sheet, or half of one, was drawn where none fits"
+        );
+        assert_nothing_is_written_down(&mut runner, "a cramped panel");
+        // Coming back to the grid tries again, and still finds no room.
+        runner.action(action_id(&opening(ENTRIES[STORE].name)));
+        let back = painted(runner.action(action_id("back")));
+        assert!(back.overlay.is_none());
+        assert_nothing_is_written_down(&mut runner, "a cramped panel, back on the grid");
+
+        // The same reader with room: the notes were never marked, so they
+        // are still owed, and now they are shown.
+        let mut runner = updated(CLARA_BW_METRICS);
+        runner.start();
+        assert!(painted(runner.store_result(seen(None))).overlay.is_some());
+    }
+
+    #[test]
+    fn the_title_stands_at_least_as_far_from_the_first_change_as_changes_do_from_each_other() {
+        let mut wrapped_titles = 0;
+        for (name, metrics) in panels() {
+            for scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    text_scale: scale,
+                    ..metrics
+                };
+                let mut runner = updated(metrics);
+                runner.start();
+                let Some(shown) = repainted(runner.store_result(seen(None))) else {
+                    continue;
+                };
+                if changes_sent(&shown) < 2 {
+                    continue;
+                }
+                let layout = laid_out(&shown, &metrics);
+                let title = layout
+                    .nodes
+                    .iter()
+                    .find(|node| node.kind == LayoutKind::OverlayTitle)
+                    .expect("the sheet has a title");
+                wrapped_titles += usize::from(title.text_lines.len() == 2);
+                // Each change's words, as the top of its first line and the
+                // foot of its last.
+                let spans: Vec<(i32, i32)> = shown
+                    .overlay
+                    .iter()
+                    .flat_map(|sheet| &sheet.nodes)
+                    .filter_map(|node| match node {
+                        Node::RichText { id, .. } => Some(*id),
+                        _ => None,
+                    })
+                    .map(|id| {
+                        let lines = layout.nodes.iter().filter(|node| {
+                            node.id == id
+                                && matches!(node.kind, LayoutKind::RichText(_))
+                                && !node.text_lines.is_empty()
+                        });
+                        lines.fold((i32::MAX, i32::MIN), |(top, foot), node| {
+                            (
+                                top.min(node.rect.y),
+                                foot.max(node.rect.y + node.rect.height),
+                            )
+                        })
+                    })
+                    .collect();
+                let under_the_title = spans[0].0 - (title.rect.y + title.rect.height);
+                for pair in spans.windows(2) {
+                    let between = pair[1].0 - pair[0].1;
+                    assert!(
+                        under_the_title >= between,
+                        "{name} {scale:?}: {under_the_title} under the title, \
+                         {between} between two changes"
+                    );
+                }
+            }
+        }
+        assert!(
+            wrapped_titles > 0,
+            "no size was checked with the title on two lines"
+        );
+    }
+
+    #[test]
+    fn the_committed_notes_are_shown_whole_at_the_default_size_on_every_panel() {
+        on_every_panel_in_a_process_of_its_own(
+            "the_committed_notes_are_shown_whole_at_the_default_size_on_this_panel",
+        );
+    }
+
+    /// Upright, which is how the launcher is drawn: it asks for no pose of
+    /// its own. Sideways there is a third less room between the bars, and
+    /// the sheet gives up its last change there as it does at a large text
+    /// size.
+    #[test]
+    #[ignore = "run once for each panel, in a process of its own, by the test above"]
+    fn the_committed_notes_are_shown_whole_at_the_default_size_on_this_panel() {
+        let committed = include_str!("../whats-new.txt");
+        let notes = parse(committed).expect("the committed notes parse");
+        let written: Vec<String> = notes.changes.iter().map(Change::written).collect();
+        let [(name, metrics), _] = this_panel();
+        let mut runner = AppRunner::with_metrics(released(committed, &notes.version), metrics);
+        runner.start();
+        let shown = repainted(runner.store_result(seen(None)));
+        let drawn = shown
+            .as_ref()
+            .map_or_else(Vec::new, |shown| changes_drawn(shown, &metrics));
+        assert_eq!(
+            drawn,
+            written,
+            "{name}: examples/launcher/whats-new.txt does not fit between this panel's \
+             bars at the default text size, so only its first {} changes would be \
+             shown. Shorten a change or drop one.",
+            drawn.len()
+        );
     }
 
     fn notice(

@@ -400,6 +400,12 @@ const TERMINAL_SIZE: FontSize = FontSize::Terminal;
 pub struct DisplayMetrics {
     pub width: i32,
     pub height: i32,
+    /// The density the interface is laid out at.
+    ///
+    /// The panel's own on a six inch reader, and a little above it on a
+    /// larger one, so that a millimetre asked for here is drawn larger than
+    /// life where the panel is read from further away. Build it with
+    /// [`Self::for_panel`] rather than from a profile's figure directly.
     pub pixels_per_inch: i32,
     /// The reader's preferred text size, supplied by the runtime.
     pub text_scale: TextScale,
@@ -586,7 +592,77 @@ impl Default for DisplayMetrics {
     }
 }
 
+/// How much larger than life the interface is drawn on a panel, in percent.
+///
+/// Every size in this crate is a physical one, and for a long time that was
+/// the whole rule: a button ten millimetres tall on a six inch Clara was ten
+/// millimetres tall on a ten inch Elipsa. It is the right rule for a finger
+/// and the wrong one for an eye. A larger reader is held further away, in two
+/// hands or propped on a table, so the same ten millimetres reads smaller on
+/// it, and the bars that are a comfortable ninth of a Clara were a thin strip
+/// across the top of an Elipsa with small type under it.
+///
+/// So the interface grows with the panel, by about four per cent for each
+/// centimetre the panel is wider than a six inch one: nothing on a Clara or a
+/// Nia, six per cent on a seven inch Libra, eleven on an eight inch Sage, a
+/// quarter on the Elipsa. That is well short of proportional, which would
+/// draw a ten inch reader's controls for somebody across the room, and it
+/// lands the Elipsa where a tablet sits against a phone. It never goes below
+/// life size, because a target smaller than a finger is wrong at any
+/// distance, and it stops at 130 per cent.
+///
+/// The short side is the measure, so the answer is the same whichever way up
+/// the panel is described.
+#[must_use]
+pub const fn interface_scale_percent(width: i32, height: i32, pixels_per_inch: i32) -> i32 {
+    if pixels_per_inch <= 0 {
+        return 100;
+    }
+    let short = if width < height { width } else { height };
+    let short_tenth_mm = short * 254 / pixels_per_inch;
+    let over = short_tenth_mm - SIX_INCH_SHORT_SIDE_TENTH_MM;
+    if over <= 0 {
+        return 100;
+    }
+    let percent = 100 + over * 38 / 1000;
+    if percent > 130 {
+        130
+    } else {
+        percent
+    }
+}
+
+/// The short side of a six inch three-by-four panel, with the half
+/// millimetre the 212 and 300 pixel per inch ones differ by.
+const SIX_INCH_SHORT_SIDE_TENTH_MM: i32 = 910;
+
 impl DisplayMetrics {
+    /// The metrics a panel is laid out with, from what the panel is.
+    ///
+    /// `pixels_per_inch` here is the panel's own. The density that comes back
+    /// in [`Self::pixels_per_inch`] is that raised by
+    /// [`interface_scale_percent`], which is how the interface grows on a
+    /// larger reader: every measure in this crate goes through the density, so
+    /// type, spacing, bars and targets all grow together and keep their
+    /// proportions. The runtime sends an application these same numbers, so an
+    /// application that measures a page for itself measures the page the
+    /// runtime draws, whichever release of this crate it was built against.
+    #[must_use]
+    pub const fn for_panel(
+        width: i32,
+        height: i32,
+        pixels_per_inch: i32,
+        text_scale: TextScale,
+    ) -> Self {
+        let percent = interface_scale_percent(width, height, pixels_per_inch);
+        Self {
+            width,
+            height,
+            pixels_per_inch: (pixels_per_inch * percent + 50) / 100,
+            text_scale,
+        }
+    }
+
     /// The logical viewport for this orientation.
     #[must_use]
     pub const fn oriented(mut self, orientation: Orientation) -> Self {
@@ -3211,13 +3287,59 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
 
 /// The size a screen's own title is set at, in the bar at the top.
 ///
-/// Body, not [`FontSize::Title`]. The bar names the screen you are already
-/// looking at; it is a label, not a headline, and at title size it was the
-/// loudest thing on every page, louder than the first heading of the content
-/// beneath it. Kobo's own reader sets its bar at about the size of its body
-/// text for the same reason. An overlay's title keeps the larger size, because
-/// an overlay has no content above it to compete with.
-const BAR_TITLE: FontSize = FontSize::Body;
+/// Title, which the typesetter sets in the heading cut. It was Title once
+/// before, at 4.2 millimetres under a 5.4 millimetre page heading, and came
+/// down to Body because two loud lines a centimetre apart gave every screen
+/// two titles. Body turned out to be the other mistake: in the weight and
+/// size of every row beneath it the bar read as one more line of the list,
+/// and the top of the screen had no anchor at all. Since then the scale has
+/// come down round it. Title is 3.8 millimetres and a page's heading 4.6, so
+/// the bar names the screen in the cut a book sets its running head in and
+/// the heading under it still leads the page.
+const BAR_TITLE: FontSize = FontSize::Title;
+
+/// How thick the line under the top bar is when it carries an accent, in
+/// tenths of a millimetre.
+///
+/// A rule is three tenths, which is two pixels of colour on a panel that
+/// resolves colour at half its grey resolution: a line that thin comes out
+/// grey with a fringe. Eight tenths is five colour pixels, enough to read as
+/// the colour it is, and about what the stock reader draws under its current
+/// tab. The extra is taken upwards out of the bar, so nothing under it moves.
+const BAR_ACCENT_TENTH_MM: i32 = 8;
+
+/// Where the accent is painted, given the rule under the bar: the same foot
+/// and the same width, thickened upwards into the bar.
+fn bar_accent_rect(rule: Rect, metrics: &DisplayMetrics) -> Rect {
+    let thickness = max(rule.height, metrics.tenth_mm(BAR_ACCENT_TENTH_MM));
+    Rect {
+        y: rule.y + rule.height - thickness,
+        height: thickness,
+        ..rule
+    }
+}
+
+/// How far a bar control's target hangs outside the margin so that the ink
+/// of its mark ends on it.
+struct BarHang {
+    /// For the way back, whose arrow is a narrow stroke in the middle of its
+    /// box.
+    back: i32,
+    /// For a picture, which fills its box.
+    picture: i32,
+}
+
+/// See [`BarHang`]. The mark is drawn in the middle three fifths of its
+/// target ([`bar_mark`]), and the arrow's stroke begins three eighths of the
+/// way across that.
+const fn bar_mark_hang(control: i32) -> BarHang {
+    let mark = control * 3 / 5;
+    let picture = (control - mark) / 2;
+    BarHang {
+        back: picture + mark * 3 / 8 - mark / 24,
+        picture,
+    }
+}
 
 fn layout_top_bar(
     top_bar: &TopBar,
@@ -3248,13 +3370,20 @@ fn layout_top_bar(
     // here rather than at each control, because every one of them is centred
     // against the same height.
     let control = min(metrics.touch_target_default(), height);
+    let hang = bar_mark_hang(control);
     let mut title_x = margin;
     let mut title_width = width;
     if chrome.back {
+        // The arrow stands on the margin, where the clock above it and the
+        // page under it begin, and its target reaches out towards the bezel
+        // to put it there. Centred in a square that started at the margin it
+        // stood a third of a centimetre in from everything else on the
+        // screen, a mark belonging to neither the edge nor the title.
+        let x = max(0, margin - hang.back);
         layout.nodes.push(LayoutNode {
             id: top_bar.id,
             rect: Rect {
-                x: margin,
+                x,
                 y: top + (height - control) / 2,
                 width: control,
                 height: control,
@@ -3262,14 +3391,27 @@ fn layout_top_bar(
             kind: LayoutKind::Back,
             text_lines: Vec::new(),
         });
-        let taken = control.saturating_add(metrics.space(Space::Small));
+        let taken = (x + control).saturating_sub(margin);
         title_x = title_x.saturating_add(taken);
         title_width = title_width.saturating_sub(taken);
     }
     // Right to left, in the order they were added, so adding a control never
     // moves the one that was already there: a reader who knows where "Aa" is
     // must still find it there on the next screen that carries it.
-    let mut action_right = metrics.width - margin;
+    //
+    // A picture's ink ends on the margin too, under the battery, so the first
+    // target starts a little outside it. Words already end where their box
+    // does and are left where they were.
+    let leads_with_picture = top_bar
+        .actions
+        .first()
+        .is_some_and(|action| action.glyph.is_some());
+    let mut action_right = metrics.width - margin
+        + if leads_with_picture {
+            min(hang.picture, margin)
+        } else {
+            0
+        };
     for action in top_bar.actions.iter().take(MAX_BAR_ACTIONS) {
         let wanted = if action.glyph.is_some() {
             // Square. A picture has no natural width to measure, and a target
@@ -3343,7 +3485,12 @@ fn layout_top_bar(
             width: metrics.width,
             height: metrics.rule_thickness(),
         },
-        kind: LayoutKind::Divider,
+        // Its own kind and not a plain divider, so the painter can tell the
+        // one rule that may carry a screen's accent from every other rule on
+        // the page. It is still one node where there was one: applications'
+        // routes address a screen's nodes by position, and a second node for
+        // the accent moved every one of them along by a place.
+        kind: LayoutKind::BarRule,
         text_lines: Vec::new(),
     });
     // Where the bar ends, not how tall it is. Returning the height was right
@@ -5896,6 +6043,11 @@ pub enum LayoutKind {
     PagedList,
     TopBar,
     TopBarTitle,
+    /// The line that closes the top bar. A rule like any other on a grey
+    /// panel and under a screen with no accent; on a colour panel a screen's
+    /// accent is drawn here, heavier, rising into the bar from the rule's
+    /// own foot.
+    BarRule,
     /// Emitted only by the runtime, never by an application.
     Back,
     BarAction(ActionId),
@@ -18443,6 +18595,12 @@ fn paint_layout(
             // screen in the same colour and the content between them would
             // be the quietest thing on the panel.
             LayoutKind::TopBar => fill_clipped(surface, node.rect, palette.bar(), clip),
+            LayoutKind::BarRule => match palette.bar_rule() {
+                Some(accent) => {
+                    fill_clipped(surface, bar_accent_rect(node.rect, metrics), accent, clip);
+                }
+                None => fill_clipped(surface, node.rect, tone::RULE, clip),
+            },
             LayoutKind::NavBar => fill_clipped(surface, node.rect, tone::PAPER, clip),
             // Paper, not surface. The band is the quietest thing on the panel
             // and a tinted strip across the top of every screen is a permanent

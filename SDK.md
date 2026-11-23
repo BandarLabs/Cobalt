@@ -419,7 +419,11 @@ There is no free-form drawing, no colour of your own, no font choice and no
 pixel positioning. Every size comes from the panel's *physical* dimensions, so a
 control that is comfortable under a thumb on a six inch panel is comfortable on
 a ten inch one, and a line of text holds roughly the same number of words on
-both.
+both. A larger reader is held further away, so the runtime draws the whole
+interface a little over life size on one: six per cent on a seven inch panel,
+a quarter on a ten inch one, nothing on six inches. It does this through the
+density it hands the application in `context.metrics()`, so measure with those
+metrics rather than with a figure from a specification sheet.
 
 Wrapping uses the installed face's measured glyph advances, Unicode line-break
 opportunities and grapheme boundaries. It does not estimate from character
@@ -947,7 +951,9 @@ at seven to one contrast or better before the filter takes its share, and both
 among the 4096 colours the panel resolves so what is sent is what is shown. On a
 colour reader an accent does one thing with several parts:
 
-- the top bar is filled with the tint, its title and controls still in ink;
+- the line under the top bar is drawn in the strong shade, a little heavier
+  than the grey rule it replaces; the bar itself stays paper, its title and
+  controls in ink;
 - the primary button is filled with the strong shade, its label in paper;
 - the mark under the current destination, a selected chip or tab, a switch
   that is on, a ticked box, a chosen option, the filled part of a progress bar,
@@ -956,8 +962,8 @@ colour reader an accent does one thing with several parts:
 - the square in hand on a chess or draughts board, and the word a crossword
   is solving, take the tint.
 
-An application with no accent keeps a paper bar and has its controls drawn in
-the platform's own cobalt. Some colours are the platform's whatever the
+An application with no accent keeps the grey rule under its bar and has its
+controls drawn in the platform's own cobalt. Some colours are the platform's whatever the
 application's accent is, the way every phone draws its own red for an error:
 banners are green for success, red for an error and amber for attention, and
 keep their mark and outline; a text field whose value was refused is tinted

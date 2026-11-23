@@ -613,12 +613,12 @@ mod tests {
                 kobo_ui::TextScale::Large,
                 kobo_ui::TextScale::ExtraLarge,
             ] {
-                let metrics = crate::DisplayMetrics {
-                    width: i32::try_from(profile.width).unwrap(),
-                    height: i32::try_from(profile.height).unwrap(),
-                    pixels_per_inch: i32::from(profile.pixels_per_inch),
-                    text_scale: scale,
-                };
+                let metrics = crate::DisplayMetrics::for_panel(
+                    i32::try_from(profile.width).unwrap(),
+                    i32::try_from(profile.height).unwrap(),
+                    i32::from(profile.pixels_per_inch),
+                    scale,
+                );
                 #[cfg(feature = "text")]
                 kobo_text::install(metrics).unwrap();
                 let mut setup = ProviderSetup::new("Miniflux", "miniflux", "/v1/me", true).unwrap();

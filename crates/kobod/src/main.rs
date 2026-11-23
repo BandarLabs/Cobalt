@@ -35,8 +35,12 @@ fn metrics_for_profile(
             profile.id
         )
     })?;
-    metrics.pixels_per_inch = i32::from(profile.pixels_per_inch);
-    Ok(metrics)
+    Ok(kobo_ui::DisplayMetrics::for_panel(
+        metrics.width,
+        metrics.height,
+        i32::from(profile.pixels_per_inch),
+        metrics.text_scale,
+    ))
 }
 
 /// Returns immutable hardware metrics after a verified device session starts,
@@ -1385,7 +1389,9 @@ mod tests {
             .expect("the supported profile fits layout coordinates");
         assert_eq!(metrics.width, 1404);
         assert_eq!(metrics.height, 1872);
-        assert_eq!(metrics.pixels_per_inch, 227);
+        // The panel is 227 pixels to the inch; a ten inch reader is laid out
+        // a quarter larger than life.
+        assert_eq!(metrics.pixels_per_inch, 284);
         assert_eq!(metrics.text_scale, kobo_ui::TextScale::Large);
     }
 

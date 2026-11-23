@@ -74,6 +74,8 @@ gh workflow run "Publish beta platform" --ref beta
    assets, their signed manifest, and the bootstrap installer. Later app-only
    pushes at the same version leave that platform release unchanged, and a
    platform bump does not republish `app-catalog-beta`.
+   In the same commit, rewrite `examples/launcher/whats-new.txt` for the new
+   version; see [What's new](#whats-new).
 3. Install the beta release through **Settings ▸ Software update** and record
    the tested commit and archive SHA-256.
    From 0.3.38 an update is staged beside the installation and takes over the
@@ -111,6 +113,26 @@ gh workflow run "Publish beta platform" --ref beta
 
    Do not run **Promote tested beta apps**. That workflow replaces the stable
    Store catalog and does not create `vX.Y.Z`.
+
+### What's new
+
+The first time the launcher opens after an update it shows a short sheet,
+once: `What's new in Cobalt X.Y.Z` and the changes listed in
+`examples/launcher/whats-new.txt`. The file is compiled in and is shown only
+under the version on its first line, so a release cut without rewriting it
+tells owners nothing.
+
+In the commit that bumps the workspace version:
+
+1. Put the new version on the file's first line.
+2. Replace every change with this release's: two to five lines, each
+   `Lead words: one sentence.`, the one most worth knowing first. A large
+   text size drops changes from the end.
+3. Put the same version and leads in `examples/launcher/drive-whats-new.kobo`.
+4. Run `cargo test -p kobo-launcher`. It checks the format, that the list
+   fits every supported panel at the default text size, and that the file is
+   for this version or the next patch. That last check is the one that fails
+   when a bump leaves the file behind.
 
 Direct stable publication from `main` is intentionally disabled for Store
 applications. A successful build is necessary but does not replace physical

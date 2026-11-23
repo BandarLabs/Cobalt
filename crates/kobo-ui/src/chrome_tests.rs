@@ -12,21 +12,102 @@ fn kinds(layout: &Layout) -> Vec<LayoutKind> {
 }
 
 #[test]
-fn the_bar_names_the_screen_without_shouting_over_it() {
-    // The bar says which screen you are on. It is a label, not a headline,
-    // and at title size it was the loudest thing on every page, larger
-    // than the first heading of the content underneath it, which inverts
-    // the hierarchy Kobo's own reader uses.
-    assert!(
-        layout_text_style(&LayoutNode {
-            id: NodeId(1),
-            rect: Rect::default(),
-            kind: LayoutKind::TopBarTitle,
-            text_lines: vec!["Cobalt".to_owned()],
-        })
-        .is_some_and(|(size, _)| size.tenth_mm() < FontSize::Title.tenth_mm()),
-        "the bar title is still set at title size"
-    );
+fn the_bar_title_is_set_as_a_title_and_stays_under_the_pages_heading() {
+    // The bar is the running head of the screen. In the body size and weight
+    // it was one more line of grey text between the clock and the page, and
+    // the bar carried nothing; in the heading cut at title size it names the
+    // screen, and a page's own heading is still a step above it.
+    let style = layout_text_style(&LayoutNode {
+        id: NodeId(1),
+        rect: Rect::default(),
+        kind: LayoutKind::TopBarTitle,
+        text_lines: vec!["Cobalt".to_owned()],
+    });
+    assert!(style.is_some_and(|(size, _)| size == FontSize::Title));
+    assert!(FontSize::Title.tenth_mm() < FontSize::Heading.tenth_mm());
+    for (name, metrics) in PANELS {
+        assert!(
+            FontSize::Title.line_height() <= metrics.top_bar_height(),
+            "{name}: the title is taller than its bar"
+        );
+    }
+}
+
+#[test]
+fn the_way_back_stands_on_the_margin_with_the_clock_and_the_page() {
+    for (name, metrics) in PANELS {
+        let screen = Screen::new(1, Vec::new()).with_top_bar(TopBar::new(NodeId(1), "Battery"));
+        let layout = screen.layout_with(&metrics, &Chrome::with_back(true));
+        let back = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Back)
+            .map(|node| node.rect)
+            .expect("the way back");
+        // The stroke of the arrow begins three eighths of the way across the
+        // mark, less half its own weight.
+        let mark = bar_mark(back);
+        let ink = mark.x + mark.width * 3 / 8 - mark.width / 24;
+        assert!(
+            (ink - metrics.screen_margin()).abs() <= 1,
+            "{name}: the arrow starts at {ink}, the margin is {}",
+            metrics.screen_margin()
+        );
+        assert!(back.x >= 0, "{name}: the target leaves the panel");
+        assert!(
+            back.width >= metrics.touch_target_minimum()
+                && back.height >= metrics.touch_target_minimum(),
+            "{name}: the way back is smaller than a finger"
+        );
+        let title = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::TopBarTitle)
+            .map(|node| node.rect)
+            .expect("the title");
+        assert!(
+            title.x >= back.x + back.width,
+            "{name}: the title is under the arrow"
+        );
+    }
+}
+
+#[test]
+fn a_picture_in_the_bar_ends_on_the_margin_and_words_stay_inside_it() {
+    for (name, metrics) in PANELS {
+        let margin = metrics.screen_margin();
+        let picture = Screen::new(1, Vec::new()).with_top_bar(
+            TopBar::new(NodeId(1), "Cobalt")
+                .with_action(BarAction::new(ActionId(7), "Notices").with_glyph(Glyph::Bell)),
+        );
+        let layout = picture.layout_with(&metrics, &Chrome::with_back(false));
+        let target = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::BarGlyph(..)))
+            .map(|node| node.rect)
+            .expect("the picture");
+        let mark = bar_mark(target);
+        assert!(
+            (mark.x + mark.width - (metrics.width - margin)).abs() <= 1,
+            "{name}: the picture ends at {}, the margin is at {}",
+            mark.x + mark.width,
+            metrics.width - margin
+        );
+        assert!(target.x + target.width <= metrics.width, "{name}");
+
+        let words = Screen::new(1, Vec::new()).with_top_bar(
+            TopBar::new(NodeId(1), "Cobalt").with_action(BarAction::new(ActionId(7), "Edit")),
+        );
+        let layout = words.layout_with(&metrics, &Chrome::with_back(false));
+        let target = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::BarAction(_)))
+            .map(|node| node.rect)
+            .expect("the words");
+        assert_eq!(target.x + target.width, metrics.width - margin, "{name}");
+    }
 }
 
 #[test]

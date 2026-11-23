@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -31,6 +32,11 @@ def main():
         evidence.mkdir()
         with tempfile.TemporaryDirectory(prefix='cobalt-export-', dir='/tmp') as private:
             private = Path(private)
+            # A reader whose owner has read the What's new notes: the launcher
+            # would otherwise open on that sheet from the day the workspace
+            # version is the one the notes are for.
+            subprocess.run([sys.executable, str(ROOT / 'scripts/sim-notes-read.py'), str(private)],
+                           check=True)
             env = dict(os.environ, TMPDIR=str(private), KOBO_SIM_PROFILE='clara-bw-391',
                        KOBO_TEXT_SCALE='extra-large', KOBO_SIM_SEED='0', KOBO_FIXTURE_REVISION=head)
             env.pop('KOBO_SOCKET', None)

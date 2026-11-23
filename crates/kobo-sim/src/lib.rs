@@ -216,12 +216,18 @@ fn profile_appearance() -> kobo_ui::Appearance {
 }
 
 fn profile_metrics() -> DisplayMetrics {
-    DisplayMetrics {
-        width: i32::try_from(PROFILE.width).unwrap_or(i32::MAX),
-        height: i32::try_from(PROFILE.height).unwrap_or(i32::MAX),
-        pixels_per_inch: i32::from(PROFILE.pixels_per_inch),
-        text_scale: kobo_ui::display_metrics_from_env().text_scale,
-    }
+    DisplayMetrics::for_panel(
+        i32::try_from(PROFILE.width).unwrap_or(i32::MAX),
+        i32::try_from(PROFILE.height).unwrap_or(i32::MAX),
+        i32::from(PROFILE.pixels_per_inch),
+        kobo_ui::display_metrics_from_env().text_scale,
+    )
+}
+
+/// The density an application is told to measure at: the one the simulator
+/// lays out with, which on a larger reader is above the panel's own.
+fn layout_density() -> u16 {
+    u16::try_from(profile_metrics().pixels_per_inch).unwrap_or(u16::MAX)
 }
 
 /// The facts about the selected reader that its panel profile does not hold.
@@ -827,7 +833,7 @@ impl AppServer {
                 message: Message::Welcome {
                     width: u16::try_from(PROFILE.width).unwrap_or(u16::MAX),
                     height: u16::try_from(PROFILE.height).unwrap_or(u16::MAX),
-                    pixels_per_inch: PROFILE.pixels_per_inch,
+                    pixels_per_inch: layout_density(),
                     text_scale: profile_metrics().text_scale,
                     colour_panel: PROFILE.colour_panel,
                 },
@@ -1383,6 +1389,7 @@ impl Default for SimulatedApps {
                     "battery-read",
                     "bluetooth-control",
                     "wifi-control",
+                    "frontlight-control",
                 ],
                 true,
             ),
@@ -6657,7 +6664,7 @@ mod tests {
                 Message::Welcome {
                     width: u16::try_from(PROFILE.width).expect("profile width"),
                     height: u16::try_from(PROFILE.height).expect("profile height"),
-                    pixels_per_inch: PROFILE.pixels_per_inch,
+                    pixels_per_inch: layout_density(),
                     text_scale: kobo_ui::TextScale::Default,
                     colour_panel: PROFILE.colour_panel,
                 }

@@ -10,12 +10,12 @@ fn panels() -> Vec<(String, DisplayMetrics)> {
         .iter()
         .flat_map(|profile| {
             scales.into_iter().flat_map(move |text_scale| {
-                let portrait = DisplayMetrics {
-                    width: i32::try_from(profile.width).expect("profile width fits layout"),
-                    height: i32::try_from(profile.height).expect("profile height fits layout"),
-                    pixels_per_inch: i32::from(profile.pixels_per_inch),
+                let portrait = DisplayMetrics::for_panel(
+                    i32::try_from(profile.width).expect("profile width fits layout"),
+                    i32::try_from(profile.height).expect("profile height fits layout"),
+                    i32::from(profile.pixels_per_inch),
                     text_scale,
-                };
+                );
                 let landscape = DisplayMetrics {
                     width: portrait.height,
                     height: portrait.width,

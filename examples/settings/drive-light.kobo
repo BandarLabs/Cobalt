@@ -1,0 +1,76 @@
+# The Light page steps the reader's own front light and shows the level the
+# light answers: by fives above 10%, by ones at the dim end, stopping at off
+# and at full. A level moved while Settings was away is read when it comes
+# back, a refused step is said over the control, and the home row says the
+# level the page left.
+wait-for Settings
+tap-paged Light
+wait-for Brightness
+expect 20%
+expect Lasts until Cobalt closes. The Kobo reader keeps its own level.
+expect-missing Reading the light.
+expect-state /device#/frontlightPercent 20
+shot settings-light
+tap-id light-brighter
+wait-for 25%
+expect-state /device#/frontlightPercent 25
+tap-id light-dimmer
+wait-for 20%
+expect-state /device#/frontlightPercent 20
+# A step the runtime refuses leaves the light and the level where they were,
+# with the reason over the control, and the next step that is taken clears it.
+scenario permission-denied
+tap-id light-brighter
+wait-for Cobalt did not allow Settings to do that.
+expect 20%
+expect-missing Read again
+expect-state /device#/frontlightPercent 20
+shot settings-light-refused
+scenario normal
+tap-id light-brighter
+wait-for 25%
+expect-missing Cobalt did not allow Settings to do that.
+expect-state /device#/frontlightPercent 25
+# Something else moved the light while Settings was in the background. At
+# the dim end a step is one percent.
+lifecycle background
+device frontlight 11
+lifecycle foreground
+wait-for 11%
+tap-id light-dimmer
+wait-for 10%
+expect-state /device#/frontlightPercent 10
+tap-id light-dimmer
+wait-for 9%
+expect-state /device#/frontlightPercent 9
+shot settings-light-dim
+tap-id light-brighter
+wait-for 10%
+tap-id light-brighter
+wait-for 15%
+expect-state /device#/frontlightPercent 15
+# The last step down is off, and the first step up from off is 1%.
+lifecycle background
+device frontlight 1
+lifecycle foreground
+wait-for 1%
+tap-id light-dimmer
+wait-for Off
+expect-state /device#/frontlightPercent 0
+shot settings-light-off
+tap-id light-brighter
+wait-for 1%
+expect-state /device#/frontlightPercent 1
+# A level between two fives joins them, and the top is exactly full.
+lifecycle background
+device frontlight 97
+lifecycle foreground
+wait-for 97%
+tap-id light-brighter
+wait-for 100%
+expect-state /device#/frontlightPercent 100
+shot settings-light-full
+tap-id 4294967295
+wait-for Settings
+expect Light
+expect 100%

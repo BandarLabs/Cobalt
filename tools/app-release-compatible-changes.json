@@ -551,6 +551,17 @@
      "compatible_blob": "76050d7d90488da58c77c2c08eca2f58baf40cd6"
     }
    ]
+  },
+  {
+   "protocol_version": 18,
+   "reason": "Promoting 0.3.40 checks the lock against the stable catalog's source, 9deb1504, instead of beta's. Since that commit nine of the workspace's own packages changed their entries in the lock: kobo-sdk, kobo-cli, kobo-sidekickd and kobo-wifi-trace for the Windows host support, kobo-article, kobo-settings, kobo-gallery and kobo-paperterm for dependencies between workspace crates, and kobo-tailscale, which is new. No package from the registry changed version. Each change was reviewed on beta against beta's base, and those entries name beta's lock blobs, so none of them match stable's. The promotion copies beta's published packages to stable byte for byte.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "ecb30d997c709f521d253dc3d62065e0fde65320",
+     "compatible_blob": "9f3996c82e91ac43fd717c5e03583bf286e3f1cb"
+    }
+   ]
   }
  ]
 }
