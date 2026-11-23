@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -35,6 +36,11 @@ def main():
         items = Path(private) / 'cobalt-sim-state/todo/items'
         items.parent.mkdir(parents=True)
         items.write_text('- Read the garden notes\n')
+        # A reader whose owner has read the What's new notes: the launcher
+        # would otherwise open on that sheet from the day the workspace version
+        # is the one the notes are for.
+        subprocess.run([sys.executable, str(ROOT / 'scripts/sim-notes-read.py'), str(private)],
+                       check=True)
         env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(target),
                    CARGO_PROFILE_DEV_DEBUG='0', CARGO_INCREMENTAL='0',
                    KOBO_SIM_PROFILE='clara-bw-391', KOBO_TEXT_SCALE=args.scale,

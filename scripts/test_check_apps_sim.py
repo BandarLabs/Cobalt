@@ -50,6 +50,20 @@ class SimulatorRunnerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     runner.route_directive(route)
 
+    def test_a_launcher_is_seeded_as_a_reader_whose_owner_has_read_the_notes(self):
+        # Otherwise every launcher route opens on the What's new sheet from
+        # the day the workspace version is the one the notes are for.
+        notes = (runner.ROOT / 'examples/launcher/whats-new.txt').read_text().splitlines()
+        version = next(line.strip() for line in notes
+                       if line.strip() and not line.startswith('#'))
+        with tempfile.TemporaryDirectory() as state:
+            env = dict(os.environ, TMPDIR=state)
+            env.pop('KOBO_SIM_DATA', None)
+            with open(os.devnull, 'w') as log:
+                runner.seed('launcher', state, Path('kobo'), env, log)
+            seen = Path(state) / 'cobalt-sim-state/launcher/whats-new-seen'
+            self.assertEqual(seen.read_text(), version)
+
     def swept(self, routes, down):
         """Sweeps a made-up app whose routes are `routes`, with `down` not answering."""
         with tempfile.TemporaryDirectory() as temporary:
