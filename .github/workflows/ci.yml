@@ -1,8 +1,27 @@
 name: CI
 
+# A branch with a pull request open used to run everything twice, once for
+# the push and once for the pull request, on the same commit: two sets of
+# simulator shards and release builds for one answer. A push runs this only
+# on the two channel branches and on tags, where there is no pull request to
+# run it; everything else is checked through its pull request.
 on:
   push:
+    branches: [main, beta]
+    tags: ["**"]
   pull_request:
+
+# A newer push to a pull request makes the run on the older commit an answer
+# nobody is waiting for, so it is stopped. A channel branch keeps every run:
+# each of its commits is a merge somebody may need the result of, and the
+# beta release waits on this workflow passing for its exact commit. Runs
+# that share a group are not only cancelled while running: a run still
+# waiting is dropped when a newer one joins, whatever cancel-in-progress
+# says. So a push gets a group of its own, and only a pull request's runs
+# share one.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -33,7 +52,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - name: Test the POSIX host installer
         run: |
-          sh -n install.sh docs/install.sh tools/installer-test.sh tools/build-host-release.sh
+          sh -n install.sh docs/install.sh tools/installer-test.sh tools/build-host-release.sh tools/build-macos-shell.sh
           tools/installer-test.sh
       - run: node --test tools/*.test.mjs
       - name: Require current generated app pages
@@ -75,7 +94,10 @@ jobs:
                   summary.write("| App | Coverage | Result |\n| --- | --- | --- |\n")
                   for result in report["results"]:
                       coverage = "drive route" if result.get("route") else "launch only"
-                      summary.write(f"| {result['app']} | {coverage} | {result['status']} |\n")
+                      # A route left out because a site it reads was down
+                      # says so here, where the outcome is read.
+                      outcome = result["status"] + (f": {result['reason']}" if result.get("reason") else "")
+                      summary.write(f"| {result['app']} | {coverage} | {outcome} |\n")
               for result in report["results"]:
                   if result["status"] != "pass":
                       log = path.parent / (result["app"].replace(":", "-") + ".log")
@@ -106,6 +128,118 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes protobuf-compiler libclang-dev pkg-config
       - name: Test the standalone importer with its own lockfile
         run: cargo test --locked --manifest-path crates/kobo-flashcards-import/Cargo.toml
+
+  device-emulated:
+    # Runs the device-side suites under ARM user-mode emulation (qemu-arm).
+    # This verifies logic, syscalls and musl/ARM codegen for the companion
+    # binaries. It does not verify real device kernel behavior -
+    # framebuffer/input ioctls, Nickel integration, suspend timing, radio
+    # firmware - so hardware-coupled paths stay UNVERIFIED on real hardware;
+    # the matrix lives in docs/WINDOWS.md. Any test that cannot run under
+    # emulation gets an explicit named cfg skip with its reason, never a
+    # silent drop.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+          targets: armv7-unknown-linux-musleabihf
+      - name: Install qemu-arm user-mode emulation
+        run: sudo apt-get update && sudo apt-get install --yes qemu-user
+      # The same pinned Zig musl cross-compiler device-build uses; see that
+      # job for why the device C cannot come from the armhf glibc toolchain.
+      - name: Install the musl cross-compiler the device C needs
+        run: |
+          set -eu
+          zig_downloaded=false
+          for zig_url in \
+            'https://pkg.hexops.org/zig/zig-x86_64-linux-0.16.0.tar.xz?source=cobalt-ci' \
+            'https://ziglang.freetls.fastly.net/zig-x86_64-linux-0.16.0.tar.xz?source=cobalt-ci' \
+            'https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz'; do
+            if curl -fL --connect-timeout 15 --max-time 120 \
+              --speed-limit 1024 --speed-time 20 -o /tmp/zig.tar.xz "$zig_url" \
+              && echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" \
+                | sha256sum -c -; then
+              zig_downloaded=true
+              break
+            fi
+            echo "::warning::Could not obtain the pinned Zig archive from $zig_url"
+          done
+          if [ "$zig_downloaded" != true ]; then
+            echo "No source supplied the pinned Zig archive" >&2
+            exit 1
+          fi
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt
+          sudo tee /usr/local/bin/armv7-musl-cc >/dev/null <<'CC'
+          #!/bin/sh
+          # cc-rs passes --target=armv7-unknown-linux-musleabihf. Zig spells the
+          # same machine arm-linux-musleabihf and refuses "armv7", so the triple
+          # comes from here and the one we are handed is dropped.
+          zig=/opt/zig-x86_64-linux-0.16.0/zig
+          count=$#
+          index=0
+          while [ "$index" -lt "$count" ]; do
+            argument="$1"
+            shift
+            case "$argument" in
+              --target=*) ;;
+              *) set -- "$@" "$argument" ;;
+            esac
+            index=$((index + 1))
+          done
+          # Zig instruments with UBSan by default and does not link its runtime,
+          # so sqlite3.c ends up referencing __ubsan_handle_* that nothing
+          # defines. The device build is not a sanitiser run.
+          exec "$zig" cc -target arm-linux-musleabihf -fno-sanitize=undefined "$@"
+          CC
+          sudo chmod +x /usr/local/bin/armv7-musl-cc
+          armv7-musl-cc --version
+      - name: Test the device-side suites under qemu-arm
+        run: >-
+          cargo test --locked --target armv7-unknown-linux-musleabihf
+          -p kobo-abi -p kobo-hal -p kobod
+          -p kobo-tap -p kobo-guard -p kobo-handoff -p kobo-smoke
+          --all-features --no-fail-fast
+        env:
+          CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUNNER: qemu-arm
+          # Marks emulation so tests whose assumptions qemu-user cannot meet
+          # (no emulated devpts for posix_openpt) skip by name instead of
+          # failing; each skip prints its reason.
+          KOBO_QEMU_EMULATED: "1"
+      # Prove the shipped artifacts execute, not just link. An application
+      # error exit is a pass here - the binary ran; only an exec-level
+      # failure (127/126 or an emulator crash by signal) fails the step.
+      - name: Execute the device binaries under qemu-arm
+        run: |
+          set -u
+          cargo build --locked --target armv7-unknown-linux-musleabihf \
+            -p kobod -p kobo-tap -p kobo-guard -p kobo-handoff -p kobo-smoke \
+            --all-features
+          failed=false
+          for bin in kobod kobo-tap kobo-guard kobo-handoff kobo-smoke; do
+            artifact="target/armv7-unknown-linux-musleabihf/debug/$bin"
+            if [ ! -x "$artifact" ]; then
+              echo "missing artifact: $artifact" >&2
+              failed=true
+              continue
+            fi
+            echo "== $bin --help =="
+            # An application error exit (a usage answer is typically 1) means
+            # the binary ran; only exec-level failure counts. `|| status=$?`
+            # keeps the step's -e shell from aborting on that expected exit.
+            status=0
+            qemu-arm "$artifact" --help || status=$?
+            if [ "$status" -ge 126 ]; then
+              echo "$bin did not execute under qemu-arm (exit $status)" >&2
+              failed=true
+            fi
+          done
+          [ "$failed" = false ]
+        env:
+          CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
 
   device-build:
     runs-on: ubuntu-latest
@@ -210,6 +344,15 @@ jobs:
           set -o pipefail
           release_tag="$(node tools/app-catalog-channel.mjs)"
           echo "Checking app versions against the $release_tag channel."
+          # Forks publish no app-catalog channel, so a push to a fork has no
+          # base release to compare against and the gate skips there. The
+          # skip is keyed on the repository, not on the lookup failing: a
+          # rate limit or an outage upstream must stop the build, not wave
+          # an unversioned app change through.
+          if [ "$GITHUB_REPOSITORY" != "BandarLabs/Cobalt" ]; then
+            echo "$GITHUB_REPOSITORY publishes no $release_tag channel; skipping the app-version gate on this fork."
+            exit 0
+          fi
           mkdir -p published-state
           # The catalog that names every mark is the one this tree describes.
           # A channel last published before there were two catalogs has only
@@ -327,6 +470,16 @@ jobs:
           test -x "target/${{ matrix.target }}/release/kobo"
           test -x "target/${{ matrix.target }}/release/kobo-sidekickd"
           echo "built ${{ matrix.platform }}"
+      # The Mac app is a Swift package that nothing else compiles or tests,
+      # so both happen here on both Mac runners or it would only be found
+      # broken by whoever next built a release.
+      - name: Build the Cobalt app and run its tests
+        if: runner.os == 'macOS'
+        run: |
+          swift test --package-path desktop/macos
+          tools/build-macos-shell.sh
+          test -x target/macos-shell/Cobalt.app/Contents/MacOS/Cobalt
+          codesign --verify --strict target/macos-shell/Cobalt.app
 
   advisories:
     runs-on: ubuntu-latest
@@ -418,6 +571,20 @@ jobs:
           #   and the advisory names that path as unaffected.
           # Re-check when the anki pin moves.
           #
+          # zip before 9 has two more. RUSTSEC-2026-0548 is ZipStreamReader
+          # extracting entries under the names in their local headers, which
+          # can differ from the central directory; nothing audited here reads
+          # an archive as a stream, for the reasons given for its extract
+          # above. RUSTSEC-2026-0545 is AES entries returned without their
+          # authentication code being checked when the data ends early. That
+          # code is behind zip's aes-crypto feature, which no lockfile here
+          # enables: kobo-comic takes zip with deflate alone, the importer
+          # with deflate alone, and neither resolves the aes, hmac or pbkdf2
+          # crates the feature brings. The fix is the same zip 9, with the
+          # same rustc 1.88 and anki pin in the way.
+          # Re-check on the same conditions, and if any crate turns
+          # aes-crypto on.
+          #
           # libsqlite3-sys before 0.39 bundles SQLite before 3.54, which has
           # RUSTSEC-2026-0459: a database opened together with a crafted -wal
           # file of another page size can return stale process memory. The
@@ -436,6 +603,8 @@ jobs:
             --ignore RUSTSEC-2026-0368
             --ignore RUSTSEC-2026-0369
             --ignore RUSTSEC-2026-0429
+            --ignore RUSTSEC-2026-0545
+            --ignore RUSTSEC-2026-0548
             --ignore RUSTSEC-2026-0433
             --ignore RUSTSEC-2026-0387
             --ignore RUSTSEC-2025-0044

@@ -35,7 +35,7 @@ over Wi-Fi, and your Kobo's own reader stays as it was.
 
 > [!IMPORTANT]
 > Tested on the Kobo Clara BW (N365 and the 2025 P365), Clara Colour, Clara HD,
-> Elipsa 2E, Libra 2, Libra Colour and Libra H2O, at the firmware listed in the
+> Elipsa 2E, Libra 2, Libra Colour, Libra H2O and Nia, at the firmware listed in the
 > [device support matrix](docs/DEVICES.md#device-support-matrix). Other Kobos
 > can run it too: Cobalt lists what has not been tested and asks once before
 > it starts. Kobo firmware 5.x is not supported. Cobalt is not affiliated with
@@ -162,13 +162,13 @@ Screenshots are from a Kobo Clara BW or its simulator.
 <td width="33%" valign="top"><a href="apps/syncthing/README.md"><img width="230" src="docs/media/site/apps/syncthing.png" alt="Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it."></a><br><b><a href="apps/syncthing/README.md">Sync</a></b><br>Sync folders between your computer and your Kobo with Syncthing. Needs your computer.</td>
 </tr>
 <tr>
+<td width="33%" valign="top"><a href="apps/tailscale/README.md"><img width="230" src="docs/media/site/apps/tailscale.png" alt="Tailscale connected on a Kobo, with the reader's tailnet name and address"></a><br><b><a href="apps/tailscale/README.md">Tailscale</a></b><br>Put your Kobo on your tailnet, so your computer reaches it from any network.</td>
 <td width="33%" valign="top"><a href="examples/tictactoe/README.md"><img width="230" src="docs/media/site/apps/tictactoe.png" alt="A completed game of tic-tac-toe on a Kobo"></a><br><b><a href="examples/tictactoe/README.md">Tic-tac-toe</a></b><br>Play tic-tac-toe together on one Kobo.</td>
 <td width="33%" valign="top"><a href="examples/todo/README.md"><img width="230" src="docs/media/site/apps/todo.png" alt="A to-do list with four open items and one done on a Kobo."></a><br><b><a href="examples/todo/README.md">Todo</a></b><br>Keep a simple to-do list that stays on your Kobo.</td>
-<td width="33%" valign="top"><a href="apps/vault/README.md"><img width="230" src="docs/media/site/apps/vault.png" alt="Vault home on a Kobo with eight notes and Browse, Tags, Recent and Search rows."></a><br><b><a href="apps/vault/README.md">Vault</a></b><br>Browse your notes by folder, tag, link, and backlink. Needs your computer.</td>
 </tr>
 <tr>
+<td width="33%" valign="top"><a href="apps/vault/README.md"><img width="230" src="docs/media/site/apps/vault.png" alt="Vault home on a Kobo with eight notes and Browse, Tags, Recent and Search rows."></a><br><b><a href="apps/vault/README.md">Vault</a></b><br>Browse your notes by folder, tag, link, and backlink. Needs your computer.</td>
 <td width="33%" valign="top"><a href="apps/verses/README.md"><img width="230" src="docs/media/site/apps/verses.png" alt="William Blake's The Tiger in Verses, set in a spacious Kobo reading layout."></a><br><b><a href="apps/verses/README.md">Verses</a></b><br>Read a public-domain poem each day.</td>
-<td></td>
 <td></td>
 </tr>
 </table>
@@ -176,6 +176,30 @@ Screenshots are from a Kobo Clara BW or its simulator.
 
 Want an app that is not here? Add it to the
 [app request thread](https://github.com/BandarLabs/Cobalt/issues/41).
+
+## Desktop app
+
+`kobo ui` opens Cobalt in a window on your computer. It sets up a reader,
+installs, updates and removes apps over the cable, and sends files and web
+articles to the reader over Wi-Fi. On a Mac the window is a native app, which
+the installer puts beside the `kobo` command; elsewhere it is a page in your
+browser.
+
+<p align="center">
+  <img src="docs/media/desktop/mac-apps.png" width="860" alt="The Cobalt Mac app on its Apps place, showing the apps on a Kobo Clara BW, each by a picture of its first screen">
+</p>
+
+<p align="center">
+  <img src="docs/media/desktop/mac-app-page.png" width="860" alt="The Cobalt Mac app on the page for Chess, with the app's first screen, what it does, its version and size, what it needs and an Install button">
+</p>
+
+<p align="center">
+  <img src="docs/media/desktop/mac-send.png" width="860" alt="The Cobalt Mac app on its Send place, sending a comic to the reader, with a field for a web article and two articles waiting for the reader"><br>
+  <sub>The Mac app in Cobalt 0.3.39, with sample data.</sub>
+</p>
+
+[docs/companion-cli.md](docs/companion-cli.md#the-companion-window) describes
+each part of the window.
 
 ## Features
 

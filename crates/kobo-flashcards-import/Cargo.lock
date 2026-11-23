@@ -25,9 +25,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "ammonia"
-version = "4.1.8"
+version = "4.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f6660fb4ff692ef4937b1b4e74ab3d378653d8588389587d91f96a296907ea0"
+checksum = "935c841d86ee68ba89a983ea6e4255436f769ab1e2b701574653baf4b30739ce"
 dependencies = [
  "cssparser",
  "html5ever",
@@ -972,9 +972,9 @@ dependencies = [
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -1579,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-doc"
-version = "0.3.37"
+version = "0.3.40"
 dependencies = [
  "kobo-html",
  "miniz_oxide 0.9.1",
@@ -1588,7 +1588,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-flashcards-format"
-version = "0.3.37"
+version = "0.3.40"
 dependencies = [
  "flate2",
  "kobo-image",
@@ -1628,18 +1628,18 @@ dependencies = [
 
 [[package]]
 name = "kobo-html"
-version = "0.3.37"
+version = "0.3.40"
 
 [[package]]
 name = "kobo-image"
-version = "0.3.37"
+version = "0.3.40"
 dependencies = [
  "image",
 ]
 
 [[package]]
 name = "kobo-text"
-version = "0.3.37"
+version = "0.3.40"
 dependencies = [
  "fontdue",
  "kobo-ui",
@@ -1649,7 +1649,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-ui"
-version = "0.3.37"
+version = "0.3.40"
 dependencies = [
  "qrcodegen",
  "unicode-segmentation",
@@ -3723,9 +3723,9 @@ checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",

@@ -3,11 +3,11 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
-  "version": "1.0.32",
+  "version": "1.0.34",
   "glyph": "book-download",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "After you choose the edition without images, the book page now says so. A recent search now searches every catalog when that switch is on."
+  "release_notes": "Find words in a book and go to any page from the reading controls. A held word opens the same lookup, highlight and note as Books. With the bar shown, the foot of the page says where you are."
 }

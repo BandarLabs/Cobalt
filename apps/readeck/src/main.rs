@@ -788,10 +788,9 @@ impl Readeck {
                 return;
             }
         }
-        if action == ActionId::BACK {
-            self.close_article(context);
-            return;
-        }
+        // The reader has first call on Back: after a jump to a found passage
+        // or to another part of the article it returns to the page that was
+        // left, and only Back from the page itself closes the article.
         if let Some(outcome) = self.book.act(context, action) {
             match outcome {
                 Outcome::Close => self.close_article(context),
@@ -799,6 +798,10 @@ impl Readeck {
                 Outcome::Light(level) => context.device().set_frontlight(level),
                 Outcome::Elsewhere | Outcome::Repaint => {}
             }
+            return;
+        }
+        if action == ActionId::BACK {
+            self.close_article(context);
         }
     }
     fn inbox_action(&mut self, context: &mut Context, action: ActionId) {

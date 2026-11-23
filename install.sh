@@ -306,6 +306,7 @@ printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
     fail "signed manifest has an invalid version"
 printf '%s\n' "$manifest_source" | grep -Eq '^[0-9a-f]{40}$' ||
     fail "signed manifest has an invalid source commit"
+current_host=
 if [ "$HOST_UPDATE" = true ] && [ -f "$ROOT/current" ]; then
     current_host=$(cat "$ROOT/current")
     case "$current_host" in
@@ -318,11 +319,50 @@ else
     installed_host_channel=$(sed -n 's/^host-channel //p' "$ROOT/install-state" 2>/dev/null || true)
 fi
 [ -n "$installed_host_channel" ] || installed_host_channel=stable
+
+# The Mac app, Cobalt.app, which `kobo ui` opens when it sits beside the kobo
+# command. A release that has one names it on a host line of its own, under
+# the platform with -app after it. It is not inside the host package because
+# every installed updater checks that package against a fixed list of files
+# and would refuse a release whose package had grown. An updater from before
+# the app existed reads past this line; one from a release without it finds
+# nothing here and installs the command alone.
+APP_ASSET=
+APP_BYTES=
+APP_SHA=
+case "$PLATFORM" in
+    macos-*)
+        app_line=$(awk -v platform="$PLATFORM-app" \
+            '$1 == "host" && $2 == platform && NF == 5 {print $3 " " $4 " " $5}' \
+            "$MANIFEST")
+        if [ -n "$app_line" ]; then
+            [ "$(printf '%s\n' "$app_line" | wc -l | tr -d ' ')" -eq 1 ] ||
+                fail "signed manifest names more than one $PLATFORM Mac app"
+            IFS=' ' read -r APP_ASSET APP_BYTES APP_SHA <<EOF
+$app_line
+EOF
+            case "$APP_ASSET" in
+                ''|*[!A-Za-z0-9._:-]*) fail "signed manifest contains an unsafe asset name" ;;
+            esac
+        fi
+        ;;
+esac
+
 if [ "$HOST_UPDATE" = true ] &&
     [ "$installed_version" = "$VERSION" ] &&
     [ "$installed_host_channel" = "$CHANNEL" ]; then
-    say "kobo $VERSION is already current on the $CHANNEL channel."
-    exit 0
+    # The first update to a release that has the app is made by an updater
+    # that has never heard of it, and leaves the command current with no app
+    # beside it. This is the updater that release brought, so it finishes
+    # the job the next time it is asked, where it would otherwise say there
+    # is nothing to do until the release after.
+    if [ -n "$APP_ASSET" ] && [ -n "$current_host" ] &&
+        [ ! -d "$ROOT/hosts/$current_host/Cobalt.app" ]; then
+        say "kobo $VERSION is current. Adding the Mac app, which this installation does not have yet."
+    else
+        say "kobo $VERSION is already current on the $CHANNEL channel."
+        exit 0
+    fi
 fi
 if [ -n "$installed_version" ] &&
     [ "$VERSION_EXPLICIT" != true ] &&
@@ -454,6 +494,49 @@ done
 [ "$(sha256_file "$PACKAGE/updater.sh")" = "$BOOTSTRAP_SHA" ] ||
     fail "packaged updater checksum does not match the signed manifest"
 
+if [ -n "$APP_ASSET" ]; then
+    APP_ARCHIVE=$STAGE/$APP_ASSET
+    download "$BASE_URL/$APP_ASSET" "$APP_ARCHIVE" ||
+        fail "cannot download $APP_ASSET"
+    verify_asset "$APP_ARCHIVE" "$APP_BYTES" "$APP_SHA"
+    tar -tzf "$APP_ARCHIVE" > "$STAGE/app-files" ||
+        fail "$APP_ASSET is not a readable Mac app package"
+    # The package is Cobalt.app and nothing beside it. What is inside the
+    # app is not listed here file by file, as the host package is above,
+    # because that list is what keeps the host package from ever growing:
+    # an app that gains a file must still be one this updater will take.
+    if grep -Ev '^\./(Cobalt\.app(/.*)?)?$' "$STAGE/app-files" >/dev/null ||
+        grep -E '(^|/)\.\.(/|$)' "$STAGE/app-files" >/dev/null; then
+        fail "$APP_ASSET contains an unexpected path"
+    fi
+    APP_STAGE=$STAGE/app
+    mkdir "$APP_STAGE"
+    tar -xzf "$APP_ARCHIVE" -C "$APP_STAGE" ||
+        fail "$APP_ASSET is not a readable Mac app package"
+    [ -z "$(find "$APP_STAGE" ! -type f ! -type d)" ] ||
+        fail "$APP_ASSET contains something that is neither a file nor a folder"
+    for required in Contents/Info.plist Contents/MacOS/Cobalt; do
+        [ -f "$APP_STAGE/Cobalt.app/$required" ] || fail "$APP_ASSET is missing $required"
+    done
+    chmod 755 "$APP_STAGE/Cobalt.app/Contents/MacOS/Cobalt"
+    # The app is signed by nobody, only sealed: the seal says the files are
+    # the ones the app was built with, and Apple silicon will not start an
+    # app whose seal is broken. The signed manifest has already said these
+    # are the bytes the release published. This asks whether they still
+    # make an app this Mac will run, here, not when `kobo ui` is first tried.
+    skip_seal=false
+    if [ "${KOBO_INSTALLER_TESTING:-0}" = 1 ] && [ "${KOBO_TEST_UNSEALED_APP:-0}" = 1 ]; then
+        skip_seal=true
+    fi
+    if [ "$uname_s" = Darwin ] && [ "$skip_seal" != true ]; then
+        command -v codesign >/dev/null 2>&1 ||
+            fail "codesign is required to check the Mac app"
+        codesign --verify --strict "$APP_STAGE/Cobalt.app" >/dev/null 2>&1 ||
+            fail "the Mac app in $APP_ASSET does not match its own seal"
+    fi
+    mv "$APP_STAGE/Cobalt.app" "$PACKAGE/Cobalt.app"
+fi
+
 TARGET=$INSTALL_DIR/kobo
 STATE=$ROOT/install-state
 managed_binary=$(sed -n 's/^binary //p' "$STATE" 2>/dev/null || true)
@@ -479,6 +562,9 @@ else
 fi
 say "  Platform: $PLATFORM"
 say "  Host command: $TARGET"
+if [ -n "$APP_ASSET" ]; then
+    say "  Mac app: Cobalt.app, opened with 'kobo ui'"
+fi
 if [ "$CACHE_SETUP" = true ]; then
     say "  Stable setup package: $DEVICE_ASSET"
 fi
@@ -522,6 +608,9 @@ else
 fi
 
 HOST_ID=$VERSION-$CHANNEL-$PLATFORM-$HOST_SHA
+# A host with the app beside the command is not the host without it, and a
+# host is never changed once it is in place, so it goes under its own name.
+[ -z "$APP_ASSET" ] || HOST_ID=$HOST_ID-app-$APP_SHA
 HOST_DIR=$ROOT/hosts/$HOST_ID
 HOST_NEW=$ROOT/hosts/.new-$HOST_ID-$$
 mkdir -p "$ROOT/hosts"
@@ -533,9 +622,14 @@ printf '%s\n' "$CHANNEL" > "$HOST_NEW/CHANNEL"
 printf '%s\n' "$PLATFORM" > "$HOST_NEW/PLATFORM"
 printf '%s\n' "$manifest_source" > "$HOST_NEW/SOURCE_COMMIT"
 printf '%s\n' "$HOST_SHA" > "$HOST_NEW/HOST_ARCHIVE_SHA256"
+host_files="kobo kobo-sidekickd flashcards-import updater.sh VERSION CHANNEL PLATFORM SOURCE_COMMIT HOST_ARCHIVE_SHA256"
+if [ -n "$APP_ASSET" ]; then
+    printf '%s\n' "$APP_SHA" > "$HOST_NEW/APP_ARCHIVE_SHA256"
+    host_files="$host_files APP_ARCHIVE_SHA256 Cobalt.app/Contents/Info.plist Cobalt.app/Contents/MacOS/Cobalt"
+fi
 fail_point host-directory
 if [ -d "$HOST_DIR" ]; then
-    for file in kobo kobo-sidekickd flashcards-import updater.sh VERSION CHANNEL PLATFORM SOURCE_COMMIT HOST_ARCHIVE_SHA256; do
+    for file in $host_files; do
         cmp "$HOST_DIR/$file" "$HOST_NEW/$file" >/dev/null 2>&1 ||
             fail "immutable host release $HOST_ID differs from its verified copy"
     done

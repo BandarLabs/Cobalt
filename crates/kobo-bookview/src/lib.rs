@@ -104,6 +104,16 @@ const MAX_PICTURE_NAME: usize = 512;
 /// is another round trip through the runtime to get through it.
 const FORMULA_PASS: Duration = Duration::from_millis(60);
 
+/// How long one pass may spend reading the book for a word.
+///
+/// The same sixty milliseconds a pass of formulae is given, for the same
+/// reason: it is a third of the deadline spent, with the rest left for the
+/// block the pass was in the middle of when the clock ran out. A megabyte of
+/// novel is read through in about one of these on the reader, so most
+/// searches are a single pass and the budget only matters for the long books
+/// it exists for.
+const FIND_PASS: Duration = Duration::from_millis(60);
+
 /// Typesets one formula, or nothing when this build cannot draw.
 ///
 /// Without the feature there is no rasteriser and no fonts to draw with, and
@@ -198,6 +208,20 @@ pub struct BookView {
     fetching: Option<(TaskId, String)>,
     /// Some formulas in the open HTML were left as text past the picture budget.
     formulae_as_text: bool,
+    /// The task carrying a search of the book forward, if one is in flight.
+    searching: Option<TaskId>,
+    /// Whether the application has said it forwards what a copy needs.
+    copies: bool,
+    /// The copy of the reader's notes being made for a computer, while its
+    /// screen is up.
+    copy: Option<kobo_sdk::exports::Export>,
+    /// The title the page was last drawn under.
+    ///
+    /// A file that does not name itself is known by what its shelf calls it,
+    /// and the shelf's name reaches this view only as the title each screen
+    /// is drawn with. It is kept so a copy of the notes can be called after
+    /// the book rather than after nothing.
+    titled: std::cell::RefCell<String>,
 }
 
 impl BookView {
@@ -218,6 +242,26 @@ impl BookView {
             next_handle: base,
             ..Self::default()
         }
+    }
+
+    /// The same view, offering a copy of the reader's notes from the notes
+    /// list.
+    ///
+    /// For an application that forwards its `on_save` answers to
+    /// [`BookView::saved`] and its `on_shelf` answers to
+    /// [`BookView::shelved`]. A copy is written to the application's own
+    /// shelf and offered to a paired computer only once the runtime has
+    /// acknowledged it, and those acknowledgements arrive at the application.
+    /// One that does not pass them on would leave the copy saying it was
+    /// being saved for ever, so the control is not drawn until this is asked
+    /// for.
+    #[must_use]
+    pub fn keeping_copies(mut self) -> Self {
+        self.copies = true;
+        if let Some(reader) = &mut self.reader {
+            reader.offer_copy(true);
+        }
+        self
     }
 
     /// A view holding a document somebody else opened.
@@ -306,6 +350,7 @@ impl BookView {
             }
         }
         reader.set_pictures(self.reserved.clone(), &metrics);
+        reader.offer_copy(self.copies);
         self.reader = Some(reader);
         // Handed to the runtime rather than started here. Opening has already
         // spent its parse and its pagination, and a plate on top of that is
@@ -566,7 +611,12 @@ impl BookView {
     /// The page to draw, titled.
     #[must_use]
     pub fn screen(&self, title: &str) -> Option<Screen> {
-        self.reader.as_ref().map(|reader| reader.screen(title))
+        let reader = self.reader.as_ref()?;
+        title.clone_into(&mut self.titled.borrow_mut());
+        Some(match &self.copy {
+            Some(copy) => copy.screen(),
+            None => reader.screen(title),
+        })
     }
 
     /// Offers an action to the open document.
@@ -579,6 +629,9 @@ impl BookView {
     /// had no room for one.
     pub fn act(&mut self, context: &mut Context, action: kobo_ui::ActionId) -> Option<Outcome> {
         let metrics = context.metrics();
+        if let Some(outcome) = self.copy_action(context, action) {
+            return Some(outcome);
+        }
         let outcome = match self.reader.as_mut()?.act_on(action, &metrics) {
             Outcome::Elsewhere => return None,
             handled => handled,
@@ -592,16 +645,160 @@ impl BookView {
         // are wanted, and a lane may have come free since the last one was
         // asked for.
         self.fetch_next(context);
+        self.carry_search(context);
         Some(outcome)
+    }
+
+    /// Answers the taps that belong to a copy of the notes: the one that asks
+    /// for it, and everything on its screen while that is up.
+    fn copy_action(&mut self, context: &mut Context, action: kobo_ui::ActionId) -> Option<Outcome> {
+        let reader = self.reader.as_mut()?;
+        if let Some(copy) = &mut self.copy {
+            if action == kobo_ui::ActionId::BACK {
+                // Back to the notes it was asked for from. A copy already
+                // acknowledged stays ready for the computer; one that was
+                // not is simply not offered.
+                self.copy = None;
+            } else if action == kobo_sdk::action_id("export-confirm")
+                || action == kobo_sdk::action_id("export-retry")
+            {
+                copy.begin(context);
+            }
+            // Nothing else on the panel is the reader's while this is up, so
+            // a page key pressed now does not turn a page nobody can see.
+            return Some(Outcome::Repaint);
+        }
+        if action != kobo_sdk::action_id(kobo_read::action::SAVE_COPY) || !self.copies {
+            return None;
+        }
+        let title = self.titled.borrow().clone();
+        let text = reader.notes_markdown(&title)?;
+        let named = reader
+            .document()
+            .title
+            .clone()
+            .filter(|named| !named.trim().is_empty())
+            .unwrap_or(title);
+        // Begun at once: the owner asked for the copy by name, and a second
+        // screen asking whether they meant it would only be in the way.
+        if let Ok(mut copy) = kobo_sdk::exports::Export::new(
+            &copy_title(&named),
+            kobo_sdk::exports::Format::Markdown,
+            text.into_bytes(),
+        ) {
+            copy.begin(context);
+            self.copy = Some(copy);
+        }
+        Some(Outcome::Repaint)
+    }
+
+    /// Takes the runtime's answer to a save, for a copy being made.
+    ///
+    /// Returns whether the answer was the copy's and its screen is worth
+    /// drawing again. An application passes every `on_save` answer here
+    /// before treating it as its own.
+    pub fn saved(
+        &mut self,
+        context: &mut Context,
+        key: &str,
+        result: &kobo_sdk::StoreResult,
+    ) -> bool {
+        self.copy
+            .as_mut()
+            .is_some_and(|copy| copy.on_save(context, key, result))
+    }
+
+    /// Takes the runtime's answer about a file on the application's shelf,
+    /// for a copy being made. As [`BookView::saved`], for `on_shelf`.
+    pub fn shelved(
+        &mut self,
+        context: &mut Context,
+        name: &str,
+        result: &kobo_sdk::StoreResult,
+    ) -> bool {
+        self.copy
+            .as_mut()
+            .is_some_and(|copy| copy.on_shelf(context, name, result))
+    }
+
+    /// Asks the runtime to call back so a search of the book can go on, if
+    /// one is under way and nothing is already carrying it.
+    ///
+    /// Asked again on every action as well as after every pass: a search
+    /// started when the runtime had no lane to spare would otherwise sit
+    /// saying it was searching for as long as the reader cared to watch.
+    fn carry_search(&mut self, context: &mut Context) {
+        if self.searching.is_none() && self.reader.as_ref().is_some_and(Reader::is_searching) {
+            self.searching = context.spawn(Task::Sleep { seconds: 0 });
+        }
+    }
+
+    /// Takes a finger held on the page.
+    ///
+    /// What an application forwards from `on_text_hold`, and all it has to do
+    /// to give its reader a dictionary, a highlight on one word and a note
+    /// beside it. A hold that landed on a word of the book opens that word's
+    /// screen and asks the runtime's dictionaries about it; any other hold is
+    /// offered to the reader as the plain action it also is, which is how the
+    /// list of paragraphs to mark is still reached from a heading or a quote.
+    ///
+    /// `None` when nothing is open or the hold was not the reader's, exactly
+    /// as [`BookView::act`] answers, so the application treats the two alike.
+    pub fn hold(
+        &mut self,
+        context: &mut Context,
+        action: kobo_ui::ActionId,
+        hit: kobo_sdk::TextHit,
+    ) -> Option<Outcome> {
+        let metrics = context.metrics();
+        let reader = self.reader.as_mut()?;
+        if action == kobo_sdk::action_id(kobo_read::action::MARKING) {
+            if let Some(word) = reader.hold(hit, &metrics) {
+                // A word the runtime will not take a question about has no
+                // answer on its way, and a screen left saying it is looking
+                // would say so for ever.
+                if !context.device().lookup_word(word.clone(), None::<String>) {
+                    reader.define(&word, Vec::new());
+                }
+                return Some(Outcome::Repaint);
+            }
+        }
+        self.act(context, action)
+    }
+
+    /// Takes the runtime's answer to a word this view asked about.
+    ///
+    /// Returns whether the screen changed and is worth redrawing.
+    /// Applications pass every device result here rather than filtering
+    /// first, as they do for [`BookView::took_light`]: an answer to something
+    /// else, or for a word the reader has already let go of, is ignored. A
+    /// refusal counts as an answer with nothing in it, because the question
+    /// is settled either way and the screen should stop saying it is looking.
+    pub fn took_definition(
+        &mut self,
+        request: &kobo_sdk::DeviceRequest,
+        result: &kobo_sdk::DeviceResult,
+    ) -> bool {
+        let kobo_sdk::DeviceRequest::LookupWord { word, .. } = request else {
+            return false;
+        };
+        let entries = match result {
+            kobo_sdk::DeviceResult::Dictionary { entries, .. } => entries.clone(),
+            _ => Vec::new(),
+        };
+        self.reader
+            .as_mut()
+            .is_some_and(|reader| reader.define(word, entries))
     }
 
     /// Carries the picture pipeline forward when one of its tasks lands.
     ///
     /// An application passes every finished task here; a task that was not
-    /// this view's comes back as [`Step::Elsewhere`] and costs two
-    /// comparisons. Two kinds of task are this view's: the sleep that carries
-    /// a plate from bytes to pixels a half-step at a time, and the fetch of a
-    /// picture a web page named but did not carry.
+    /// this view's comes back as [`Step::Elsewhere`] and costs three
+    /// comparisons. Three kinds of task are this view's: the sleep that
+    /// carries a plate from bytes to pixels a half-step at a time, the fetch
+    /// of a picture a web page named but did not carry, and the sleep that
+    /// carries a search of the book from one pass to the next.
     pub fn woke(&mut self, context: &mut Context, task: TaskId, outcome: &TaskOutcome) -> Step {
         if let Some((_, name)) = self.fetching.take_if(|(id, _)| *id == task) {
             // A picture that will not come is a picture the page reads
@@ -619,6 +816,16 @@ impl BookView {
             } else {
                 Step::Quiet
             };
+        }
+        if self.searching == Some(task) {
+            self.searching = None;
+            let metrics = context.metrics();
+            let changed = self
+                .reader
+                .as_mut()
+                .is_some_and(|reader| reader.search_on(FIND_PASS, &metrics));
+            self.carry_search(context);
+            return if changed { Step::Repaint } else { Step::Quiet };
         }
         if self.plating != Some(task) {
             return Step::Elsewhere;
@@ -1017,6 +1224,38 @@ impl BookView {
         if let Some((task, _)) = self.fetching.take() {
             context.cancel(task);
         }
+        if let Some(task) = self.searching.take() {
+            context.cancel(task);
+        }
+        self.copy = None;
+    }
+}
+
+/// What a copy of a book's notes is called, which becomes its file name on
+/// the computer that receives it.
+///
+/// The book's name and what the file is, cut to fit the offer and with
+/// nothing in it a file name cannot carry.
+fn copy_title(book: &str) -> String {
+    const LONGEST: usize = 200;
+    let clean: String = book
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+    let clean = clean.trim();
+    let mut end = clean.len().min(LONGEST);
+    while !clean.is_char_boundary(end) {
+        end -= 1;
+    }
+    match clean[..end].trim() {
+        "" => "Notes".to_owned(),
+        name => format!("{name} notes"),
     }
 }
 

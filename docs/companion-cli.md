@@ -30,7 +30,101 @@ without prompting. Explicit commands are unchanged. `kobo --help` opens the
 full command reference; `kobo frame --help`, `kobo flashcards --help` and
 `kobo feeds --help` show companion-specific commands.
 
-A desktop companion window remains under development.
+`kobo ui` opens the same tasks in a window, for anyone who would rather not
+type them. See [The companion window](#the-companion-window).
+
+## The companion window
+
+`kobo ui` opens Cobalt in a window with four places:
+
+- **Reader** walks a new reader in, one step at a time: plug it in, tap
+  Connect, read what installing changes, install, unplug, finish on the
+  reader, and wait while this computer finds it on Wi-Fi and saves it. Each
+  step moves on by itself when the window can see that it happened, and a
+  window closed half way opens again on the step it was at. When the reader
+  is not found in five minutes the window says the likely causes and looks
+  again from a button. For a reader that is already set up it shows the
+  model and firmware, the Cobalt on it and the release this computer would
+  install, and offers to update or remove it. Readers saved on this computer
+  are listed by name and can be renamed or forgotten.
+- **Apps** is a store. Every app is shown by a picture of its first screen
+  under the group the website lists it in, with what is on the reader first.
+  An app opens to a page with its pictures, what it does, its version and
+  size, what it needs, the access it asks for, what changed and its setup
+  steps, and installs, updates or removes it over the cable. The store can be
+  read with no reader plugged in.
+- **Browser** sets up Send to Kobo for each browser found on this computer
+  and shows the one step left to take in the browser itself.
+- **Send** sends a file or a web article to the saved reader and lists the
+  articles waiting for it.
+
+These are the four places in the Mac app, and an app's page, with sample
+data:
+
+![The Reader place: a Kobo Clara BW with its firmware, the Cobalt on it, free space, and two saved readers](media/desktop/mac-reader.png)
+
+![The Apps place: the apps on the reader, each by a picture of its first screen](media/desktop/mac-apps.png)
+
+![An app's page: Chess, with its first screen, what it does, its version and size, what it needs and an Install button](media/desktop/mac-app-page.png)
+
+![The Browser place: Chrome and Safari set up for Send to Kobo, Firefox not yet](media/desktop/mac-browser.png)
+
+![The Send place: a comic on its way to the reader, a field for a web article, and two articles waiting](media/desktop/mac-send.png)
+
+The window says what it finds when things are not as expected: a reader that
+is plugged in but has not been told to connect, a drive macOS will not let
+`kobo` read, storage that is full or mounted read-only, a catalog that
+cannot be reached, a reader unplugged in the middle of an install.
+
+On a Mac the window is the Cobalt app. The installer puts it in the same
+folder as the `kobo` binary, which is the only place `kobo ui` looks for it,
+and opening the app from the Dock starts `kobo ui` for itself. A Mac that
+was updated from a release older than the app has the command and not yet
+the app: `kobo ui` opens the page and says so, and `kobo update` adds the
+app. From a source checkout, `tools/build-macos-shell.sh` builds it.
+Everywhere else the window is a page in the default browser. `--browser` asks for the page on a
+Mac as well, and `--no-open` prints the address instead of opening anything;
+the address opens the page once. `--volume PATH` names the mounted reader
+when it is not found by itself.
+
+The store's words are built into the `kobo` command. Its pictures are not:
+`kobo ui` fetches each one from the project's published site the first time
+it is looked at and keeps it under `~/.cache/cobalt/companion/pictures`, or
+under `XDG_CACHE_HOME` when that is set. Offline, the store shows every app
+with an empty frame where a picture has not been kept. Deleting the folder
+costs nothing but fetching them again.
+
+The window is served by the `kobo ui` command to this computer only. It
+listens on `127.0.0.1` on a port the system picks, answers only requests
+that name that address exactly and carry the session's secrets, and stops
+when the window is closed or you press Ctrl-C. The page loads nothing from
+any other site; the pictures reach it through `kobo ui`. A job that is running is finished first, so closing the window
+during an install does not interrupt it.
+
+Every task in the window is also a command: `kobo setup`, `kobo apps`,
+`kobo clip` and `kobo send`.
+
+## Apps on a reader over USB
+
+With the reader plugged in and **Connect** chosen on its screen:
+
+- `kobo apps installed` lists the apps on the reader. It needs no network.
+- `kobo apps available` fetches the signed catalog for the channel the
+  reader is on and lists what it offers, marking what is installed, what has
+  an update, and what needs a newer Cobalt than the reader has.
+- `kobo apps install APP...` installs apps, or updates ones already there.
+  Each download is checked against the catalog and the app's own signature
+  before it is written, exactly as the reader's Store checks it. An app
+  already at the catalog's version is verified and left alone. One that
+  fails is reported and the rest still install.
+- `kobo apps remove APP` removes an app and keeps its data.
+
+`APP` is the app's id or its name as the Store shows it. `--volume PATH`
+names the reader when more than one is connected, `--eject` ejects it when
+the command has finished, and `--json` prints one JSON object in the
+versioned envelope `kobo devices --json` uses. Cobalt must already be on the
+reader; `kobo setup` installs it. Eject the reader before unplugging it, so
+the change is fully written.
 
 ## Which reader a command goes to
 
@@ -51,16 +145,38 @@ and keeps looking for a minute.
 ## Sending a file
 
 `kobo send FILE` sends a file or folder to the app that opens it and says
-which app received it: photos to Frame, Markdown notes to Vault, OPML lists to
-Feeds, CBZ comics to Panels, story files to Parser, and Anki APKG or COLPKG
-decks to Flashcards, which imports them first. A folder of PDF scores goes to
-Music Stand. A single PDF could be a score for Music Stand or a pattern for
-Needles, so you are asked which, or you name it with `--to musicstand` or
-`--to needles`. Panels keeps one comic, so a send to it asks before it
-replaces the one there; `--replace` answers yes in a script.
+which app received it: books and documents to Books, photos to Frame,
+Markdown notes to Vault, OPML lists to Feeds, CBZ comics to Panels, story
+files to Parser, and Anki APKG or COLPKG decks to Flashcards, which imports
+them first. A folder of PDF scores goes to Music Stand. A single PDF could be
+a score for Music Stand, a pattern for Needles or a document to read, so you
+are asked which, or you name it with `--to musicstand`, `--to needles` or
+`--to books`. Panels keeps one comic, so a send to it asks before it replaces
+the one there; `--replace` answers yes in a script.
 `kobo send --preview FILE --out DIR` checks or renders the file on this
 computer without sending it, and `kobo send --retry` repeats the last send
 that failed.
+
+### Books and documents
+
+`kobo send novel.epub` copies the book over Wi-Fi into a `Books` folder on
+the reader's card, where Books lists it, and the reader shows a notice that it
+arrived. Text and HTML files (`.txt`, `.html`, `.htm`, `.xhtml`) and Kobo
+EPUBs (`.kepub.epub`) go the same way, and so does a folder of any of these,
+one file at a time. A Markdown file goes to Vault unless you say
+`--to books`.
+
+Books opens EPUB, text, HTML and Markdown itself. It lists a PDF or a Kobo
+EPUB, and the Kobo's own reader opens those. A file larger than Books opens
+is sent all the same, and the command says so; `kobo send --preview FILE`
+says it before anything is sent. One send copies a file of up to 512 MB.
+
+A book never replaces another. A different file with the same name is saved
+beside it as `novel (2).epub`, and a book the reader already has in its
+`Books` folder, under any name, is recognised and not copied again. The card
+is asked for room first: a send leaves 64 MB free for the Kobo's own library
+and says how much there is when a book does not fit. A name with characters
+the card refuses, such as `?` or `:`, is saved without them.
 
 ## Sending a web article
 
@@ -75,11 +191,17 @@ For a page you saved from the browser, such as one you had to sign in to
 read, give the file and the address it came from:
 `kobo clip page.html --url https://...`.
 
+An arXiv abstract page (`https://arxiv.org/abs/...`) becomes a book of the
+paper itself where arXiv serves the paper as a web page. Where it does not,
+the book is the abstract page and the command says so.
+
 Pictures are fitted to the reader's screen and turned grey. `--colour`
 keeps their colour and `--no-pictures` leaves them out. At most 40 pictures
-are fetched and a book that goes to the reader is kept under the 4 MB Books
-opens; pictures past either limit are left out, and the command says how
-many. A page with no article on it is refused with the reason.
+are fetched and an article that goes to the reader is kept under 4 MB, the
+size Books opens at once; pictures past either limit are left out, and the
+command says how many. A page with no article on it, such as a section front, an archive or
+a list of threads, is refused with the reason. So is a page whose article
+could not be kept whole: a clip either holds the article or says why not.
 
 The article goes to the reader `kobo setup` saved, or to `--reader NAME`,
 `--device IP` or `--sim`, over the connection `kobo send` uses, into the
@@ -104,11 +226,14 @@ also asks, without a word unless something arrives, each time it opens.
 ### From the browser
 
 `kobo clip install --browser chrome` (or `edge`, `brave`, `chromium`,
-`firefox`, `safari`, or `--all` for every one found here) adds Send page to
-Kobo, Send link to Kobo and Send selection to Kobo to the browser's
-right-click menu. The extension sends the page as you see it, so a page you
-signed in to read clips as it reads, and a notification says Sending to
-your Kobo, then Landed on your Kobo or Waiting for your Kobo.
+`firefox`, `safari`, or `--all` for every one found here) adds a Send to
+Kobo button to the browser's toolbar, which sends the page you are on with
+one click or with Alt+Shift+K, and adds Send page to Kobo, Send link to Kobo
+and Send selection to Kobo to the right-click menu. The extension sends the
+page as you see it, so a page you signed in to read clips as it reads, and a
+notification says Sending to your Kobo, then Landed on your Kobo or Waiting
+for your Kobo. A browser may keep the button in its extensions menu until
+you pin it, and its shortcuts page is where to change the keys.
 
 Install writes the small manifest each browser reads to find `kobo` (in your
 own profile folders, or under `HKEY_CURRENT_USER` on Windows) and copies the
@@ -138,6 +263,7 @@ unless you name another target.
 | App | Command | What it does |
 | --- | --- | --- |
 | [Birds](../apps/birds/README.md) | `kobo birds listen`, `status`, `stop`, `push` | Sends Fugleramme collages to the reader |
+| Books | `kobo send FILE`, `kobo dict install`, `list`, `remove`, `check` | Sends books and documents, and installs [offline dictionaries](DICTIONARIES.md) |
 | [Deck](../apps/deck/README.md) | `kobo deck init`, `set`, `ls`, `show`, `push` | Builds and sends the pad layout |
 | [Feeds](../examples/rss/README.md) | `kobo feeds check`, `push` | Checks and sends an OPML subscription list |
 | [Fieldbook](../apps/fieldbook/README.md) | `kobo fieldbook new`, `inspect`, `photos`, `push`, `ls`, `export` | Prepares field packs and fetches checklists |

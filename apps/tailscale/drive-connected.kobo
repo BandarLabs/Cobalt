@@ -1,0 +1,18 @@
+# sweep: --bare --seed-root apps/tailscale/fixtures/connected
+# Connected: the reader's tailnet name and address, to save on the computer.
+wait-for Connected
+expect kobo-cobalt.example.ts.net
+expect 100.64.0.7
+expect Runs while Cobalt is open.
+expect-missing Approve this reader
+expect-missing Try again
+clean
+shot tailscale-connected
+# Signing out switches Tailscale off and takes the address off the screen.
+tap About Tailscale
+wait-for the private network between your own devices
+tap Sign out
+wait-for This reader forgets its key
+tap-id sign-out-confirmed
+wait-for Off. Nothing reaches this reader over a tailnet.
+expect-missing 100.64.0.7

@@ -6,10 +6,12 @@ use std::env;
 use std::error::Error;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+
+use kobo_protocol::channel;
 
 static VERIFIED_DEVICE_METRICS: OnceLock<kobo_ui::DisplayMetrics> = OnceLock::new();
 /// Whether the verified device's panel has a colour filter, remembered beside
@@ -83,16 +85,30 @@ pub fn device_colour_panel() -> bool {
 
 use std::process::ExitCode;
 
+// The daemon's subsystems serve the device-write entry points, which a
+// Windows host build does not compile. Keep the dead-code lint live on unix
+// and silence the noise in the Windows CI job's build.
+#[cfg_attr(not(unix), allow(dead_code))]
 mod app_link;
 mod app_store;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod autoupdate;
 #[cfg(feature = "device-write")]
 mod blackbox;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod consent;
 #[cfg(feature = "device-write")]
 mod device;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod syncthing;
+// The Tailscale supervisor is made of process groups, signals and device
+// nodes, and runs nowhere but the reader, so a Windows host build leaves it
+// out and says so if asked.
+#[cfg(unix)]
+mod tailscale;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod touch_calibration;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod update;
 
 fn main() -> ExitCode {
@@ -116,8 +132,22 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         arguments.first().map(String::as_str),
         Some("--present" | "--restart-from")
     ) {
-        update::recover_at_startup(Path::new("/mnt/onboard/.adds"))
-            .map_err(|error| format!("recover interrupted update before launch: {error}"))?;
+        let adds = Path::new("/mnt/onboard/.adds");
+        // Only a session start takes a staged release. The watchdog's restart
+        // is on its way back to the stock reader and launches nothing, and a
+        // process already started again for this has nothing left to take,
+        // which is also what keeps a release that will not settle from
+        // restarting Cobalt forever.
+        if arguments[0] == "--present" && env::var_os(SETTLED_VARIABLE).is_none() {
+            let replaced = update::settle_before_launch(adds)
+                .map_err(|error| format!("finish the update before launch: {error}"))?;
+            if replaced {
+                return Err(start_from_the_installation_in_place(adds).into());
+            }
+        } else {
+            update::recover_at_startup(adds)
+                .map_err(|error| format!("recover interrupted update before launch: {error}"))?;
+        }
     }
     if arguments.len() == 4 && arguments[0] == "--sim-socket" && arguments[2] == "--frame" {
         return serve_simulation(Path::new(&arguments[1]), Path::new(&arguments[3]));
@@ -170,6 +200,15 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     }
     if arguments
         .first()
+        .is_some_and(|argument| argument == "--tailscale")
+    {
+        #[cfg(unix)]
+        return tailscale::command(&arguments[1..]).map_err(Into::into);
+        #[cfg(not(unix))]
+        return Err("Tailscale runs on the reader, not on this computer".into());
+    }
+    if arguments
+        .first()
         .is_some_and(|argument| argument == "--beta-store")
     {
         return beta_store_maintenance(&arguments[1..]);
@@ -180,7 +219,7 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         println!("path={}", path.display());
         return Ok(());
     }
-    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair] [--syncthing] [--resolve-app APP] [--beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP]".into())
+    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair] [--syncthing] [--tailscale] [--resolve-app APP] [--beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP]".into())
 }
 
 /// A narrow device-side surface for the host acceptance harness.
@@ -499,6 +538,30 @@ fn fetch_once(url: &str, max_bytes: &str) -> Result<(), Box<dyn Error>> {
     }
 }
 
+/// Set on the process started again after an update settles, so that one does
+/// not try to settle it a second time.
+#[cfg(feature = "device-write")]
+const SETTLED_VARIABLE: &str = "KOBOD_UPDATE_SETTLED";
+
+/// Replaces this process with the installation now in place.
+///
+/// This process is the old release: its code is in memory and its files are
+/// now the previous copy. Carrying on would be the old runtime launching the
+/// new release's applications, which is the mismatch staging exists to
+/// prevent, so it starts again through the new release's own `start.sh`,
+/// which may prepare the reader differently from the old one. Only returns if
+/// that start could not happen, with the reason.
+#[cfg(feature = "device-write")]
+fn start_from_the_installation_in_place(adds: &Path) -> String {
+    use std::os::unix::process::CommandExt;
+    let start = adds.join("cobalt/start.sh");
+    let error = std::process::Command::new("/bin/sh")
+        .arg(&start)
+        .env(SETTLED_VARIABLE, "1")
+        .exec();
+    format!("start {} after the update: {error}", start.display())
+}
+
 /// Stops the stock reader, gives the panel to one application, and puts
 /// everything back afterwards.
 #[cfg(feature = "device-write")]
@@ -723,12 +786,15 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     if socket_path.exists() {
         return Err(format!("socket already exists: {}", socket_path.display()).into());
     }
-    let listener = UnixListener::bind(socket_path)?;
+    let listener = channel::Listener::bind(socket_path)?;
+    // The Unix socket needs owner-only mode bits; the Windows address file
+    // inherits the user profile ACL (see kobo_protocol::channel).
+    #[cfg(unix)]
     fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))?;
     let _socket_guard = SocketGuard(socket_path.to_owned());
     println!("simulation socket ready: {}", socket_path.display());
 
-    let (mut stream, _) = listener.accept()?;
+    let mut stream = listener.accept()?;
     let hello = kobo_protocol::read_from(&mut stream)?;
     let Message::Hello { name } = hello.message else {
         return Err("first application message must be Hello".into());
@@ -757,26 +823,16 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
 /// host-side credentials, so `kobo-sidekick init` can drop a certificate in
 /// and every host runtime finds it without being told.
 fn host_trust_directory() -> PathBuf {
-    env::var_os("HOME").map_or_else(
+    kobo_abi::home_directory().map_or_else(
         || PathBuf::from(".kobo-trust"),
-        |home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("kobo")
-                .join("trust")
-        },
+        |home| home.join(".config").join("kobo").join("trust"),
     )
 }
 
 fn host_dictionary_directory() -> PathBuf {
-    env::var_os("HOME").map_or_else(
+    kobo_abi::home_directory().map_or_else(
         || PathBuf::from(".kobo-dictionaries"),
-        |home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("kobo")
-                .join("dictionaries")
-        },
+        |home| home.join(".config").join("kobo").join("dictionaries"),
     )
 }
 
@@ -828,7 +884,7 @@ fn apply_preview_orientation<E>(
     reason = "one arm per message type; splitting the dispatch hides it"
 )]
 fn serve_application(
-    stream: &mut UnixStream,
+    stream: &mut channel::Stream,
     frame_path: &Path,
     name: &str,
     metrics: kobo_ui::DisplayMetrics,
@@ -1077,7 +1133,7 @@ fn serve_application(
 /// write to the same socket and two frames interleaved on a stream protocol is
 /// a stream that can never be read again.
 fn write_shared(
-    writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    writer: &std::sync::Arc<std::sync::Mutex<channel::Stream>>,
     frame: &Frame,
 ) -> Result<(), Box<dyn Error>> {
     let mut stream = writer.lock().map_err(|_| "the writer lock was poisoned")?;
@@ -1088,7 +1144,7 @@ fn write_shared(
 /// Hands every finished task to the application, from its own thread.
 fn deliver_outcomes(
     tasks: &std::sync::Arc<std::sync::Mutex<TaskRunner>>,
-    writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    writer: &std::sync::Arc<std::sync::Mutex<channel::Stream>>,
     peer_version: u8,
 ) {
     loop {
@@ -1256,9 +1312,14 @@ fn validate_simulation_paths(socket: &Path, frame: &Path) -> Result<(), Box<dyn 
     {
         return Err("simulation directory must be a kobo-sim-* directory under temp".into());
     }
-    let mode = fs::metadata(&parent)?.permissions().mode();
-    if mode & 0o077 != 0 {
-        return Err("simulation directory must not be accessible by group or others".into());
+    // Mode-bit privacy is a Unix check; on Windows the directory inherits
+    // the user profile ACL, which is the same account boundary.
+    #[cfg(unix)]
+    {
+        let mode = fs::metadata(&parent)?.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err("simulation directory must not be accessible by group or others".into());
+        }
     }
     if frame.exists() {
         return Err(format!("frame already exists: {}", frame.display()).into());
@@ -1419,8 +1480,10 @@ mod tests {
         let left = kobo_ui::ensure_way_back(bare, &chrome, "Cobalt");
         assert!(left.top_bar.is_none());
     }
+    #[cfg(unix)]
     use super::validate_simulation_paths;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     /// Killing the daemon outright brought the reader back on hardware and
@@ -1480,6 +1543,9 @@ mod tests {
         assert!(!root.exists());
     }
 
+    // Mode-bit privacy checks are Unix-only; Windows validates paths
+    // without them.
+    #[cfg(unix)]
     #[test]
     fn simulation_paths_require_private_temp_directory() {
         let root = std::env::temp_dir().join(format!("kobo-sim-test-{}", std::process::id()));

@@ -30,6 +30,7 @@ others. A branch that is not listed still runs, behind the notice.
 | Kobo Libra Colour | N428, code 390, firmware 4.45.23697, kernel 4.9.77 | Read-only probe, measured touch transform, all four bounded display stages, wait timing, guardian restoration, an end-to-end tap, page-button presses (upper 193 pages back, lower 194 forward, the Libra 2's mapping), and a clean stock-reader restart with no watchdog reset all complete on the owner's device. Evidence on [issue #28](https://github.com/BandarLabs/Cobalt/issues/28) and [PR #49](https://github.com/BandarLabs/Cobalt/pull/49). Colour path and suspend/resume not exercised | Fully tested |
 | Kobo Libra Colour | N428, code 390, firmware 4.46.23836, kernel 4.9.77 | Read-only doctor and physical touch match; all four bounded display stages, wait timing, guardian restoration, and a launcher hand-back test complete. Page buttons, colour path, and suspend/resume remain untested | Fully tested |
 | Kobo Libra H2O | N873, code 384, firmware 4.38.23697, kernel 4.1.15-00417-g0c800cffe1f9 | Read-only doctor match, measured touch transform across both verified rotations, all five bounded display stages, wait timing, guardian restoration, and a clean stock-reader restart with no kernel reset all complete on the owner's device. Evidence on [issue #184](https://github.com/BandarLabs/Cobalt/issues/184) and [PR #185](https://github.com/BandarLabs/Cobalt/pull/185) | Fully tested |
+| Kobo Nia | N306, code 382, firmware 4.38.23684, kernel 4.1.15-00463-g38afd5cea756 | Read-only doctor match, a measured touch, and owner footage of the launcher and apps running on the physical device ([PR #45](https://github.com/BandarLabs/Cobalt/pull/45)). The measured unit is `PCB='E60U20'`, `PCB_REV=0x10`, `PCB_LVL='A'`, `PMIC='RC5T619'`, `FL_PWM='LM3630x1a'`. Sandbox results and refresh timing with the completion wait bypassed are not yet recorded. A BD71828 revision ships under the same device code and is unmeasured | Supported (owner video) |
 
 `Read-only doctor match complete` means the profile describes the observed
 identity, framebuffer, and touch ranges. It does not prove the physical touch
@@ -297,12 +298,26 @@ How the reader is reached, and who else can reach it:
   login by password, including an empty one, and some firmware clears root's
   password at boot. So when setup sees the reader come back, it closes
   password login for root over a connection that may authenticate by the key
-  and nothing else: it appends a marked `Match User root` /
-  `PasswordAuthentication no` block to `sshd_config`, checks it with `sshd -t`
-  and `sshd -T`, reloads the server, and keeps the change only when a second,
-  fresh key login gets in. If that second login never arrives, the reader puts
-  the old file back by itself after five minutes, so a key that does not work
-  cannot lock anyone out.
+  and nothing else: it appends a marked `Match User root` block to
+  `sshd_config` with `PasswordAuthentication no` and
+  `KbdInteractiveAuthentication no`, checks it with `sshd -t` and `sshd -T`,
+  reloads the server, and keeps the change only when a second, fresh key
+  login gets in. If that second login never arrives, the reader puts the old
+  file back by itself after five minutes, so a key that does not work cannot
+  lock anyone out. The second line closes question-and-answer login, which is
+  a password by another name on a server built with PAM. A server that does
+  not accept it gets the first line alone, and a reader set up before the
+  second line existed is given it the next time `kobo setup` runs.
+- The runtime writes the same block from the reader, before it puts the
+  reader on a tailnet, when root can still log in with a password and a key
+  is already there. A reader set up before setup closed the door is in that
+  state, and so is one whose server file went back to stock. It cannot log
+  in to itself to prove the change, so it proves it another way: the server
+  checks the new file before it replaces the old one, the server asked
+  afterwards must say root gets nothing by typing, and the listening server
+  must be seen to start again, because a running server enforces what it
+  read when it started and not the file. Any of those failing puts the file
+  back. With no key on the reader it changes nothing.
 - `--no-key` skips the key and therefore the hardening, because without this
   computer's key there is no proof a key works. That leaves the firmware's
   password login as it shipped.
@@ -511,6 +526,70 @@ later. For the N365 investigation, the owner-attended
 route generations through a ten-minute soak without adding network lifecycle
 operations. It is a diagnostic harness, not a fix. Do not toggle Wi-Fi until
 its passive soak has completed.
+
+### Tailscale across a session
+
+One reader has run the Tailscale service: a Clara BW (N365) on firmware
+4.46.23852, kernel 4.9.77, approved from a phone and reached over its tailnet
+from a computer on the same Wi-Fi, and used as an exit node. Staying
+connected, the shared network, and everything on any other reader, have been
+tested against stand-ins for the two Tailscale programs, so a claim below
+about a kernel is a question unless it says it was seen.
+
+What that reader showed. Its kernel has the tunnel driver, registered in
+`/proc/misc` with `/dev/net/tun` already made, and the daemon brought its
+interface up on it. The firmware mounts a RAM disk of sixteen kilobytes over
+`/var/lib` at every start, so nothing kept there survives a restart or has
+room to begin with, which is why the daemon's home is under
+`/usr/local/cobalt`. Its SSH server was at the firmware's stock settings
+with a computer's key beside them, and the runtime closed password login
+itself before joining. Approved, it took its tailnet address on the kernel's
+interface and routed to the other machines through the daemon's own table,
+with the packet filter left alone, and a computer on the tailnet pinged it
+and logged in to it. Ending the session stopped the daemon, removed the
+interface and left Wi-Fi working under the stock reader. Opening Cobalt again
+connected it fifteen seconds later with no second approval.
+
+The service needs the kernel's tunnel driver, and nothing in the repository
+says which other firmware builds have it. The two kernels in the support
+matrix, 4.9.77 on the MediaTek readers and 4.1.15 on the i.MX6 ones, are both
+recent enough for the Tailscale programs themselves, which need 3.2. Whether
+the i.MX6 kernel was built with the driver is unknown. `kobo doctor` reads what it can without
+touching anything: the driver being registered in `/proc/misc` is certain,
+and its absence there is not proof, because a module would only load when the
+device node is first opened. The supervisor opens the node before it does
+anything else, and a kernel without the driver produces **Not supported** in
+the app rather than a daemon that fails later. There is no fallback to
+Tailscale's userspace networking. That mode hands tailnet connections to
+loopback, which would offer the tailnet the ports this runtime deliberately
+keeps on loopback, such as the Sync engine's.
+
+Tailscale is started by the session when its switch is on and ended before
+the stock reader comes back, ahead of the supplicant hand-back described
+above, so the tunnel is never up while the radio changes owner. By default it
+does not run under the stock reader, and it never runs while the reader
+sleeps.
+
+An owner can ask for it to stay connected outside Cobalt. Then the tunnel is
+up through the hand-back, which is the part of this most likely to disturb a
+radio changing owner and has not been tried. Its programs and its supervisor
+run from the root filesystem in that mode, so the stock reader exporting the
+card over USB takes nothing away from under them.
+
+The exit node and the shared network do not depend on the kernel's packet
+filter: the daemon carries that traffic itself. `kobo doctor` still reports
+what each kernel offers for it, the forwarding switch, connection tracking
+and the packet filter, because a kernel that has them could do the forwarding
+faster and nobody has looked. The daemon held 30 MB on the Clara BW while it
+waited to be approved and 31 MB at most once connected, beside the launcher
+and the Tailscale app. As an exit node it carried 391 MB in a little over two
+hours with the kernel's forwarding switch off and no packet filter tools on
+the reader, which is the daemon carrying that traffic itself, and its memory
+peaked at 63 MB against the 96 it is limited to. What has not been measured
+on any reader: its memory beside a heavier app, whether its link monitoring
+disturbs the hand-back when it stays connected, how long a reconnect takes
+after the radio returns, and whether a shared network's traffic is carried
+the same way. The app's README lists the evidence to capture on a first run.
 
 ### The three watchdogs
 
@@ -743,6 +822,16 @@ failure; a Todo session rendered at 1404×1872 with physical taps reaching UI
 actions; release of panel and touch followed by a successful stock-reader
 restart; and suspend/resume with monotonic device uptime and no Cobalt process
 left running.
+
+[KOReader marks its KoboLuna/Nia profile](https://github.com/koreader/koreader/blob/master/frontend/device/kobo/device.lua#L372-L383)
+as having an unreliable `MXCFB_WAIT_FOR_UPDATE_COMPLETE` ioctl, and
+[FBInk carries the same quirk](https://github.com/NiLuJe/FBInk/blob/master/fbink_device_id.c#L974-L982)
+for device code 382. The Nia profile therefore never enters that ioctl: each
+completion fence pauses for the
+[2.5 ms KOReader's stub wait uses](https://github.com/koreader/koreader-base/blob/master/ffi/framebuffer_mxcfb.lua#L239-L244)
+and retires the marker. The frame-timing records name these `paced`, not
+`completed`, because a pause is not evidence the panel finished. Sustained
+timing over several hundred physical refreshes has not been recorded yet.
 
 Update markers are random and at least `0x40000000`, because markers are a
 global namespace shared with the stock reader and a low fixed marker could be

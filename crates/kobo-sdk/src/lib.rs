@@ -22,6 +22,7 @@ mod segmented_tests;
 mod selected_grid_tests;
 mod suspend;
 
+use kobo_protocol::channel;
 pub use kobo_protocol::{
     is_valid_key, AppInfo, AppLinkState, AudioChapter, AudioDetail, AudioEntry, AudioPlaybackState,
     AudioSource, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason,
@@ -30,6 +31,7 @@ pub use kobo_protocol::{
     ShellEvent, ShellRequest, StoreError, StoreRequest, StoreResult, StreamError, Task, TaskError,
     TaskId, TaskOutcome, UpdateChannel, UpdateMethod, WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS,
     MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES,
+    MAX_LIBRARY_DOCUMENT_BYTES, MAX_LIBRARY_OPENABLE_BYTES, MAX_LIBRARY_RANGE_BYTES,
     MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES,
     MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
     MAX_TASK_BYTES, MAX_URL_LEN,
@@ -65,7 +67,6 @@ pub use kobo_ui::{PencilBoard, PencilEdge, PencilMark, PencilMarkKind};
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
 
@@ -2621,6 +2622,33 @@ impl Device<'_> {
         self.request(DeviceRequest::ReadLibrary { id: id.into() });
     }
 
+    /// Reads part of one listed document: at most `length` bytes of it from
+    /// `offset`, answered with [`DeviceResult::LibraryRange`].
+    ///
+    /// This is how a document too large for [`Device::read_library`] is had:
+    /// ask from the start, keep what arrives, and ask again from where it
+    /// ended until the pieces add up to the `size` each answer states. Every
+    /// answer also carries a `stamp`. One whose `size` or `stamp` differs
+    /// from the first answer's means the file was replaced part-way through,
+    /// and the pieces already in hand are not pieces of it.
+    ///
+    /// `length` is held to between one byte and [`MAX_LIBRARY_RANGE_BYTES`],
+    /// because a request outside that cannot be sent at all.
+    ///
+    /// A runtime released before this request cannot read it, and ends the
+    /// session of an application that sends it. So ask
+    /// [`Device::read_identity`] first, and send this only when the
+    /// `runtime_version` that comes back is the release the application
+    /// shipped with.
+    pub fn read_library_range(&mut self, id: impl Into<String>, offset: u32, length: u32) {
+        let most = u32::try_from(MAX_LIBRARY_RANGE_BYTES).unwrap_or(u32::MAX);
+        self.request(DeviceRequest::ReadLibraryRange {
+            id: id.into(),
+            offset,
+            length: length.clamp(1, most),
+        });
+    }
+
     /// Deletes one delivered article, by the identifier a listing returned.
     ///
     /// Only Books may ask, and only for a file in the card's `Articles`
@@ -3726,7 +3754,7 @@ impl From<StreamError> for ClientError {
 /// Synchronous client for one managed Kobo application.
 #[derive(Debug)]
 pub struct Client {
-    stream: UnixStream,
+    stream: channel::Stream,
     next_request: u32,
     metrics: DisplayMetrics,
     simulator_callbacks: bool,
@@ -3746,7 +3774,7 @@ impl Client {
     /// Returns a stream error when the socket cannot be opened or the handshake
     /// cannot be exchanged, and `UnexpectedMessage` for a non-welcome response.
     pub fn connect(path: impl AsRef<Path>, app_name: &str) -> Result<Self, ClientError> {
-        let stream = UnixStream::connect(path).map_err(StreamError::from)?;
+        let stream = channel::connect(path.as_ref()).map_err(StreamError::from)?;
         Self::from_stream(stream, app_name)
     }
 
@@ -3756,7 +3784,7 @@ impl Client {
     ///
     /// Returns a protocol or stream error, or `UnexpectedMessage` when the peer
     /// does not identify itself as `kobod`.
-    pub fn from_stream(mut stream: UnixStream, app_name: &str) -> Result<Self, ClientError> {
+    pub fn from_stream(mut stream: channel::Stream, app_name: &str) -> Result<Self, ClientError> {
         kobo_protocol::write_to(
             &mut stream,
             &Frame {
@@ -4974,7 +5002,7 @@ mod tests {
 
     #[test]
     fn client_handshake_and_screen_delivery() {
-        let (client_stream, mut daemon_stream) = UnixStream::pair().expect("socket pair");
+        let (client_stream, mut daemon_stream) = channel::pair().expect("socket pair");
         let daemon = thread::spawn(move || {
             let hello = kobo_protocol::read_from(&mut daemon_stream).expect("hello");
             assert!(matches!(hello.message, Message::Hello { .. }));
@@ -5008,7 +5036,7 @@ mod tests {
 
     #[test]
     fn client_transparently_chunks_a_full_width_picture() {
-        let (client_stream, mut daemon_stream) = UnixStream::pair().expect("socket pair");
+        let (client_stream, mut daemon_stream) = channel::pair().expect("socket pair");
         let daemon = thread::spawn(move || {
             let hello = kobo_protocol::read_from(&mut daemon_stream).expect("hello");
             kobo_protocol::write_to(
@@ -5516,6 +5544,80 @@ mod task_tests {
         assert_eq!(
             runner.app().outcomes,
             vec![(TaskId(1), TaskOutcome::Failed(TaskError::Denied))]
+        );
+    }
+
+    #[test]
+    fn a_library_range_is_asked_for_within_what_the_wire_carries_and_answered_to_its_asker() {
+        #[derive(Default)]
+        struct Reader {
+            answered: Vec<(DeviceRequest, DeviceResult)>,
+        }
+        impl KoboApp for Reader {
+            fn on_start(&mut self, context: &mut Context) {
+                context
+                    .device()
+                    .read_library_range("0/Atlas.epub", 0, u32::MAX);
+                context.device().read_library_range("0/Atlas.epub", 7, 0);
+                context.device().read_library_range("0/Atlas.epub", 9, 512);
+            }
+            fn on_action(&mut self, _context: &mut Context, _action: ActionId) {}
+            fn on_device_result(
+                &mut self,
+                _context: &mut Context,
+                request: DeviceRequest,
+                result: DeviceResult,
+            ) {
+                self.answered.push((request, result));
+            }
+        }
+        let mut runner = AppRunner::new(Reader::default());
+        let asked: Vec<(u32, u32)> = runner
+            .start()
+            .into_iter()
+            .filter_map(|command| match command {
+                Command::Device(DeviceRequest::ReadLibraryRange { id, offset, length }) => {
+                    assert_eq!(id, "0/Atlas.epub");
+                    Some((offset, length))
+                }
+                _ => None,
+            })
+            .collect();
+        let piece = u32::try_from(MAX_LIBRARY_RANGE_BYTES).expect("a piece fits the wire");
+        assert_eq!(asked, [(0, piece), (7, 1), (9, 512)]);
+        for (offset, length) in &asked {
+            let frame = Frame {
+                version: kobo_protocol::VERSION,
+                request_id: 1,
+                message: Message::DeviceRequest(DeviceRequest::ReadLibraryRange {
+                    id: "0/Atlas.epub".into(),
+                    offset: *offset,
+                    length: *length,
+                }),
+            };
+            assert!(
+                kobo_protocol::encode(&frame).is_ok(),
+                "a range the SDK asked for cannot be sent"
+            );
+        }
+        let range = DeviceResult::LibraryRange {
+            id: "0/Atlas.epub".into(),
+            offset: 0,
+            size: 3,
+            stamp: 11,
+            bytes: b"PK\x03".to_vec(),
+        };
+        runner.device_result(range.clone());
+        assert_eq!(
+            runner.app().answered,
+            [(
+                DeviceRequest::ReadLibraryRange {
+                    id: "0/Atlas.epub".into(),
+                    offset: 0,
+                    length: piece,
+                },
+                range
+            )]
         );
     }
 

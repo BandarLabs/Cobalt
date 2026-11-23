@@ -243,6 +243,42 @@ pub fn parse(bytes: &[u8]) -> Option<Feed> {
     Some(feed)
 }
 
+/// A feed cut down to `limit` bytes, at the end of the last item that fits.
+///
+/// A newsletter that carries its last twenty issues whole is a megabyte or
+/// two, and what is kept of a feed has a ceiling whatever its publisher
+/// sends. Feeds are written newest first, so the items before the cut are
+/// the recent ones, and cutting between items rather than at the byte means
+/// the last one kept is a whole article instead of half of one presented as
+/// if it were finished.
+///
+/// Nothing comes back for a JSON feed past the limit. Half a JSON document
+/// is not a JSON document, and there is no prefix of one to recover.
+#[must_use]
+pub fn within(mut bytes: Vec<u8>, limit: usize) -> Option<Vec<u8>> {
+    if bytes.len() <= limit {
+        return Some(bytes);
+    }
+    if bytes.trim_ascii_start().starts_with(b"{") {
+        return None;
+    }
+    let kept = &bytes[..limit];
+    let end = [b"</item>".as_slice(), b"</entry>".as_slice()]
+        .iter()
+        .filter_map(|close| {
+            kept.windows(close.len())
+                .rposition(|window| window == *close)
+                .map(|at| at + close.len())
+        })
+        .max()
+        // Not one whole item fits. What arrived of the first still names
+        // it, which is more than refusing the feed would give.
+        .unwrap_or(limit);
+    bytes.truncate(end);
+    bytes.shrink_to_fit();
+    Some(bytes)
+}
+
 /// Which of the names this module reads an element is, if any.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Field {
@@ -631,7 +667,7 @@ fn clamp(text: &str, characters: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{attribute, parse, Feed, Item, MAX_ITEMS};
+    use super::{attribute, parse, within, Feed, Item, MAX_ITEMS};
     use kobo_xml::decode_entities;
     use std::fmt::Write as _;
 
@@ -1023,5 +1059,61 @@ mod tests {
             20
         );
         assert!(parse(&json.as_bytes()[..json.len() / 2]).is_none());
+    }
+    #[test]
+    fn a_feed_past_the_limit_is_cut_after_the_last_item_that_fits() {
+        let item = |number: usize| {
+            format!(
+                "<item><title>Issue {number}</title><description>{}</description></item>",
+                "Words of the issue. ".repeat(40)
+            )
+        };
+        let feed = format!(
+            "<rss><channel><title>The Tide Letter</title>{}{}{}</channel></rss>",
+            item(3),
+            item(2),
+            item(1)
+        );
+        // Room for the first two and part of the third.
+        let limit = feed.find("Issue 1").unwrap() + 200;
+        let cut = within(feed.clone().into_bytes(), limit).expect("an XML feed is cut");
+        assert!(cut.len() <= limit);
+        assert!(cut.ends_with(b"</item>"));
+        let parsed = parse(&cut).expect("the cut feed is still a feed");
+        let titles: Vec<_> = parsed
+            .items
+            .iter()
+            .map(|item| item.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Issue 3", "Issue 2"]);
+        assert_eq!(parsed.title, "The Tide Letter");
+        // A feed that fits is handed back as it came.
+        assert_eq!(
+            within(feed.clone().into_bytes(), feed.len()),
+            Some(feed.into_bytes())
+        );
+    }
+
+    #[test]
+    fn an_atom_feed_is_cut_at_its_entries_and_a_json_feed_is_not_cut_at_all() {
+        let entry = "<entry><title>One</title><content>Body of the entry.</content></entry>";
+        let atom = format!("<feed><title>A Journal</title>{entry}{entry}{entry}</feed>");
+        let cut = within(atom.clone().into_bytes(), atom.len() - 10).unwrap();
+        assert!(cut.ends_with(b"</entry>"));
+        assert_eq!(parse(&cut).unwrap().items.len(), 2);
+        let json = br#"  {"version":"https://jsonfeed.org/version/1.1","title":"J","items":[]}"#;
+        assert_eq!(within(json.to_vec(), json.len() - 1), None);
+    }
+
+    #[test]
+    fn a_first_item_longer_than_the_limit_still_gives_its_name() {
+        let feed = format!(
+            "<rss><channel><title>Long</title><item><title>The only issue</title>\
+             <description>{}</description></item></channel></rss>",
+            "Words. ".repeat(400)
+        );
+        let cut = within(feed.into_bytes(), 600).unwrap();
+        assert_eq!(cut.len(), 600);
+        assert_eq!(parse(&cut).unwrap().items[0].title, "The only issue");
     }
 }

@@ -1,0 +1,45 @@
+expect Tailscale
+expect Off. Nothing reaches this reader over a tailnet.
+expect-missing Status
+expect-missing Refresh
+expect-missing Address
+clean
+shot tailscale-off
+# One switch. Nothing in the simulator starts a daemon, so the screen says it
+# is starting and, after a minute of silence, that it has not.
+tap-id toggle
+wait-for Runs while Cobalt is open.
+expect Starting
+expect-missing Nothing reaches this reader
+clean
+shot tailscale-starting
+tap About Tailscale
+wait-for the private network between your own devices
+expect kobo pair kobo
+expect offers no exit node and no routes
+expect It never runs Tailscale SSH.
+expect BSD 3
+clean
+shot tailscale-about
+# Signing out asks first, and Cancel returns to the page it was asked from.
+tap Sign out
+wait-for This reader forgets its key
+clean
+shot tailscale-sign-out
+tap Cancel
+wait-for the private network between your own devices
+tap-id 4294967295
+wait-for Runs while Cobalt is open.
+# The switch is kept across a restart.
+restart
+wait-for Runs while Cobalt is open.
+expect-missing Nothing reaches this reader
+wait 62000
+wait-for Tailscale has not started.
+expect Not started
+expect Try again
+clean
+shot tailscale-not-started
+tap-id toggle
+wait-for Off. Nothing reaches this reader over a tailnet.
+expect-missing Try again

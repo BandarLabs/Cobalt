@@ -90,13 +90,18 @@ tap-at 536,724
 wait-idle
 clean
 shot type-panel
-tap-at 900,333
+tap-at 520,207
 wait-idle
 clean
 shot type-panel-tapped
 expect-missing Ready offline
 expect Page 5 of 86
-tap Back
+# Back puts the type panel away first, as it does in every reading app, and
+# only then leaves the paper. By its action, not its word: the page says
+# "back" in its own text.
+tap-id 4294967295
+wait-idle
+tap-id 4294967295
 wait-idle
 wait-for Ready offline: 1 paper
 # Remove papers in the library takes a kept paper off the reader.

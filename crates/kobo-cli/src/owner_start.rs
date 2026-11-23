@@ -3,6 +3,8 @@ use std::io::{BufRead, Write};
 
 pub const COMPACT_HELP: &str = "Cobalt - tools for your reader
 
+  kobo ui
+    Do all of this in a window
   kobo setup
     Set up a reader over USB and save it
   kobo send FILE
@@ -123,7 +125,7 @@ fn send_choice(
     let Some(file) = answer(
         input,
         output,
-        "File or folder to send: a photo, score, note, comic or story (blank cancels): ",
+        "File or folder to send: a book, photo, score, note, comic or story (blank cancels): ",
     )?
     else {
         return Ok(None);

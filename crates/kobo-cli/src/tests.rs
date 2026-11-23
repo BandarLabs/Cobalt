@@ -410,6 +410,7 @@ fn a_catalog_with_a_mark_earlier_runtimes_would_try_to_install_is_not_written() 
 }
 
 /// A session is what somebody asked for by not asking for anything else.
+#[cfg(unix)]
 #[test]
 fn paperterm_presets_are_literal_commands_with_clear_titles() {
     let (command, title) = super::stream_preset("terminal", Some("/bin/sh")).unwrap();
@@ -419,6 +420,23 @@ fn paperterm_presets_are_literal_commands_with_clear_titles() {
     let (command, title) = super::stream_preset("monitor", None).unwrap();
     assert_eq!(command, ["top"]);
     assert_eq!(title, "System monitor");
+    assert!(super::stream_preset("unknown", None).is_err());
+    assert!(super::STREAM_START.contains("kobo stream demo"));
+    super::stream_command(&[]).unwrap();
+}
+
+/// The Windows presets: cmd.exe with no login flag, and monitor's
+/// explicit unsupported error instead of a missing top(1).
+#[cfg(windows)]
+#[test]
+fn paperterm_presets_are_literal_commands_with_clear_titles() {
+    let shell =
+        std::env::var("COMSPEC").unwrap_or_else(|_| "C:\\Windows\\System32\\cmd.exe".to_owned());
+    let (command, title) = super::stream_preset("terminal", Some(shell.as_str())).unwrap();
+    assert_eq!(command, [shell.as_str()]);
+    assert_eq!(title, "Terminal");
+    assert!(super::stream_preset("terminal", Some("cmd & echo unsafe")).is_err());
+    assert!(super::stream_preset("monitor", None).is_err());
     assert!(super::stream_preset("unknown", None).is_err());
     assert!(super::STREAM_START.contains("kobo stream demo"));
     super::stream_command(&[]).unwrap();
@@ -564,9 +582,9 @@ use super::{
     build_executables, canonical, configured_target_directory, dev_session_root, is_device_flag,
     manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
     parse_touch_probe, parser_shelf_summary, unreachable_device, valid_device_host, valid_slug,
-    verify_arm_elf, wait_for_remote_child, workspace_doctor_binary, DevSessionGuard,
-    RemoteArtifact, SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
-    TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
+    verify_arm_elf, workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard,
+    ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
+    TOUCH_PROBE_MAXIMUM_SECONDS,
 };
 #[cfg(feature = "device-write")]
 use super::{
@@ -576,9 +594,16 @@ use super::{
 };
 use std::fs;
 use std::path::PathBuf;
+// Only the unix-gated fixtures drive child processes and timeouts.
+#[cfg(unix)]
+use super::wait_for_remote_child;
+#[cfg(unix)]
 use std::process::Command;
+#[cfg(any(unix, feature = "device-write"))]
 use std::time::Duration;
 
+// The fixture drives /bin/sh and mode bits, so it is Unix-only.
+#[cfg(unix)]
 #[test]
 fn secret_remote_publish_preserves_old_value_on_failed_or_occupied_stage() {
     use std::os::unix::fs::PermissionsExt;
@@ -645,6 +670,8 @@ fn typed_copies_fixture(label: &str) -> std::path::PathBuf {
     directory
 }
 
+// The secret scripts are the reader's own /bin/sh scripts.
+#[cfg(unix)]
 #[test]
 fn setting_a_secret_from_a_computer_replaces_the_copy_typed_on_the_reader() {
     let directory = typed_copies_fixture("set");
@@ -669,6 +696,7 @@ fn setting_a_secret_from_a_computer_replaces_the_copy_typed_on_the_reader() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn removing_a_secret_from_a_computer_also_removes_the_copy_typed_on_the_reader() {
     let directory = typed_copies_fixture("remove");
@@ -978,12 +1006,12 @@ fn wait_and_doctor_take_the_shared_target_flags() {
     }
     assert_eq!(
         super::parse_wait(&arguments(&["--device", "192.0.2.10", "--timeout", "5"])).unwrap(),
-        ("192.0.2.10".to_owned(), Duration::from_secs(5))
+        ("192.0.2.10".to_owned(), std::time::Duration::from_secs(5))
     );
     // The adb spelling still works, wherever it appears.
     assert_eq!(
         super::parse_wait(&arguments(&["--timeout", "5", "-s", "192.0.2.11"])).unwrap(),
-        ("192.0.2.11".to_owned(), Duration::from_secs(5))
+        ("192.0.2.11".to_owned(), std::time::Duration::from_secs(5))
     );
     let error = super::parse_wait(&arguments(&["--device", "192.0.2.10", "--sim"]))
         .expect_err("two targets");
@@ -1012,6 +1040,10 @@ fn rejects_non_elf_binary() {
     fs::remove_file(path).expect("remove fixture");
 }
 
+// Builds device binaries with the ARM musl toolchain, which the Windows
+// job does not install; the device-build and device-emulated jobs cover
+// these builds on Linux.
+#[cfg(unix)]
 #[test]
 fn every_uploaded_artifact_is_built_from_this_workspace() {
     let command =
@@ -1058,6 +1090,8 @@ fn every_installed_package_is_a_member_of_this_workspace() {
 /// as long as the packager existed, so `--present` was not compiled in and
 /// `start.sh` answered the owner with a usage message. Everything else
 /// about that binary was correct, which is why nothing else caught it.
+// Needs the ARM musl toolchain; covered by the Linux device jobs.
+#[cfg(unix)]
 #[test]
 fn every_packaged_binary_is_built_with_what_it_needs() {
     let features = super::INSTALLED_PACKAGES
@@ -1104,7 +1138,7 @@ fn a_package_writes_nothing_outside_the_install_root() {
     let members = vec![
         package::Member {
             path: package::LAUNCH_BOOTSTRAP.to_owned(),
-            bytes: super::bootstrap::CONTENT.as_bytes().to_vec(),
+            bytes: super::bootstrap::content().as_bytes().to_vec(),
             program: true,
         },
         super::text_member("start.sh", super::START_SCRIPT, true),
@@ -1119,7 +1153,7 @@ fn a_package_writes_nothing_outside_the_install_root() {
 
 #[test]
 fn high_level_readback_requires_exact_first_unique_bootstrap() {
-    let reviewed = super::bootstrap::CONTENT.as_bytes().to_vec();
+    let reviewed = super::bootstrap::content().as_bytes().to_vec();
     let version = (
         format!("{}/VERSION", package::INSTALL_ROOT),
         b"0.1.0\n".to_vec(),
@@ -1197,7 +1231,7 @@ fn deploy_validation_accepts_then_omits_reviewed_bootstrap() {
     let members = vec![
         package::Member {
             path: package::LAUNCH_BOOTSTRAP.to_owned(),
-            bytes: super::bootstrap::CONTENT.as_bytes().to_vec(),
+            bytes: super::bootstrap::content().as_bytes().to_vec(),
             program: true,
         },
         super::text_member("VERSION", "0.1.0\n", false),
@@ -1263,6 +1297,59 @@ fn the_start_script_installs_the_staged_public_key_once() {
     assert!(script.contains("if [ \"$known\" = \"$key\" ]"));
     assert!(script.contains("printf '%s\\n' \"$key\" >> \"$keys\""));
     assert!(script.contains("rm -f \"$staged_key\""));
+}
+
+/// The runtime starts itself again through this script once an update is in
+/// place, and says so in the environment. That start has to keep the log the
+/// first one began: everything written about the update is in it.
+#[cfg(unix)]
+#[test]
+fn the_start_script_begins_the_log_and_a_start_after_an_update_adds_to_it() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let scratch = std::env::temp_dir().join(format!("kobo-start-log-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let root = scratch.join("cobalt");
+    fs::create_dir_all(root.join("bin")).expect("an installation");
+    // A runtime that says what it was started with and whether it was told
+    // an update had settled, which is all the log is asked to keep here.
+    fs::write(
+        root.join("bin/kobod"),
+        "#!/bin/sh\necho \"started $1 settled=${KOBOD_UPDATE_SETTLED:-no}\"\n",
+    )
+    .expect("a runtime");
+    fs::set_permissions(root.join("bin/kobod"), fs::Permissions::from_mode(0o755))
+        .expect("executable");
+    let log = scratch.join("kobod.txt");
+    // The script as shipped, pointed at the scratch installation and log.
+    let script = super::START_SCRIPT
+        .replace("/mnt/onboard/.adds/cobalt", &root.to_string_lossy())
+        .replace("/mnt/onboard/kobod.txt", &log.to_string_lossy());
+    assert!(
+        !script.contains("/mnt/onboard"),
+        "a device path was left in"
+    );
+    let path = scratch.join("start.sh");
+    fs::write(&path, script).expect("the script");
+    let start = |settled: bool| {
+        let mut command = Command::new("/bin/sh");
+        command.arg(&path).env_remove("KOBOD_UPDATE_SETTLED");
+        if settled {
+            command.env("KOBOD_UPDATE_SETTLED", "1");
+        }
+        assert!(command.status().expect("sh runs").success());
+        fs::read_to_string(&log).expect("the log")
+    };
+
+    assert_eq!(start(false), "started --present settled=no\n");
+    // The start after an update keeps what the first one wrote.
+    assert_eq!(
+        start(true),
+        "started --present settled=no\nstarted --present settled=1\n"
+    );
+    // And the next ordinary start begins the log again, so it does not grow
+    // without end.
+    assert_eq!(start(false), "started --present settled=no\n");
+    let _ = fs::remove_dir_all(&scratch);
 }
 
 #[test]
@@ -1475,6 +1562,12 @@ fn remote_doctor_uses_strict_hosts_and_workspace_artifact() {
     }
     assert!(valid_device_host("192.0.2.1"));
     assert!(valid_device_host("kobo-reader_1"));
+    // A reader on a tailnet is named by its tailnet address or by the name
+    // the tailnet gives it, in either address family.
+    assert!(valid_device_host("100.101.102.103"));
+    assert!(valid_device_host("kobo-cobalt"));
+    assert!(valid_device_host("kobo-cobalt.example.ts.net"));
+    assert!(valid_device_host("fd7a:115c:a1e0::7"));
     assert!(!valid_device_host(""));
     assert!(!valid_device_host("--sim"));
     assert!(!valid_device_host("-reader"));
@@ -1813,6 +1906,8 @@ fn remote_session_error_includes_captured_output() {
     assert!(message.contains("stderr: doctor stderr"));
 }
 
+// The fixture spawns the unix `sleep` utility.
+#[cfg(unix)]
 #[test]
 fn remote_child_timeout_kills_the_local_process() {
     let mut child = Command::new("/bin/sleep")
@@ -2034,10 +2129,11 @@ mod simulating {
 mod preparing {
     use super::super::{
         choose_reader_list, confirmation_answer, connect, dry_run_plan, gzip,
-        load_release_package_from_manifest, parse_setup, setup, setup_device_with_confirmation,
-        undo_setup, SetupMode, SetupPayload, SETUP_HELP,
+        load_release_package_from_manifest, parse_setup, prompt_confirmation, rust_lld_candidate,
+        setup, setup_device_with_confirmation, undo_setup, write_zig_device_wrappers, SetupMode,
+        SetupPayload, SETUP_HELP,
     };
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn arguments(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
@@ -2132,6 +2228,110 @@ mod preparing {
     }
 
     #[test]
+    fn confirmation_prompts_and_reads_the_given_streams() {
+        let mut prompt = Vec::new();
+        let accepted = prompt_confirmation(&b"y\n"[..], &mut prompt).expect("answered");
+        assert!(accepted);
+        assert_eq!(prompt, b"Continue? [y/N] ");
+
+        // An empty line is a decline, including the end of a closed pipe.
+        let declined = prompt_confirmation(&b"\n"[..], Vec::new()).expect("empty line");
+        assert!(!declined);
+        let closed = prompt_confirmation(&b""[..], Vec::new()).expect("closed pipe");
+        assert!(!closed);
+    }
+
+    #[test]
+    fn rust_lld_probe_uses_the_platform_executable_name() {
+        let candidate = rust_lld_candidate(Path::new("toolchain-target"));
+        let name = candidate.file_name().expect("file name").to_string_lossy();
+        #[cfg(windows)]
+        assert_eq!(name, "rust-lld.exe");
+        #[cfg(not(windows))]
+        assert_eq!(name, "rust-lld");
+    }
+
+    #[test]
+    fn zig_cc_wrapper_carries_zigs_target_and_drops_the_rust_one() {
+        let volume = TempVolume::new("zigwrap");
+        let (cc, ar) = write_zig_device_wrappers(&volume.path).expect("wrappers");
+        let cc_body = std::fs::read_to_string(&cc).expect("cc wrapper");
+        assert!(cc_body.contains("-target arm-linux-musleabihf"));
+        assert!(cc_body.contains("-fno-sanitize=undefined"));
+        #[cfg(unix)]
+        assert!(cc_body.contains("--target=*)"));
+        #[cfg(windows)]
+        assert!(cc_body.contains("\"--target=\""));
+        assert!(std::fs::read_to_string(&ar)
+            .expect("ar wrapper")
+            .contains("zig ar"));
+        #[cfg(windows)]
+        assert_eq!(cc.extension().and_then(|e| e.to_str()), Some("cmd"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                cc.metadata().expect("metadata").permissions().mode() & 0o111,
+                0o111
+            );
+            assert_eq!(cc.extension(), None);
+        }
+    }
+
+    /// The shell wrapper must drop cc-rs's Rust-style `--target` and keep
+    /// every other argument intact, including ones with spaces.
+    #[cfg(unix)]
+    #[test]
+    fn zig_cc_wrapper_filters_only_the_target_flag() {
+        use std::os::unix::fs::PermissionsExt;
+        let volume = TempVolume::new("zigwrap-exec");
+        let (cc, _) = write_zig_device_wrappers(&volume.path).expect("wrappers");
+        let bin = volume.path.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        std::fs::write(
+            bin.join("zig"),
+            "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n",
+        )
+        .expect("stub zig");
+        std::fs::set_permissions(bin.join("zig"), std::fs::Permissions::from_mode(0o755))
+            .expect("chmod stub");
+        let output = std::process::Command::new("sh")
+            .arg(&cc)
+            .args([
+                "-O2",
+                "--target=armv7-unknown-linux-musleabihf",
+                "two words",
+            ])
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    bin.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .output()
+            .expect("run wrapper");
+        assert!(output.status.success());
+        let args: Vec<String> = String::from_utf8(output.stdout)
+            .expect("utf8")
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "cc",
+                "-target",
+                "arm-linux-musleabihf",
+                "-fno-sanitize=undefined",
+                "-O2",
+                "two words"
+            ]
+        );
+    }
+
+    #[test]
     fn declined_confirmation_writes_nothing() {
         let volume = TempVolume::new("declined");
         let system = volume.path.join(".kobo");
@@ -2210,7 +2410,7 @@ mod preparing {
         let members = vec![
             crate::package::Member {
                 path: crate::package::LAUNCH_BOOTSTRAP.to_owned(),
-                bytes: crate::bootstrap::CONTENT.as_bytes().to_vec(),
+                bytes: crate::bootstrap::content().as_bytes().to_vec(),
                 program: true,
             },
             crate::package::Member {
@@ -2261,7 +2461,7 @@ mod preparing {
             &[
                 (
                     crate::package::LAUNCH_BOOTSTRAP.to_owned(),
-                    crate::bootstrap::CONTENT.as_bytes().to_vec(),
+                    crate::bootstrap::content().as_bytes().to_vec(),
                     0o700,
                 ),
                 (
@@ -2663,5 +2863,44 @@ fn app_link_maintenance_accepts_only_fixed_actions_and_safe_hosts() {
         vec!["status".to_owned()],
     ] {
         assert!(super::parse_app_link(&invalid).is_err());
+    }
+}
+
+#[test]
+fn a_large_upload_travels_in_slices_the_readers_shell_can_hold() {
+    let slice = super::UPLOAD_SLICE;
+    let (begin, end) = (
+        super::SLICE_OPENS.trim_end(),
+        super::SLICE_CLOSES.trim_end(),
+    );
+    for length in [1, 56, 57, 58, slice - 1, slice, slice + 1, 3 * slice] {
+        let bytes = vec![b'k'; length];
+        let mut script = Vec::new();
+        super::append_in_slices(&mut script, &bytes).expect("written");
+        let script = String::from_utf8(script).expect("text");
+        let lines: Vec<&str> = script.lines().collect();
+        let started = lines.iter().filter(|line| **line == begin).count();
+        let finished = lines.iter().filter(|line| **line == end).count();
+        assert_eq!(started, length.div_ceil(slice), "{length}");
+        assert_eq!(started, finished, "every slice is finished");
+        assert_eq!(lines.first(), Some(&begin));
+        assert_eq!(lines.last(), Some(&end), "{length}");
+        let encoded: usize = lines
+            .iter()
+            .filter(|line| **line != begin && **line != end)
+            .map(|line| {
+                assert!(!line.is_empty() && line.len() <= 76, "{length}");
+                line.len()
+            })
+            .sum();
+        assert_eq!(encoded, length.div_ceil(3) * 4, "{length}");
+        // One slice is as much as the shell is ever asked to hold.
+        let longest = script
+            .split(super::SLICE_OPENS)
+            .skip(1)
+            .map(|part| part.split(super::SLICE_CLOSES).next().map_or(0, str::len))
+            .max()
+            .unwrap_or(0);
+        assert!(longest <= slice.div_ceil(57) * 77, "{longest}");
     }
 }

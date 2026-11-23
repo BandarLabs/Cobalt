@@ -1200,6 +1200,19 @@ impl Status {
             marks,
         }
     }
+
+    /// Adds the tailnet mark while the reader is connected to one.
+    ///
+    /// Innermost, so it is the first to give way on a narrow band: the
+    /// battery and the radio are what somebody needs on every screen, and
+    /// this one says something only its owner switched on.
+    #[must_use]
+    pub fn with_tailnet(mut self, connected: bool) -> Self {
+        if connected {
+            self.marks.push(StatusMark::Tailnet);
+        }
+        self
+    }
 }
 
 /// One mark in the status band.
@@ -1225,6 +1238,11 @@ pub enum StatusMark {
     /// Drawn as headphones, so that "where is the sound going" is answered
     /// on every screen.
     Bluetooth,
+    /// The reader is on its owner's tailnet right now, so a computer that is
+    /// not on the same Wi-Fi can reach it. Drawn as the globe the Tailscale
+    /// app wears on the launcher, so the mark and the switch that put it
+    /// there are recognisably the same thing.
+    Tailnet,
 }
 
 impl StatusMark {
@@ -1240,7 +1258,7 @@ impl StatusMark {
                     + metrics.space(Space::Tight)
                     + figures_width("100%", FontSize::Caption, Face::Text)
             }
-            Self::Signal(_) | Self::Bluetooth => mark,
+            Self::Signal(_) | Self::Bluetooth | Self::Tailnet => mark,
         }
     }
 }
@@ -20040,6 +20058,9 @@ fn draw_status_mark(
                 square,
                 clip,
             );
+        }
+        StatusMark::Tailnet => {
+            blit_vector_crisp(surface, &vector::shapes(Glyph::Globe), size, square, clip);
         }
         // Nothing at all when it could not be read; the room stays reserved.
         StatusMark::Battery {

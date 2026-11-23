@@ -51,6 +51,7 @@ use kobo_ui::{
 };
 use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -340,6 +341,210 @@ impl SyncWindows {
     }
 }
 
+/// How often the runtime looks at whether Tailscale should be running.
+///
+/// A tap in the Tailscale app is answered at once; this is for everything
+/// else, such as Wi-Fi coming back, and looking is two small reads.
+const TAILSCALE_CHECK: Duration = Duration::from_secs(30);
+
+/// How long a start that failed is left alone before it is tried again.
+///
+/// The failures that retry are the ones that pass by themselves: a download
+/// that did not finish, a tailnet that did not answer. Ten minutes is long
+/// enough that a reader on a bad connection is not downloading 37 MB in a
+/// loop, and short enough that an evening's session still gets there.
+const TAILSCALE_RETRY: Duration = Duration::from_secs(10 * 60);
+
+/// How long teardown waits for the Tailscale supervisor to stop before
+/// ending it.
+///
+/// The supervisor looks for the request every two seconds and gives the
+/// daemon ten to leave cleanly; this is both, with some to spare.
+const TAILSCALE_STOP_PATIENCE: Duration = Duration::from_secs(20);
+
+/// How soon the runtime looks again after asking a supervisor from another
+/// build to leave. It takes a couple of seconds to notice and up to ten to
+/// stop its daemon, and the reader is off the tailnet until one of this
+/// build replaces it.
+const TAILSCALE_RECHECK: Duration = Duration::from_secs(4);
+
+/// The Tailscale supervisor this session starts, so the switch in the
+/// Tailscale app actually brings the reader onto the tailnet.
+///
+/// Nothing else starts it. The app can only save what the owner chose;
+/// running a daemon needs the runtime's own privileges, and nothing on the
+/// reader runs it at boot. So the service is started when a session finds it
+/// switched on, and ended with the session like a Sync window, for the same
+/// reason: nothing Cobalt started may still be running once the stock reader
+/// is.
+///
+/// The one exception is the owner's to make. A reader asked to stay connected
+/// outside Cobalt gets a supervisor of its own on the root filesystem, which
+/// this session starts if none is running, adopts if one already is, and
+/// leaves alone when it ends.
+#[derive(Default)]
+struct TailscaleService {
+    /// What this session started and is still waiting on, with why: a
+    /// supervisor that ends with the session, or the short step that starts
+    /// one that does not.
+    running: Option<(Child, crate::tailscale::Want)>,
+    checked: Option<Instant>,
+    /// Set when the Tailscale app saved something that may change what should
+    /// be running, so a tap is answered at once.
+    asked: bool,
+    /// When a start that failed may be tried again.
+    retry_after: Option<Instant>,
+    /// Whether this session has cleared what an earlier one may have left.
+    swept: bool,
+    /// What ended waiting on the owner, so it is not started again until
+    /// they have done something.
+    settled: crate::tailscale::Settled,
+}
+
+impl TailscaleService {
+    fn tend(&mut self, online: bool) {
+        use crate::tailscale::{Standing, Want};
+        let asked = std::mem::take(&mut self.asked);
+        if asked {
+            // A tap is the owner trying again, so it does not wait out a
+            // failure, and whatever could not be arranged last time is asked
+            // for again.
+            self.retry_after = None;
+            self.settled.asked(self.running.is_some());
+            crate::tailscale::try_staying_again();
+        }
+        if let Some((started, want)) = &mut self.running {
+            match started.try_wait() {
+                // It reads the app's choices itself while it runs.
+                Ok(None) => return,
+                Ok(Some(status)) if !status.success() => {
+                    trace("tailscale did not come up; trying again later");
+                    self.retry_after = Some(Instant::now() + TAILSCALE_RETRY);
+                    self.settled.failed();
+                }
+                Ok(Some(_)) => self.settled.ended(*want),
+                Err(_) => {}
+            }
+            // Looked at again now rather than at the next interval: the step
+            // that starts a kept supervisor ends in a second or two, and what
+            // it left decides what happens next.
+            self.running = None;
+        } else if !asked
+            && self
+                .checked
+                .is_some_and(|at| at.elapsed() < TAILSCALE_CHECK)
+        {
+            return;
+        }
+        self.checked = Some(Instant::now());
+        if !std::mem::replace(&mut self.swept, true) {
+            // A session that ended badly can leave a daemon with nobody
+            // watching it and its names in the hosts file. A supervisor kept
+            // on purpose is not that, and the sweep leaves it alone.
+            crate::tailscale::try_staying_again();
+            crate::tailscale::sweep();
+        }
+        match crate::tailscale::standing() {
+            Standing::Nothing => {}
+            // Adopted as it stands. Starting a second beside it would give
+            // the reader two daemons fighting over one tunnel.
+            Standing::Kept => return,
+            Standing::Stale => {
+                // From another build of the runtime, so its pins and its
+                // rules may not be this one's. Asked to leave, and looked for
+                // again shortly, when one of this build can be started.
+                if let Err(error) = crate::tailscale::ask_to_stop() {
+                    trace(&format!("could not ask tailscale to stop: {error}"));
+                }
+                self.checked = Instant::now().checked_sub(TAILSCALE_CHECK - TAILSCALE_RECHECK);
+                return;
+            }
+        }
+        let Some(want) = crate::tailscale::wanted() else {
+            return;
+        };
+        // Its status already says what it is waiting for, and nothing but
+        // the owner changes that. A supervisor kept outside the session is
+        // not this one's child, so for it the status is all there is to go
+        // by, and one that stopped for any other reason is started again.
+        let waiting = want == Want::Stay && crate::tailscale::waits_on_the_owner();
+        if self.settled.holds(want, waiting) {
+            return;
+        }
+        if self.retry_after.is_some_and(|at| Instant::now() < at) {
+            return;
+        }
+        if want != Want::SignOut && !online {
+            crate::tailscale::waiting_for_wifi();
+            return;
+        }
+        crate::tailscale::forget_stop_request();
+        let started = std::env::current_exe().and_then(|runtime| {
+            use std::os::unix::process::CommandExt;
+            Command::new(runtime)
+                .args(want.arguments())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                // Its own group, so a signal meant for the session cannot
+                // take the supervisor down and leave the daemon behind.
+                .process_group(0)
+                .spawn()
+        });
+        match started {
+            Ok(supervisor) => {
+                trace(&format!("tailscale started ({want:?})"));
+                self.running = Some((supervisor, want));
+            }
+            Err(error) => trace(&format!("tailscale could not start: {error}")),
+        }
+    }
+
+    /// Ends the service this session started, before the reader is handed
+    /// back.
+    ///
+    /// Asked first, so the daemon leaves the tailnet cleanly and takes its
+    /// interface, its routes and its names with it before the stock reader
+    /// restarts the radio underneath. A supervisor that has not stopped by the
+    /// deadline is ended, and whatever it left is swept up after it.
+    ///
+    /// A supervisor the owner asked to keep is not this session's to end. It
+    /// was started detached, it is found by none of this, and the sweep
+    /// leaves a daemon alone while its supervisor is alive.
+    fn finish(&mut self) {
+        if let Some((mut started, want)) = self.running.take() {
+            // Only a supervisor that ends with the session is asked to stop.
+            // The same request left for the step that starts a kept one
+            // would be read by the supervisor it has just started.
+            let ends_with_session = want == crate::tailscale::Want::Run;
+            if ends_with_session && matches!(started.try_wait(), Ok(None)) {
+                if let Err(error) = crate::tailscale::ask_to_stop() {
+                    trace(&format!("could not ask tailscale to stop: {error}"));
+                }
+            }
+            let deadline = Instant::now() + TAILSCALE_STOP_PATIENCE;
+            while matches!(started.try_wait(), Ok(None)) {
+                if Instant::now() >= deadline {
+                    let _ignored = kobo_abi::process_group::signal(
+                        started.id(),
+                        kobo_abi::process_group::SIGKILL,
+                    );
+                    let _ignored = started.wait();
+                    trace("tailscale did not stop in time and was ended");
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            if ends_with_session {
+                crate::tailscale::forget_stop_request();
+            }
+        }
+        // Also when nothing was started here: the daemon runs in a group of
+        // its own, so this is what ends one whose supervisor was killed.
+        crate::tailscale::sweep();
+    }
+}
+
 /// Reads the clock, the radio and the gauge, no more often than it needs to.
 ///
 /// Held by the session rather than read per frame. Every reading here is from
@@ -503,6 +708,8 @@ struct Reading {
     battery: Option<kobo_ui::Percent>,
     charging: bool,
     signal: kobo_ui::Signal,
+    /// Whether the Tailscale tunnel is up.
+    tailnet: bool,
 }
 
 impl Reading {
@@ -514,6 +721,7 @@ impl Reading {
             self.signal,
             bluetooth,
         )
+        .with_tailnet(self.tailnet)
     }
 }
 
@@ -587,6 +795,9 @@ fn read_status() -> (Reading, kobo_hal::network::LinkState) {
         },
         battery: battery.map(|battery| kobo_ui::Percent::new(battery.percent)),
         charging: battery.is_some_and(|battery| battery.charging),
+        // Read with the rest and from the same kind of place: one file the
+        // kernel publishes and one small file the supervisor writes.
+        tailnet: crate::tailscale::connected(),
     };
     (reading, link)
 }
@@ -808,8 +1019,11 @@ pub fn present(
     let reader = Reader::find().map_err(|error| error.to_string())?;
     let network = kobo_hal::network::Connection::capture();
     let state = PathBuf::from(format!("/tmp/kobo-session-{}", std::process::id()));
-    fs::DirBuilder::new()
-        .mode(0o700)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut state_builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    state_builder.mode(0o700);
+    state_builder
         .create(&state)
         .map_err(|error| format!("create private reader session: {error}"))?;
     reader
@@ -1106,6 +1320,7 @@ pub fn present(
     // Held out here rather than in the session, so that teardown can stop a
     // sync still running while the watchdog is fed and the radio is still up.
     let mut sync_windows = SyncWindows::default();
+    let mut tailscale = TailscaleService::default();
     let application_outcome = if consented {
         host_applications(
             application,
@@ -1120,6 +1335,7 @@ pub fn present(
             launch_painter,
             launch_started,
             &mut sync_windows,
+            &mut tailscale,
         )
     } else {
         // Not an error. The owner was asked and answered, and everything below
@@ -1151,6 +1367,10 @@ pub fn present(
     // running would write to the card the reader is about to scan, on a core
     // it needs to start, through a radio that is about to go.
     sync_windows.finish();
+    // And before the stock reader restarts the radio's supplicant: a tunnel
+    // still up through that would be left holding routes for an interface
+    // that is about to go, and a daemon nobody is watching.
+    tailscale.finish();
     // A session closed within seconds of opening can still be inside the
     // recovery's settle window, so this may wait. It waits beating, and it has
     // to: the radio cannot be handed back while it is still being restored.
@@ -2138,7 +2358,7 @@ struct Hosted {
     /// is using.
     identity_slot: Option<u32>,
     child: ApplicationChild,
-    stream: std::os::unix::net::UnixStream,
+    stream: kobo_protocol::channel::Stream,
     store: kobo_policy::store::Store,
     shelf: kobo_policy::shelf::Shelf,
     tasks: TaskRunner,
@@ -2290,7 +2510,7 @@ impl ApplicationChild {
 }
 
 struct AppLaunch {
-    listener: std::os::unix::net::UnixListener,
+    listener: kobo_protocol::channel::Listener,
     socket_path: PathBuf,
     child_socket: PathBuf,
     program: PathBuf,
@@ -2335,7 +2555,7 @@ impl AppLaunch {
         let socket_path =
             std::env::temp_dir().join(format!("kobo-session-{}-{id}.sock", std::process::id()));
         let _ignored = fs::remove_file(&socket_path);
-        let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+        let listener = kobo_protocol::channel::Listener::bind(&socket_path)
             .map_err(|error| format!("bind application socket: {error}"))?;
         Ok(Self {
             listener,
@@ -2370,6 +2590,9 @@ impl AppLaunch {
         fs::create_dir(&root)
             .map_err(|error| format!("create application sandbox {}: {error}", root.display()))?;
         let prepared = (|| -> Result<Self, String> {
+            // Unreachable on Windows (is_root() is false there); mode bits
+            // are the Unix sandbox mechanism.
+            #[cfg(unix)]
             fs::set_permissions(&root, fs::Permissions::from_mode(0o755))
                 .map_err(|error| format!("protect application sandbox: {error}"))?;
             let program = root.join("app");
@@ -2382,11 +2605,13 @@ impl AppLaunch {
                     })?;
                 }
             }
+            #[cfg(unix)]
             fs::set_permissions(&program, fs::Permissions::from_mode(0o555))
                 .map_err(|error| format!("protect sandboxed application: {error}"))?;
             let socket_path = root.join("runtime.sock");
-            let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+            let listener = kobo_protocol::channel::Listener::bind(&socket_path)
                 .map_err(|error| format!("bind sandbox application socket: {error}"))?;
+            #[cfg(unix)]
             fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666))
                 .map_err(|error| format!("make sandbox socket connectable: {error}"))?;
             let sandbox = kobo_abi::sandbox::Sandbox::new(&root, identity_slot)
@@ -2453,6 +2678,7 @@ fn host_applications(
     launch_painter: Option<Painter>,
     launch_started: Instant,
     sync_windows: &mut SyncWindows,
+    tailscale: &mut TailscaleService,
 ) -> Result<String, String> {
     // Keep the pre-takeover capture alive across every ordinary return. The
     // independent watchdog uses its saved record if this process cannot unwind.
@@ -2591,6 +2817,8 @@ fn host_applications(
         let mut visited: Vec<String> = Vec::new();
         let mut ceiling = Instant::now() + limits.ceiling;
         let mut last_activity = Instant::now();
+        let mut awake_for_others = crate::tailscale::AwakeForOthers::default();
+        let mut was_held = false;
         // Set when Back has been handed to an application that asked for it,
         // and cleared by the next screen that application draws. The reader's
         // way out is never left waiting on an application: if this is still
@@ -2666,6 +2894,7 @@ fn host_applications(
                 )?;
             }
             sync_windows.tend(status.online());
+            tailscale.tend(status.online());
             if power.state() != kobod::power::State::Awake {
                 slept = true;
             }
@@ -2764,6 +2993,23 @@ fn host_applications(
                 last_activity = now;
                 ceiling = now + limits.ceiling;
             }
+            // A reader other devices are sending their traffic through is in
+            // use with nobody touching it, so neither limit ends the session
+            // under them. The idle clock itself is left running: it is also
+            // what lets a found update be applied to a quiet panel, and a
+            // reader held for a week should still get those.
+            let held = awake_for_others.holds(now);
+            if held != was_held {
+                was_held = held;
+                trace(if held {
+                    "staying open: other devices send traffic through this reader"
+                } else {
+                    "no longer staying open for other devices"
+                });
+            }
+            if held {
+                ceiling = now + limits.ceiling;
+            }
             if now >= ceiling {
                 return Ok(finish(
                     &apps,
@@ -2772,7 +3018,7 @@ fn host_applications(
                 ));
             }
             let idle_at = last_activity + limits.idle;
-            if now >= idle_at && power.state() == kobod::power::State::Awake {
+            if now >= idle_at && !held && power.state() == kobod::power::State::Awake {
                 match begin_power(
                     &mut power,
                     &apps,
@@ -2835,6 +3081,10 @@ fn host_applications(
                 .saturating_duration_since(now)
                 .min(if power.state() == kobod::power::State::Preparing {
                     Duration::from_millis(50)
+                } else if held {
+                    // The idle limit is not being waited for, and a limit
+                    // already passed would otherwise make this no wait at all.
+                    BEAT_INTERVAL
                 } else {
                     (last_activity + limits.idle).saturating_duration_since(now)
                 })
@@ -3929,14 +4179,21 @@ fn host_applications(
                                     // Bluetooth scan does. The application
                                     // paints its progress screen before
                                     // asking, and nothing else is served
-                                    // while the installation is replaced,
-                                    // which is exactly the quiet wanted.
+                                    // while the release is fetched and
+                                    // staged, which is exactly the quiet
+                                    // wanted. It becomes the installation
+                                    // at the next start, not here.
                                     // The heartbeat is not quiet, though: a
                                     // release takes longer to fetch and
                                     // unpack than the watchdog waits.
+                                    //
+                                    // Settings checked the signed manifest
+                                    // before asking, and the runtime checks it
+                                    // again: what replaces the installation is
+                                    // not decided by an application's word.
                                     kobo_protocol::DeviceRequest::Update { url, sha256 } => {
                                         match while_beating(watchdog, || {
-                                            crate::update::apply(url, sha256)
+                                            crate::update::apply_requested(url, sha256)
                                         }) {
                                             Ok(()) => kobo_protocol::DeviceResult::Done,
                                             Err(error) => {
@@ -4230,6 +4487,17 @@ fn host_applications(
                                 )
                             {
                                 sync_windows.asked = true;
+                            }
+                            // The same for Tailscale: its switch and its
+                            // requests are saved words the runtime acts on.
+                            if apps[index].name == "tailscale"
+                                && matches!(
+                                    &request,
+                                    kobo_protocol::StoreRequest::Save { key, .. }
+                                        if crate::tailscale::asks_for_the_service(key)
+                                )
+                            {
+                                tailscale.asked = true;
                             }
                             reply(
                                 &mut apps[index],
@@ -5229,6 +5497,9 @@ fn preflight(application: &Path) -> Result<(), String> {
             application.display()
         ));
     }
+    // Windows marks executability by extension, not mode bits; the check has
+    // no meaning there and the CLI's own packaging never reaches it.
+    #[cfg(unix)]
     if metadata.permissions().mode() & 0o111 == 0 {
         return Err(format!(
             "{} is not executable. Nothing was changed on the device",
@@ -5662,11 +5933,11 @@ fn trace_picture_evictions(handle: kobo_ui::PictureHandle, evicted: &[kobo_ui::P
 /// The application is told the panel size rather than discovering it, so an
 /// application binary is not tied to one model.
 fn greet(
-    listener: &std::os::unix::net::UnixListener,
+    listener: &kobo_protocol::channel::Listener,
     whole_screen: Rect,
     expected_name: &str,
-) -> Result<(std::os::unix::net::UnixStream, String, u8), String> {
-    let (mut stream, _) = listener
+) -> Result<(kobo_protocol::channel::Stream, String, u8), String> {
+    let mut stream = listener
         .accept()
         .map_err(|error| format!("application never connected: {error}"))?;
     let hello =
@@ -6021,7 +6292,7 @@ fn type_into(
     reason = "touch delivery needs the negotiated protocol, retained screen, and physical pose"
 )]
 fn deliver_touch(
-    stream: &mut std::os::unix::net::UnixStream,
+    stream: &mut kobo_protocol::channel::Stream,
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: &Chrome,
@@ -6460,7 +6731,7 @@ fn watch_for_stale_software(sender: &Sender<Event>) {
 }
 
 fn pump_application(
-    stream: &std::os::unix::net::UnixStream,
+    stream: &kobo_protocol::channel::Stream,
     sender: &Sender<Event>,
     id: u64,
     version: u8,

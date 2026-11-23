@@ -44,7 +44,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
 fn home() -> Result<PathBuf, String> {
     let base = env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|v| PathBuf::from(v).join(".local/state")))
+        .or_else(|| kobo_abi::home_directory().map(|v| v.join(".local/state")))
         .ok_or("HOME is not set")?;
     Ok(base.join("cobalt/birds"))
 }

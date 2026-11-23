@@ -1,0 +1,12 @@
+# sweep: --bare --seed-root apps/tailscale/fixtures/routing-unavailable
+# Switched on, on a reader that turned out not to be able to do it. Each
+# switch says it is not available, the runtime's reason is given once, and
+# nothing asks for an approval that would lead nowhere.
+wait-for Connected
+tap Options
+wait-for Not available on this reader.
+expect Not available here.
+expect could not carry traffic for other devices
+expect-missing admin console
+clean
+shot tailscale-routing-unavailable

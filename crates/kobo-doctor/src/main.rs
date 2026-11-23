@@ -9,7 +9,7 @@ use kobo_profile::{
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 use std::time::Duration;
 
 /// Opting into touch observation. It stays read-only: the device is opened
@@ -112,7 +112,7 @@ fn main() -> ExitCode {
 
 fn human_probe() -> ExitCode {
     println!("Kobo doctor 0.1.0");
-    println!("mode: read-only (query ioctls only)");
+    println!("mode: read-only (query ioctls and hwconfig only)");
 
     for input in kobo_hal::probe::input_inventory() {
         println!("input evidence: {input:?}");
@@ -155,24 +155,15 @@ fn human_probe() -> ExitCode {
             framebuffer.red, framebuffer.green, framebuffer.blue, framebuffer.alpha
         );
     }
-    // Identity is what gates every write. The full serial is deliberately never
-    // read past its four-character model prefix.
-    let identity = &snapshot.identity;
-    println!(
-        "identity: model={} firmware={} kernel={} device-code={}",
-        identity.serial_prefix.as_deref().unwrap_or("<unknown>"),
-        identity.firmware_version.as_deref().unwrap_or("<unknown>"),
-        identity.kernel_release.as_deref().unwrap_or("<unknown>"),
-        identity
-            .device_code
-            .map_or_else(|| "<unknown>".to_owned(), |code| code.to_string()),
-    );
+    announce_identity(&snapshot.identity);
+    announce_hwconfig_revision();
     if let Some(touch) = &snapshot.touch {
         println!(
             "touch: {} at {} X={}..{} Y={}..{}",
             touch.name, touch.path, touch.x_min, touch.x_max, touch.y_min, touch.y_max
         );
     }
+    print_tailscale_readiness();
 
     let matched_profile = match require_profile(matched_profile) {
         Ok(profile) => profile,
@@ -403,10 +394,8 @@ fn read_whole_panel(
         && u64::from(geometry.stride) == row_bytes as u64
         && geometry.memory_length >= total as u64
     {
-        use std::os::unix::fs::FileExt as _;
         let mut pixels = vec![0_u8; total];
-        file.read_exact_at(&mut pixels, 0)
-            .map_err(|error| format!("{error}"))?;
+        read_exact_at(file, &mut pixels, 0).map_err(|error| format!("{error}"))?;
         return Ok(pixels);
     }
     read_region(file, geometry, whole)
@@ -524,8 +513,334 @@ fn observe(
     Ok(())
 }
 
+/// What can be read, without touching anything, about whether Tailscale
+/// could run on this reader.
+///
+/// Every line is a read of a file the kernel publishes or of a path's
+/// existence; nothing is created, opened for writing or brought up. That
+/// limits what this can claim, and each line says which side of the limit it
+/// is on. Whether the kernel has a tunnel driver is only half answered here:
+/// a driver that is registered is certain, one that is not may still be a
+/// module the kernel loads when the device node is first opened, and only
+/// the supervisor in `crates/kobod/src/tailscale.rs` opens it. The device node
+/// existing says nothing either way, since anybody can make one. What is
+/// listening is the other thing worth reading before a tailnet is joined,
+/// because the supervisor refuses to start while anything is listening that
+/// it cannot account for, and its refusal names only the port.
+fn print_tailscale_readiness() {
+    println!("tailscale readiness (read-only):");
+    let misc = std::fs::read_to_string("/proc/misc").ok();
+    println!(
+        "  kernel tunnel driver: {}",
+        match misc.as_deref().map(tunnel_driver_registered) {
+            Some(true) => "registered",
+            Some(false) =>
+                "not registered (it may still load when the node is opened; starting Tailscale finds out)",
+            None => "unknown (/proc/misc cannot be read)",
+        }
+    );
+    println!(
+        "  tunnel device node: {}",
+        if Path::new("/dev/net/tun").exists() {
+            "present (proves nothing about the driver)"
+        } else {
+            "absent (made on every start; /dev is rebuilt at boot)"
+        }
+    );
+    let flags = std::fs::read_to_string("/sys/class/net/lo/flags").unwrap_or_default();
+    println!(
+        "  loopback: {}",
+        match interface_is_up(&flags) {
+            Some(true) => "up",
+            Some(false) => "down (brought up on start)",
+            None => "unknown",
+        }
+    );
+    let listening = ["/proc/net/tcp", "/proc/net/tcp6"]
+        .iter()
+        .filter_map(|table| std::fs::read_to_string(table).ok())
+        .flat_map(|table| listening_ports(&table))
+        .collect::<Vec<_>>();
+    // Every one of them, because Tailscale joins a tailnet only when it can
+    // account for everything that is listening.
+    for port in &listening {
+        println!(
+            "  listening on {port}: {}",
+            match port {
+                22 => "ssh (must refuse root anything but a key before Tailscale starts)",
+                23 => "telnet (Tailscale will not start while this is up)",
+                21 => "ftp (Tailscale will not start while this is up)",
+                _ => "not known to Cobalt (Tailscale will not start while this is up, unless it is the Sync engine during a sync)",
+            }
+        );
+    }
+    if listening.is_empty() {
+        println!("  listening: nothing on an address other machines can reach");
+    }
+    let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    for key in ["MemTotal", "MemAvailable"] {
+        if let Some(line) = meminfo.lines().find(|line| line.starts_with(key)) {
+            println!("  {line}");
+        }
+    }
+    println!(
+        "  packet filter tools: {}",
+        if ["/sbin/iptables", "/usr/sbin/iptables"]
+            .iter()
+            .any(|path| Path::new(path).exists())
+        {
+            "present (unexpected; the daemon is still told to leave the firewall alone)"
+        } else {
+            "absent (expected; every listening port is reachable from a tailnet)"
+        }
+    );
+    print_kernel_routing_support();
+    let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
+    match mounts
+        .lines()
+        .find(|line| line.split_whitespace().nth(1) == Some("/mnt/onboard"))
+    {
+        Some(line) => println!("  /mnt/onboard: {line}"),
+        None => println!("  /mnt/onboard: not mounted"),
+    }
+}
+
+/// What the kernel offers for carrying other devices' traffic, the way a
+/// Linux exit node or subnet router ordinarily does it.
+///
+/// The Tailscale service does not use any of this. It has the daemon carry
+/// that traffic itself, exactly because nothing was known about these on any
+/// reader. They are reported so that the next person knows: a reader whose
+/// kernel has a packet filter with address translation could let the kernel
+/// do the forwarding, which is faster than a daemon on one core.
+///
+/// Each line is as far as a read can go. The forwarding switch is a fact.
+/// Connection tracking and the older tables are facts when present. The
+/// newer packet filter has no file that announces it, so its line comes from
+/// the kernel's own list of symbols: finding them proves the code is in the
+/// running kernel, and not finding them does not prove a module could not
+/// be loaded. Whether any of it works is something only using it shows.
+fn print_kernel_routing_support() {
+    let forwarding = std::fs::read_to_string("/proc/sys/net/ipv4/ip_forward");
+    println!(
+        "  kernel forwarding switch: {}",
+        match forwarding.as_deref().map(str::trim) {
+            Ok("0") => "off (Tailscale here does not need it on)",
+            Ok(_) => "on",
+            Err(_) => "unreadable",
+        }
+    );
+    println!(
+        "  connection tracking: {}",
+        if Path::new("/proc/sys/net/netfilter/nf_conntrack_max").exists() {
+            "present"
+        } else {
+            "not present"
+        }
+    );
+    let tables = std::fs::read_to_string("/proc/net/ip_tables_names").unwrap_or_default();
+    let tables = tables.split_whitespace().collect::<Vec<_>>();
+    println!(
+        "  older packet filter tables: {}",
+        if tables.is_empty() {
+            "none".to_owned()
+        } else {
+            tables.join(", ")
+        }
+    );
+    match std::fs::read_to_string("/proc/kallsyms") {
+        Ok(symbols) => {
+            let found = packet_filter_in(&symbols);
+            println!(
+                "  newer packet filter in the running kernel: {}",
+                if found.is_empty() {
+                    "no symbols found (a module on disk would not show here)".to_owned()
+                } else {
+                    found.join(", ")
+                }
+            );
+        }
+        Err(_) => println!(
+            "  newer packet filter in the running kernel: unknown (/proc/kallsyms cannot be read)"
+        ),
+    }
+}
+
+/// Which parts of the newer packet filter the kernel's symbol list shows:
+/// the filter itself, address translation, and the rule that rewrites a
+/// packet's source to the reader's own address.
+fn packet_filter_in(symbols: &str) -> Vec<&'static str> {
+    let has = |prefix: &str| {
+        symbols.lines().any(|line| {
+            line.split_whitespace()
+                .nth(2)
+                .is_some_and(|name| name.starts_with(prefix))
+        })
+    };
+    [
+        ("nf_tables_", "nf_tables"),
+        ("nft_nat", "address translation"),
+        ("nft_masq", "masquerade"),
+        ("nft_ct", "connection tracking rules"),
+    ]
+    .into_iter()
+    .filter(|(prefix, _)| has(prefix))
+    .map(|(_, name)| name)
+    .collect()
+}
+
+/// Whether the kernel's list of miscellaneous devices names the tunnel
+/// driver, which registers as `tun` whatever its minor number.
+fn tunnel_driver_registered(misc: &str) -> bool {
+    misc.lines()
+        .any(|line| line.split_whitespace().nth(1) == Some("tun"))
+}
+
+/// Whether an interface's flags say it is up.
+///
+/// The flags and not `operstate`, which reads `unknown` on a loopback that is
+/// working, so a report built on it said the same thing on every reader.
+fn interface_is_up(flags: &str) -> Option<bool> {
+    u32::from_str_radix(flags.trim().trim_start_matches("0x"), 16)
+        .ok()
+        .map(|flags| flags & 1 == 1)
+}
+
+/// The TCP ports something is listening on at an address other machines can
+/// reach, from the kernel's socket table.
+fn listening_ports(table: &str) -> Vec<u16> {
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let (address, port) = fields.nth(1)?.rsplit_once(':')?;
+            let listening = fields.nth(1)? == "0A";
+            let loopback = matches!(address, "0100007F" | "00000000000000000000000001000000");
+            (listening && !loopback)
+                .then(|| u16::from_str_radix(port, 16).ok())
+                .flatten()
+        })
+        .collect()
+}
+
+/// Positional read: `FileExt` on Unix, the `seek_read` equivalent on Windows.
+/// Doctor is a device tool, so the Windows arm exists to keep the workspace
+/// compiling there; it is never exercised on a real panel.
+#[cfg(unix)]
+fn read_exact_at(file: &std::fs::File, buffer: &mut [u8], offset: u64) -> std::io::Result<()> {
+    use std::os::unix::fs::FileExt as _;
+    file.read_exact_at(buffer, offset)
+}
+
+#[cfg(windows)]
+fn read_exact_at(file: &std::fs::File, buffer: &mut [u8], offset: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt as _;
+    let mut filled = 0;
+    while filled < buffer.len() {
+        let read = file.seek_read(&mut buffer[filled..], offset + filled as u64)?;
+        if read == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "positional framebuffer read ended early",
+            ));
+        }
+        filled += read;
+    }
+    Ok(())
+}
+
+/// Prints the identity that gates every write.
+///
+/// The full serial is deliberately never read past its four-character model
+/// prefix.
+fn announce_identity(identity: &kobo_profile::IdentitySnapshot) {
+    println!(
+        "identity: model={} firmware={} kernel={} device-code={}",
+        identity.serial_prefix.as_deref().unwrap_or("<unknown>"),
+        identity.firmware_version.as_deref().unwrap_or("<unknown>"),
+        identity.kernel_release.as_deref().unwrap_or("<unknown>"),
+        identity
+            .device_code
+            .map_or_else(|| "<unknown>".to_owned(), |code| code.to_string()),
+    );
+}
+
+/// Prints the hardware-revision fields that can vary under one device code.
+///
+/// The Nia ships with either an RC5T619 or a BD71828 PMIC under device code
+/// 382, and nothing in the identity line above tells them apart. `ntx_hwconfig
+/// -s` is Kobo's read-only listing mode; keeping its exact field names and
+/// values in the transcript lets a reviewer see which revision supplied the
+/// evidence instead of assuming it was the one already measured.
+fn announce_hwconfig_revision() {
+    let fields = Command::new("/bin/ntx_hwconfig")
+        .args(["-s", "/dev/mmcblk0"])
+        .output()
+        .ok()
+        .map(|output| hwconfig_revision_fields(&String::from_utf8_lossy(&output.stdout)).join(", "))
+        .filter(|fields| !fields.is_empty());
+    println!(
+        "hwconfig revision: {}",
+        fields.as_deref().unwrap_or("unavailable")
+    );
+}
+
+fn hwconfig_revision_fields(output: &str) -> Vec<&str> {
+    const NAMES: [&str; 5] = ["PCB", "PCB_REV", "PCB_LVL", "PMIC", "FL_PWM"];
+    output
+        .lines()
+        .filter_map(|line| line.split_once("] ").map(|(_, field)| field.trim()))
+        .filter(|field| {
+            field
+                .split_once('=')
+                .is_some_and(|(name, _)| NAMES.contains(&name))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_tunnel_driver_is_found_by_name_in_the_kernels_device_list() {
+        assert!(super::tunnel_driver_registered(
+            " 59 memory_bandwidth\n200 tun\n130 watchdog\n"
+        ));
+        // A name that only contains it, and a list without it.
+        assert!(!super::tunnel_driver_registered(
+            " 62 tunnel4\n130 watchdog\n"
+        ));
+        assert!(!super::tunnel_driver_registered(""));
+    }
+
+    #[test]
+    fn the_newer_packet_filter_is_reported_part_by_part_from_the_kernels_symbols() {
+        let symbols = "c0a1b2c0 T nf_tables_newtable\nc0a1b300 t nft_masq_ipv4_eval\tnft_masq_ipv4\nc0a1b400 t nft_nat_eval\nc0a1b500 T tun_get_socket\n";
+        assert_eq!(
+            super::packet_filter_in(symbols),
+            ["nf_tables", "address translation", "masquerade"]
+        );
+        // A kernel with none of it, and a name that only contains one.
+        assert!(super::packet_filter_in(
+            "c0a1b500 T tun_get_socket\nc0a1b600 T my_nf_tables_helper\n"
+        )
+        .is_empty());
+        assert!(super::packet_filter_in("").is_empty());
+    }
+
+    #[test]
+    fn loopback_is_read_from_its_flags_not_its_operstate() {
+        assert_eq!(super::interface_is_up("0x49\n"), Some(true));
+        assert_eq!(super::interface_is_up("0x8\n"), Some(false));
+        assert_eq!(super::interface_is_up("unknown\n"), None);
+    }
+
+    #[test]
+    fn listening_ports_leave_out_loopback_and_open_connections() {
+        let table = "  sl  local_address rem_address   st\n   0: 00000000:0016 00000000:0000 0A\n   1: 0100007F:20E0 00000000:0000 0A\n   2: 0A00000C:0016 0A000002:C1A2 01\n";
+        assert_eq!(super::listening_ports(table), [22]);
+    }
+
     #[test]
     fn a_recording_request_is_read_as_seconds_and_a_rate() {
         assert_eq!(super::parse_record_request("20:2"), Ok((20, 2)));
@@ -563,6 +878,27 @@ mod tests {
             grey_of(&pixels),
             vec![20, 50],
             "the panel is single-channel, so the three colour bytes agree and any one of them is the grey"
+        );
+    }
+
+    #[test]
+    fn hwconfig_revision_keeps_the_tools_exact_field_names_and_values() {
+        let fixture = "HW CONFIG v3.3 @1024 secno, size=72 bytes :\n\
+[0] PCB='E60U20'\n\
+[40] VCOM_10mV_LoByte=0x2A\n\
+[41] PCB_REV=0x10\n\
+[42] PCB_LVL='A'\n\
+[44] PMIC='RC5T619'\n\
+[45] FL_PWM='LM3630x1a'\n";
+        assert_eq!(
+            super::hwconfig_revision_fields(fixture),
+            [
+                "PCB='E60U20'",
+                "PCB_REV=0x10",
+                "PCB_LVL='A'",
+                "PMIC='RC5T619'",
+                "FL_PWM='LM3630x1a'",
+            ]
         );
     }
 }

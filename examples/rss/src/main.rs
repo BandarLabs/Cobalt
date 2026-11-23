@@ -3,22 +3,31 @@
 //! Type an address, pick the feed it finds, and read the articles without
 //! leaving the application.
 //!
-//! Website names use feed discovery; full HTTPS feed addresses are fetched
-//! directly without disclosure to the discovery service. Articles currently
-//! survive refresh failures and are saved in verified local snapshots.
+//! Website names use feed discovery; full HTTPS addresses are fetched
+//! directly without disclosure to the discovery service, and an address that
+//! turns out to be a site's page rather than its feed is followed to the feed
+//! the page names. Articles currently survive refresh failures and are saved
+//! in verified local snapshots.
 //!
 //! Refresh all reads every feed in turn, and the newest articles that carry
 //! pictures are kept whole with their pictures, so the shelf's "Ready
 //! offline" line is a promise about what opens with the radio off rather
 //! than about which words happen to be in a feed file.
+//!
+//! Most feeds carry a sentence of each story and a link to the rest. For
+//! those the page behind the link is fetched and cut to its article, when an
+//! item is opened and for the newest of each feed on Refresh all, so a
+//! subscription reads as articles whether or not its feed carries them.
 
 mod cache;
+mod discover;
 mod feed;
 mod illustrations;
 mod opml;
 mod progress;
 mod search;
 mod status;
+mod whole;
 
 use kobo_bookview::offline::{Heard, Keeper};
 use kobo_sdk::keyboard::{TextEntry, Typing};
@@ -26,6 +35,7 @@ use kobo_sdk::{
     action_id, ActionId, BannerLevel, BannerShape, Context, Failure, Glyph, KoboApp, LogLevel,
     RowEdge, RowState, Screen, ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
 };
+use std::collections::VecDeque;
 use std::process::ExitCode;
 
 /// The most feeds one reader may follow.
@@ -47,6 +57,17 @@ const FEEDS: &str = "feeds";
 /// follow, and the application looked broken on its first screen. The titles
 /// are the ones each feed gives itself, so the shelf does not rename a feed
 /// the moment it is first read.
+///
+/// A summary-only feed would no longer look broken, because the page behind
+/// a teaser is fetched now. The starters still carry their articles whole:
+/// that is one request for a feed's worth of reading where the other is one
+/// for every article, and the first thing a new owner opens should not depend
+/// on whether a site will answer a reader it has never met.
+///
+/// No newsletters are listed. Several were read whole from this application
+/// while the screen beside this one learned to follow them, and each is one
+/// person's letter: which of them a reader should be offered on its first
+/// day is an editorial choice, and not one to make in passing.
 const STARTER_FEEDS: &[(&str, &str, &str)] = &[
     (
         "NASA Science",
@@ -73,20 +94,29 @@ const STARTER_FEEDS: &[(&str, &str, &str)] = &[
 /// willing to carry.
 const SEARCH_BYTES: u32 = 512 * 1024;
 
-/// How much of a feed to accept.
+/// How much of a feed is kept.
 ///
 /// A feed carrying fifty full articles is a few hundred kilobytes at the top
-/// end, and the largest this can ask for either way is the runtime's own
-/// [`kobo_sdk::MAX_TASK_BYTES`].
+/// end, and everything kept of a feed is parsed on one slow core inside one
+/// callback and then held in memory beside every other feed, so it has a
+/// ceiling whatever the publisher sends.
 ///
-/// Past this the answer is truncated rather than refused, and what that costs
-/// depends on the format. A cut XML feed keeps every item that arrived whole
-/// (which is the recent ones, because feeds are written newest first) and that
-/// is measured, not assumed. A cut JSON feed yields nothing at all: half a
-/// JSON document is not a JSON document, and there is no prefix of one to
-/// recover. So a feed that will not parse at exactly this length is reported
-/// as too large rather than as not a feed.
+/// A feed past this is cut to the items that fit, which are the recent ones
+/// because feeds are written newest first: see [`feed::within`]. A JSON feed
+/// cannot be cut that way and yields nothing at all, so a feed that will not
+/// parse at this length is reported as too large rather than as not a feed.
 const FEED_BYTES: u32 = 512 * 1024;
+
+/// How much of a feed is asked for.
+///
+/// The runtime refuses an answer larger than the request allowed rather than
+/// cutting it short, so asking for only what is kept turned every larger feed
+/// into "This item is too large to open". That was nine of the twelve
+/// newsletters tried: a newsletter's feed carries its last twenty issues
+/// whole, and those measured between half a megabyte and two and a half. So
+/// the request allows the most the runtime will carry, and the cut to
+/// [`FEED_BYTES`] is made here, before anything is parsed.
+const FEED_FETCH_BYTES: u32 = 4 * 1024 * 1024;
 
 /// Whether an answer arrived at its budget, and so was probably cut short.
 ///
@@ -107,12 +137,54 @@ fn truncated(bytes: &[u8], budget: u32) -> bool {
 /// fetch their pictures when they are opened online.
 const KEEP_NEWEST: usize = 10;
 
+/// How many pages behind teasers one refresh may fetch.
+///
+/// A page is a request to a site the reader has not spoken to yet, a cut of
+/// several hundred kilobytes of markup on one slow core, and then every
+/// picture in the article. A shelf of forty summary-only feeds would
+/// otherwise ask for four hundred of them, and the refresh somebody started
+/// before leaving the house would still be running when they came back.
+///
+/// Forty is one for every feed on a full shelf and ten for each of four. The
+/// share a feed gets is what is left divided among the feeds still to come,
+/// so a shelf that is mostly whole-article feeds passes its unused pages to
+/// the ones that need them. What one refresh leaves is fetched by the next,
+/// or when the article is opened.
+const PAGES_PER_REFRESH: usize = 40;
+
+/// Said once, under the teaser, when the page behind it was fetched and held
+/// no more to read than the feed had given: a paywall, a page drawn entirely
+/// by scripts, or a short post the feed carried whole all along.
+const NO_MORE_ON_THE_PAGE: &str = "The page behind this had no more to read than the feed gave.";
+
+/// Said once, under the teaser, when the site refused the page outright.
+const PAGE_REFUSED: &str =
+    "The site would not give this reader the whole article, so this is the summary from the feed.";
+
+/// Said under the teaser when the page could not be asked for at all.
+const PAGE_NEEDS_WIFI: &str =
+    "This is the summary from the feed. The whole article is not saved on this reader, so it opens only on Wi-Fi.";
+
+/// Said under the teaser when the site did not answer this time.
+const PAGE_DID_NOT_COME: &str =
+    "The site did not answer, so this is the summary from the feed. Open it again to try once more.";
+
 /// The attribution Feedsearch's terms ask for, on the screen where there is
 /// room for the whole sentence.
 ///
 /// The results screen carries it in its top bar instead. Both screens show
 /// their results because of Feedsearch, and both have to say so.
 const ATTRIBUTION: &str = "Feed search powered by feedsearch.dev";
+
+/// What the screen that adds a feed says about newsletters.
+///
+/// Most newsletter services publish every issue as a feed as well as by
+/// email, and almost nobody who reads one knows it. An owner who wants a
+/// newsletter on the reader looks for somewhere to give an email address,
+/// finds none, and concludes it cannot be done, so the screen says the one
+/// thing they need: the address of the site is enough.
+const NEWSLETTERS: &str =
+    "Most newsletters can be followed here too. Enter the address of the newsletter's site.";
 
 /// The address field on the screen that adds a feed.
 const FEED_ADDRESS: &str = "feed-address";
@@ -162,12 +234,71 @@ enum ArticleSearch {
     EverySaved,
 }
 
+/// How far a refresh of the shelf has got.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Refresh {
+    /// Nothing has been asked for, or everything asked for has been tidied
+    /// up after.
+    #[default]
+    Finished,
+    /// Feeds are still being asked for, or their saved copies have not all
+    /// been acknowledged.
+    Unfinished,
+}
+
 /// What the one outstanding request is for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Awaiting {
     Probe,
     Search,
     Feed,
+}
+
+/// The page behind one teaser, to be fetched and cut to its article.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Page {
+    /// The article's identity, shared with its reading position.
+    id: String,
+    link: String,
+    /// How many words the page must cut to before it is read in the
+    /// teaser's place.
+    floor: usize,
+    /// Whether the feed's own words say there is more than it gave. Only
+    /// then is anything said when the page had no more: a short post that
+    /// was whole all along is read as it is, without a word about a page
+    /// that had nothing to add.
+    promised_more: bool,
+    /// The feed's own copy, cut as a kept article is, when it has pictures
+    /// to keep. A short post is asked for its page like any teaser, and if
+    /// the page has no more this is kept in its place, as it was before
+    /// pages were asked for at all.
+    own: Option<String>,
+}
+
+impl Page {
+    fn behind(item: &feed::Item, id: String) -> Self {
+        Self {
+            id,
+            link: item.link.trim().to_owned(),
+            floor: whole::article_floor(item),
+            promised_more: whole::promises_more(item),
+            own: item
+                .html
+                .contains("<img")
+                .then(|| kobo_html::article::main_content(&item.html)),
+        }
+    }
+}
+
+/// What one saved feed holds, counted once as it arrives.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Saved {
+    /// Articles the feed itself carries whole.
+    whole: usize,
+    bytes: usize,
+    /// The identities of its teasers, each of which is ready offline only
+    /// once the article behind it has been kept or found not to exist.
+    teasers: Vec<String>,
 }
 
 #[derive(Default)]
@@ -214,10 +345,19 @@ struct Feeds {
     /// What the search found, best first.
     found: Vec<search::Found>,
     direct: bool,
+    /// The address being asked for a feed, when one is being asked directly.
+    probe: String,
+    /// The other places to ask once a pasted address has answered with a
+    /// page rather than a feed. Nothing until that page has been read, which
+    /// is how the first answer is told from the ones that follow it.
+    probing: Option<std::collections::VecDeque<String>>,
     /// Which subscription is open.
     open: Option<usize>,
     /// The open feed's articles.
     items: Vec<feed::Item>,
+    /// The site the open feed says it belongs to, which is how an item that
+    /// links to the feed's own pages is told from one that links elsewhere.
+    site: String,
     /// Which article is being read.
     article: Option<usize>,
     /// Which page of a list is showing. Shared by the shelf and the articles,
@@ -242,8 +382,20 @@ struct Feeds {
     /// Feeds fetched by refresh all whose saved copy had not been read back
     /// yet, held until it has so the new copy is written over the right slot.
     refresh_pending: std::collections::HashMap<String, Vec<u8>>,
-    /// Articles and bytes in each saved feed, counted once as it arrives.
-    offline: std::collections::HashMap<String, (usize, usize)>,
+    /// What each saved feed holds, counted once as it arrives.
+    offline: std::collections::HashMap<String, Saved>,
+    /// Whether a refresh has still to tidy up after itself.
+    refresh: Refresh,
+    /// What the pages behind teasers turned out to hold.
+    notes: whole::Notes,
+    /// Pages Refresh all has still to fetch, in the order it met them.
+    pages: std::collections::VecDeque<Page>,
+    /// How many more pages this refresh may ask for.
+    page_budget: usize,
+    /// The page being fetched for Refresh all.
+    fetching_page: Option<(TaskId, Page)>,
+    /// The page the owner is waiting to read.
+    fetching_article: Option<(TaskId, Page)>,
 }
 
 #[derive(Default)]
@@ -286,20 +438,80 @@ impl Feeds {
         self.found.clear();
         self.problem = None;
         self.trouble = None;
+        self.probing = None;
         if let Some(refused) = refused_address(address) {
             self.problem = Some(refused.to_owned());
             return;
         }
+        self.probe(context, address);
+    }
+
+    /// Asks one address for a feed, directly.
+    fn probe(&mut self, context: &mut Context, address: &str) {
+        address.clone_into(&mut self.probe);
         match context.spawn_retrying(Task::Fetch {
             url: address.to_owned(),
             offset: 0,
-            max_bytes: FEED_BYTES,
+            max_bytes: FEED_FETCH_BYTES,
             credential: None,
             headers: Vec::new(),
         }) {
             Some(task) => self.task = Some((task, Awaiting::Probe)),
             None => self.problem = Some("The device is busy. Try again.".to_owned()),
         }
+    }
+
+    /// An address asked for a feed has answered with something else, or not
+    /// at all. Says whether another place is now being asked.
+    ///
+    /// The first answer is the page the owner pasted, and the places to look
+    /// come from it. After that each place is tried in turn, and one that is
+    /// missing or is another page is simply not the feed.
+    fn probe_onwards(&mut self, context: &mut Context, page: Option<&[u8]>) -> bool {
+        if self.probing.is_none() {
+            let Some(page) = page else {
+                return false;
+            };
+            self.probing = Some(discover::candidates(page, &self.probe).into());
+        }
+        let Some(next) = self.probing.as_mut().and_then(VecDeque::pop_front) else {
+            return false;
+        };
+        self.probe(context, &next);
+        self.task.is_some()
+    }
+
+    /// Nothing that was asked had a feed.
+    ///
+    /// An address the owner pasted is told so, with what to try. A name that
+    /// the search service did not know, and whose own site had nothing
+    /// either, is a search that found nothing, and says that instead.
+    fn no_feed_found(&mut self) {
+        self.trouble = None;
+        if self.query.contains("://") {
+            self.problem = Some(
+                "This address did not return a feed. Enter its feed address, or search using the website name."
+                    .to_owned(),
+            );
+        } else {
+            self.direct = false;
+            self.problem = None;
+            self.found.clear();
+        }
+    }
+
+    /// The search service knew no feed for a name. When the name is a site's
+    /// address, the site is asked itself; says whether it is being.
+    fn ask_the_site(&mut self, context: &mut Context) -> bool {
+        let Some(address) = discover::site_address(&self.query) else {
+            return false;
+        };
+        self.direct = true;
+        self.probing = None;
+        self.problem = None;
+        self.trouble = None;
+        self.probe(context, &address);
+        self.task.is_some()
     }
 
     /// Asks Feedsearch what feeds an address has.
@@ -332,6 +544,7 @@ impl Feeds {
         if let Some(cached) = self.caches.get(&url) {
             if let Some(parsed) = cached.bytes.as_deref().and_then(feed::parse) {
                 self.items = parsed.items;
+                self.site = parsed.site;
                 self.update_unread_summaries(context);
                 return;
             }
@@ -357,6 +570,8 @@ impl Feeds {
         if matches!(event, Some(cache::Event::Loaded | cache::Event::Saved)) {
             self.count_offline(url);
         }
+        // A refresh waits for the last saved copy before it tidies up.
+        self.refresh_next(context);
         let current = self
             .open
             .and_then(|index| self.subscriptions.get(index))
@@ -406,7 +621,7 @@ impl Feeds {
         match context.spawn_retrying(Task::Fetch {
             url,
             offset: 0,
-            max_bytes: FEED_BYTES,
+            max_bytes: FEED_FETCH_BYTES,
             credential: None,
             headers: Vec::new(),
         }) {
@@ -489,25 +704,57 @@ impl Feeds {
 
     /// Counts what one saved feed holds, for the shelf's offline line.
     fn count_offline(&mut self, url: &str) {
-        if let Some(bytes) = self
+        let Some(bytes) = self
             .caches
             .get(url)
             .and_then(|cached| cached.bytes.as_ref())
-        {
-            let articles = feed::parse(bytes).map_or(0, |parsed| parsed.items.len());
-            self.offline.insert(url.to_owned(), (articles, bytes.len()));
+        else {
+            return;
+        };
+        let mut saved = Saved {
+            bytes: bytes.len(),
+            ..Saved::default()
+        };
+        if let Some(parsed) = feed::parse(bytes) {
+            let home = whole::Home {
+                feed: url,
+                site: &parsed.site,
+            };
+            for item in &parsed.items {
+                if whole::is_teaser(item, home) {
+                    saved.teasers.push(article_id(item, url));
+                } else {
+                    saved.whole += 1;
+                }
+            }
         }
+        self.offline.insert(url.to_owned(), saved);
+    }
+
+    /// Whether Refresh all still has pages behind teasers to fetch.
+    fn getting_pages(&self) -> bool {
+        self.fetching_page.is_some() || !self.pages.is_empty()
     }
 
     /// What the shelf says is on the device, in the words every application
     /// uses for it.
+    ///
+    /// A teaser is not an article ready offline, so it is counted only once
+    /// the article behind it has been kept, or the page has been fetched and
+    /// found to hold no more: either way what opens with the radio off is
+    /// then all there is to have.
     fn offline_line(&self) -> String {
         let (articles, bytes) = self
             .subscriptions
             .iter()
             .filter_map(|feed| self.offline.get(&feed.url))
-            .fold((0, 0), |(articles, bytes), (more, size)| {
-                (articles + more, bytes + size)
+            .fold((0, 0), |(articles, bytes), saved| {
+                let fetched = saved
+                    .teasers
+                    .iter()
+                    .filter(|id| self.keeper.is_kept(id) || self.notes.found_nothing(id))
+                    .count();
+                (articles + saved.whole + fetched, bytes + saved.bytes)
             });
         let line = kobo_bookview::offline::ready_offline(
             articles,
@@ -531,7 +778,9 @@ impl Feeds {
                 self.refreshed.1, self.refreshed.0
             ));
         }
-        if self.keeper.is_busy() {
+        if self.getting_pages() {
+            said.push("Getting whole articles for offline reading".to_owned());
+        } else if self.keeper.is_busy() {
             said.push("Saving pictures for offline reading".to_owned());
         }
         let mut joined = said.join(". ");
@@ -558,6 +807,8 @@ impl Feeds {
             .collect();
         self.refreshed = (0, 0);
         self.problem = None;
+        self.refresh = Refresh::Unfinished;
+        self.page_budget = PAGES_PER_REFRESH;
         self.refresh_next(context);
     }
 
@@ -583,6 +834,8 @@ impl Feeds {
         self.refresh_queue = fresh;
         self.refreshed = (0, 0);
         self.problem = None;
+        self.refresh = Refresh::Unfinished;
+        self.page_budget = PAGES_PER_REFRESH;
         self.refresh_next(context);
     }
 
@@ -591,13 +844,22 @@ impl Feeds {
             return;
         }
         let Some(url) = self.refresh_queue.pop_front() else {
-            self.finish_refresh(context);
+            // Once, and only when every saved copy has been acknowledged.
+            // This ran after every task of any kind, reading and hashing
+            // every saved feed each time, and its first run came before the
+            // last feed's new copy was saved: that feed's new articles were
+            // not in what it read, so their places in the keeper's queue
+            // were let go as articles no feed carried.
+            if self.refresh == Refresh::Unfinished && !self.saved_copies_settling() {
+                self.refresh = Refresh::Finished;
+                self.finish_refresh(context);
+            }
             return;
         };
         match context.spawn_retrying(Task::Fetch {
             url: url.clone(),
             offset: 0,
-            max_bytes: FEED_BYTES,
+            max_bytes: FEED_FETCH_BYTES,
             credential: None,
             headers: Vec::new(),
         }) {
@@ -611,8 +873,8 @@ impl Feeds {
     /// One feed of refresh all, answered.
     fn took_refresh(&mut self, context: &mut Context, url: &str, outcome: TaskOutcome) {
         let result = match outcome {
-            TaskOutcome::Completed(bytes) => match feed::parse(&bytes) {
-                Some(parsed) => {
+            TaskOutcome::Completed(bytes) => match kept_feed(bytes) {
+                Ok((bytes, parsed)) => {
                     match self.caches.get_mut(url) {
                         Some(cached) if !cached.busy() => {
                             if !cached.save(context, bytes.clone()) {
@@ -633,16 +895,13 @@ impl Feeds {
                         }
                         if self.open == Some(index) {
                             self.items.clone_from(&parsed.items);
+                            self.site.clone_from(&parsed.site);
                         }
                     }
-                    self.keep_pictures(context, url, &parsed.items);
+                    self.keep_newest(context, url, &parsed.site, &parsed.items);
                     Ok(status::timestamp().unwrap_or_else(|| "time unavailable".into()))
                 }
-                None => Err(if truncated(&bytes, FEED_BYTES) {
-                    "That feed is larger than this can read.".to_owned()
-                } else {
-                    "That address did not answer with a feed.".to_owned()
-                }),
+                Err(problem) => Err(problem.to_owned()),
             },
             TaskOutcome::Failed(error) => Err(Failure::of(error).advice.to_owned()),
             TaskOutcome::Cancelled => Err("Cancelled.".to_owned()),
@@ -684,35 +943,240 @@ impl Feeds {
                 .flatten()
                 .collect();
             self.keeper.retain(context, |id| current.contains(id));
+            self.notes.retain(context, |id| current.contains(id));
+            self.pages.retain(|page| current.contains(&page.id));
         }
     }
 
-    /// Keeps the newest illustrated articles of a feed whole, with their
-    /// pictures, so they open with the radio off.
+    /// Keeps the newest unread articles of a feed whole, so they open with
+    /// the radio off: an article the feed carries is kept with its pictures,
+    /// and a teaser has the page behind it fetched.
     ///
     /// Only for Refresh all, which is the owner getting ready to be away from
-    /// Wi-Fi; opening one feed is reading it now, and its pictures come as
-    /// each article opens. An article already opened is left out too: its
-    /// pictures were saved when it was read, and fetching them again would
-    /// spend the radio on a second copy.
-    fn keep_pictures(&mut self, context: &mut Context, feed_url: &str, items: &[feed::Item]) {
-        for item in items
+    /// Wi-Fi; opening one feed is reading it now, and its pictures and pages
+    /// come as each article opens. An article already opened is left out too:
+    /// its pictures were saved when it was read, and fetching them again would
+    /// spend the radio on a second copy. An article with no pictures that the
+    /// feed carries whole needs nothing, because its words are in the feed's
+    /// own saved copy.
+    fn keep_newest(
+        &mut self,
+        context: &mut Context,
+        feed_url: &str,
+        site: &str,
+        items: &[feed::Item],
+    ) {
+        let home = whole::Home {
+            feed: feed_url,
+            site,
+        };
+        // This feed's share of the pages the refresh may still fetch.
+        let mut share = self
+            .page_budget
+            .div_ceil(self.refresh_queue.len() + 1)
+            .min(KEEP_NEWEST);
+        let newest: Vec<(&feed::Item, String, bool)> = items
             .iter()
-            .filter(|item| !item.html.is_empty() && item.html.contains("<img"))
-            .filter(|item| self.progress.has_read(&article_id(item, feed_url)) != Some(true))
+            .map(|item| (item, whole::is_teaser(item, home)))
+            .filter(|(item, teaser)| *teaser || item.html.contains("<img"))
+            .map(|(item, teaser)| (item, article_id(item, feed_url), teaser))
+            .filter(|(_, id, _)| self.progress.has_read(id) != Some(true))
             .take(KEEP_NEWEST)
+            .collect();
+        for (item, id, teaser) in newest {
+            if !teaser {
+                let origin = if item.link.is_empty() {
+                    feed_url
+                } else {
+                    item.link.as_str()
+                };
+                self.keeper.keep_markup(
+                    context,
+                    &id,
+                    origin,
+                    &kobo_html::article::main_content(&item.html),
+                );
+                continue;
+            }
+            if share == 0
+                || self.keeper.is_kept(&id)
+                || self.keeper.is_keeping(&id)
+                || self.notes.found_nothing(&id)
+                || self.pages.iter().any(|page| page.id == id)
+                || self
+                    .fetching_page
+                    .iter()
+                    .chain(&self.fetching_article)
+                    .any(|(_, page)| page.id == id)
+            {
+                continue;
+            }
+            share -= 1;
+            self.page_budget = self.page_budget.saturating_sub(1);
+            self.pages.push_back(Page::behind(item, id));
+        }
+        self.next_page(context);
+    }
+
+    /// Asks for the next page Refresh all is waiting on.
+    ///
+    /// One at a time, and not while the keeper is still putting the last one
+    /// away with its pictures: a page fetched ahead of that is several hundred
+    /// kilobytes of markup held in memory for nothing, and forty of them is
+    /// more than a reader with half a gigabyte should be holding.
+    fn next_page(&mut self, context: &mut Context) {
+        if self.fetching_page.is_some() || self.pages.is_empty() {
+            return;
+        }
+        if self.keeper.failed || self.keeper.is_full() {
+            // Nothing more can be kept, so nothing more is fetched to keep.
+            self.pages.clear();
+            return;
+        }
+        if self.keeper.is_busy() {
+            return;
+        }
+        let Some(page) = self.pages.pop_front() else {
+            return;
+        };
+        match context.spawn(page_fetch(&page.link)) {
+            Some(task) => self.fetching_page = Some((task, page)),
+            // No lane free. It goes back to the front and the next task to
+            // finish starts it.
+            None => self.pages.push_front(page),
+        }
+    }
+
+    /// Asks for the page behind the article being opened, and says whether
+    /// it is on its way.
+    fn get_article(&mut self, context: &mut Context, page: Page) -> bool {
+        // Refresh all is already fetching this one, and the reading screen
+        // waits for that answer rather than asking the site twice.
+        if self
+            .fetching_page
+            .as_ref()
+            .is_some_and(|(_, fetching)| fetching.id == page.id)
         {
-            let origin = if item.link.is_empty() {
-                feed_url
-            } else {
-                item.link.as_str()
-            };
-            self.keeper.keep_markup(
-                context,
-                &article_id(item, feed_url),
-                origin,
-                &kobo_html::article::main_content(&item.html),
-            );
+            return true;
+        }
+        self.pages.retain(|waiting| waiting.id != page.id);
+        match context.spawn(page_fetch(&page.link)) {
+            Some(task) => {
+                self.fetching_article = Some((task, page));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Stops waiting for the page the owner was going to read.
+    fn abandon_article(&mut self, context: &mut Context) {
+        if let Some((task, _)) = self.fetching_article.take() {
+            context.cancel(task);
+        }
+    }
+
+    /// Whether the article being opened is waiting for its page.
+    fn getting_article(&self) -> bool {
+        let reading = self.reading_id.as_deref();
+        self.fetching_article
+            .iter()
+            .chain(&self.fetching_page)
+            .any(|(_, page)| Some(page.id.as_str()) == reading)
+    }
+
+    /// The page behind a teaser, answered: for the owner waiting to read it,
+    /// or for Refresh all.
+    fn took_page(&mut self, context: &mut Context, page: &Page, outcome: TaskOutcome) {
+        let waiting = self.view == View::Reading
+            && self.reading_id.as_deref() == Some(page.id.as_str())
+            && !self.reader.is_open();
+        let said = match outcome {
+            TaskOutcome::Completed(bytes) => {
+                let cut = kobo_html::article::main_content(&String::from_utf8_lossy(&bytes));
+                if let Some(text) = whole::article_in(&cut, page.floor) {
+                    self.took_article(context, page, &cut, text, waiting);
+                    return;
+                }
+                self.settled_for_the_feed(context, page);
+                NO_MORE_ON_THE_PAGE
+            }
+            TaskOutcome::Failed(error) => match error {
+                kobo_sdk::TaskError::Offline => {
+                    // Every page still waiting would fail the same way.
+                    self.pages.clear();
+                    PAGE_NEEDS_WIFI
+                }
+                kobo_sdk::TaskError::Unreachable
+                | kobo_sdk::TaskError::TimedOut
+                | kobo_sdk::TaskError::RateLimited(_) => PAGE_DID_NOT_COME,
+                // A refusal is the site's answer and asking again gets the
+                // same one, so it is written down like a page with no
+                // article in it and not asked for on every opening.
+                kobo_sdk::TaskError::Denied
+                | kobo_sdk::TaskError::Unauthorized
+                | kobo_sdk::TaskError::NoCredential
+                | kobo_sdk::TaskError::TooLarge
+                | kobo_sdk::TaskError::NotFound => {
+                    self.settled_for_the_feed(context, page);
+                    PAGE_REFUSED
+                }
+            },
+            TaskOutcome::Cancelled => return,
+        };
+        if waiting {
+            self.open_from_feed(context);
+            if page.promised_more {
+                if let Some(reader) = self.reader.reader_mut() {
+                    reader.report(said);
+                }
+            }
+        }
+    }
+
+    /// The page behind an item had no more to give, or the site would not
+    /// give it: what the feed carried is the article, and is treated as one.
+    ///
+    /// It is written down so the site is not asked again, and the feed's own
+    /// copy is kept with its pictures, which is what happened to every
+    /// illustrated article before pages were asked for.
+    fn settled_for_the_feed(&mut self, context: &mut Context, page: &Page) {
+        self.notes.found_no_article(context, &page.id);
+        if let Some(own) = &page.own {
+            if !self.keeper.is_kept(&page.id) && !self.keeper.is_keeping(&page.id) {
+                self.keeper.keep_markup(context, &page.id, &page.link, own);
+            }
+        }
+    }
+
+    /// The article behind a teaser has arrived: it is kept for offline
+    /// reading, its words are noted for searching, and it is put in front of
+    /// the owner if they were waiting for it.
+    fn took_article(
+        &mut self,
+        context: &mut Context,
+        page: &Page,
+        cut: &str,
+        text: String,
+        waiting: bool,
+    ) {
+        // Noted only when it is kept or on its way to being: the words of an
+        // article that is not on the reader would make a search promise
+        // something that then opens as a teaser.
+        if self.keeper.is_kept(&page.id)
+            || self.keeper.is_keeping(&page.id)
+            || self.keeper.keep_markup(context, &page.id, &page.link, cut)
+        {
+            self.notes.found_article(context, &page.id, text);
+        }
+        if !waiting {
+            return;
+        }
+        let memory = self.progress.memory(&page.id);
+        if self.reader.open_html(context, cut, &page.link, memory) {
+            self.keep_position(context);
+        } else {
+            self.open_from_feed(context);
         }
     }
 
@@ -728,16 +1192,19 @@ impl Feeds {
                 {
                     let memory = self.progress.memory(&id);
                     if !self.reader.open_kept(context, kept, memory) {
-                        self.open_from_feed(context);
+                        self.open_unkept(context);
                     }
                 }
             }
             Heard::Unreadable(id) => {
                 if self.view == View::Reading && self.reading_id.as_deref() == Some(id.as_str()) {
-                    self.open_from_feed(context);
+                    self.open_unkept(context);
                 }
             }
         }
+        // The keeper has put something away, or given up on it, and the next
+        // page was waiting for exactly that.
+        self.next_page(context);
         self.show(context);
     }
 
@@ -998,6 +1465,8 @@ impl Feeds {
             Some(error) => screen.field_error(error),
             None => screen,
         }
+        .section("Newsletters")
+        .text(NEWSLETTERS)
         .build()
     }
 
@@ -1265,8 +1734,12 @@ impl Feeds {
             else {
                 continue;
             };
+            let home = whole::Home {
+                feed: &subscription.url,
+                site: &parsed.site,
+            };
             for (item, article) in parsed.items.iter().enumerate() {
-                if matches_words(article, &words) {
+                if self.matches(article, home, &words) {
                     self.saved_hits.push(SavedHit {
                         feed,
                         item,
@@ -1303,6 +1776,18 @@ impl Feeds {
             self.caches
                 .get(&feed.url)
                 .is_some_and(|cached| cached.bytes.is_none() && cached.busy())
+        })
+    }
+
+    /// Whether any saved copy is still being read or written.
+    ///
+    /// A refresh has not finished until this is false: what it kept and what
+    /// it lets go are both decided from the saved copies, and a copy still on
+    /// its way to the shelf reads as the one before it.
+    fn saved_copies_settling(&self) -> bool {
+        self.subscriptions.iter().any(|feed| {
+            self.refresh_pending.contains_key(&feed.url)
+                || self.caches.get(&feed.url).is_some_and(cache::Cache::busy)
         })
     }
 
@@ -1405,10 +1890,44 @@ impl Feeds {
         };
         let id = article_id(item, &origin);
         self.reading_id = Some(id.clone());
-        // A copy kept with its pictures opens from the device. The feed's own
-        // words are the fallback, and they are always here too.
+        self.abandon_article(context);
+        // A copy kept whole opens from the device. The feed's own words are
+        // the fallback, and they are always here too.
         if !self.keeper.open(context, &id) {
-            self.open_from_feed(context);
+            self.open_unkept(context);
+        }
+    }
+
+    /// Opens the article being read when no copy of it is kept.
+    ///
+    /// A teaser has the page behind it asked for, and the reading screen says
+    /// so until it arrives. Anything else, and a teaser whose page is already
+    /// known to hold no more, is read from the feed.
+    fn open_unkept(&mut self, context: &mut Context) {
+        self.keeper.stop_opening();
+        let page = self
+            .article
+            .and_then(|index| self.items.get(index))
+            .filter(|item| whole::is_teaser(item, self.home()))
+            .map(|item| Page::behind(item, self.reading_id.clone().unwrap_or_default()))
+            .filter(|page| !self.notes.found_nothing(&page.id));
+        if page.is_some_and(|page| self.get_article(context, page)) {
+            return;
+        }
+        self.open_from_feed(context);
+    }
+
+    /// Where the open feed lives, for telling its own pages from links
+    /// elsewhere.
+    fn home(&self) -> whole::Home<'_> {
+        let subscription = self.open.and_then(|index| self.subscriptions.get(index));
+        whole::Home {
+            feed: subscription.map_or("", |feed| feed.url.as_str()),
+            site: if self.site.is_empty() {
+                subscription.map_or("", |feed| feed.site.as_str())
+            } else {
+                &self.site
+            },
         }
     }
 
@@ -1464,11 +1983,30 @@ impl Feeds {
     fn matching_items(&self) -> Vec<usize> {
         let query = self.article_query.to_lowercase();
         let words: Vec<_> = query.split_whitespace().collect();
+        let home = self.home();
         self.items
             .iter()
             .enumerate()
-            .filter_map(|(index, item)| matches_words(item, &words).then_some(index))
+            .filter_map(|(index, item)| self.matches(item, home, &words).then_some(index))
             .collect()
+    }
+
+    /// Whether an article holds every word, in what the feed gave of it or
+    /// in the article fetched from behind its teaser.
+    ///
+    /// One rule, so that searching the open feed and searching everything
+    /// saved cannot come to answer the same words differently. The fetched
+    /// words are looked up only for a teaser the feed's own words did not
+    /// already answer for, because finding them means hashing the item.
+    fn matches(&self, item: &feed::Item, home: whole::Home<'_>, words: &[&str]) -> bool {
+        if matches_words(item, "", words) {
+            return true;
+        }
+        whole::is_teaser(item, home)
+            && self
+                .notes
+                .words_of(&article_id(item, home.feed))
+                .is_some_and(|fetched| matches_words(item, fetched, words))
     }
 
     fn feed_save_failed(&self) -> bool {
@@ -1713,6 +2251,12 @@ impl Feeds {
                 .activity("Opening the saved article", None)
                 .build();
         }
+        if self.getting_article() {
+            return ScreenBuilder::new("rss-reading")
+                .top_bar(title)
+                .activity("Getting the article", None)
+                .build();
+        }
         ScreenBuilder::new("rss-reading")
             .top_bar(title)
             .empty_state("This article arrived empty.")
@@ -1800,16 +2344,14 @@ fn article_id(item: &feed::Item, feed_url: &str) -> String {
     kobo_net::sha256::hex_digest(format!("{origin}\n{}\n{body}", item.title).as_bytes())
 }
 
-/// The whole article as one piece of prose, ready to be cut into pages.
-/// Whether an article holds every word, ignoring case.
-///
-/// One rule, so that searching the open feed and searching everything saved
-/// cannot come to answer the same words differently.
-fn matches_words(item: &feed::Item, words: &[&str]) -> bool {
-    let text = format!("{} {} {}", item.title, item.author, item.body).to_lowercase();
+/// Whether an article holds every word, ignoring case, in what the feed gave
+/// of it together with `fetched`, the words of its page when that was read.
+fn matches_words(item: &feed::Item, fetched: &str, words: &[&str]) -> bool {
+    let text = format!("{} {} {} {fetched}", item.title, item.author, item.body).to_lowercase();
     words.iter().all(|word| text.contains(word))
 }
 
+/// The whole article as one piece of prose, ready to be cut into pages.
 fn article_text(item: &feed::Item) -> String {
     article_text_with(item, &byline(item, status::now()))
 }
@@ -1933,6 +2475,7 @@ impl KoboApp for Feeds {
         context.store().load(progress::KEY);
         context.store().load(status::KEY);
         self.keeper.start(context);
+        self.notes.start(context);
         self.show(context);
     }
 
@@ -1940,6 +2483,15 @@ impl KoboApp for Feeds {
         let heard = self.keeper.loaded(context, key, &result);
         if !matches!(heard, Heard::Elsewhere) {
             self.heard(context, heard);
+            return;
+        }
+        if key == self.notes.key() {
+            self.notes.stored(context, &result);
+            // The shelf counts a teaser as ready once its page is known to
+            // hold no more, which is in these notes.
+            if self.view == View::Shelf {
+                self.show(context);
+            }
             return;
         }
         if key == status::KEY {
@@ -1985,6 +2537,10 @@ impl KoboApp for Feeds {
         let heard = self.keeper.saved(context, key, &result);
         if !matches!(heard, Heard::Elsewhere) {
             self.heard(context, heard);
+            return;
+        }
+        if key == self.notes.key() {
+            self.notes.stored(context, &result);
             return;
         }
         if key == status::KEY {
@@ -2065,6 +2621,13 @@ impl KoboApp for Feeds {
         let heard = self.keeper.shelf(context, name, &result);
         if !matches!(heard, Heard::Elsewhere) {
             self.heard(context, heard);
+            return;
+        }
+        if self.notes.owns_file(name) {
+            self.notes.shelf(context, &result);
+            if self.view == View::Shelf {
+                self.show(context);
+            }
             return;
         }
         if let Some(read) = &mut self.import_read {
@@ -2436,6 +2999,7 @@ impl KoboApp for Feeds {
             if let Some((task, _)) = self.task.take() {
                 context.cancel(task);
             }
+            self.abandon_article(context);
             self.problem = None;
             self.trouble = None;
             self.menu_open = None;
@@ -2633,6 +3197,10 @@ impl KoboApp for Feeds {
         // A lane that was busy a moment ago may be free now.
         self.refresh_next(context);
         self.keeper.pump(context);
+        self.next_page(context);
+        if !self.getting_pages() && self.fetching_article.is_none() {
+            self.notes.write(context);
+        }
     }
 }
 
@@ -2650,6 +3218,24 @@ impl Feeds {
         if let Some((_, url)) = self.refreshing.take_if(|(id, _)| *id == task) {
             self.took_refresh(context, &url, outcome);
             self.show(context);
+            return;
+        }
+        if let Some((_, page)) = self.fetching_article.take_if(|(id, _)| *id == task) {
+            self.took_page(context, &page, outcome);
+            self.show(context);
+            return;
+        }
+        if let Some((_, page)) = self.fetching_page.take_if(|(id, _)| *id == task) {
+            let reading = self.reading_id.as_deref() == Some(page.id.as_str());
+            self.took_page(context, &page, outcome);
+            // The shelf's line changes when the last page is in, and the
+            // reading screen when the page it was waiting for is. Anything
+            // else would be a flash of the panel for nothing.
+            if (self.view == View::Shelf && !self.getting_pages())
+                || (self.view == View::Reading && reading)
+            {
+                self.show(context);
+            }
             return;
         }
         if self
@@ -2677,26 +3263,44 @@ impl Feeds {
             TaskOutcome::Completed(bytes) => {
                 match awaiting {
                     Awaiting::Probe => {
+                        // Cut as a feed is before it is parsed. A page being
+                        // read for the feed it names says so in its head,
+                        // which the cut keeps.
+                        let cut = feed::within(bytes, FEED_BYTES as usize);
+                        let too_large = cut.is_none();
+                        let bytes = cut.unwrap_or_default();
                         if let Some(parsed) = feed::parse(&bytes) {
                             self.found = vec![search::Found {
-                                url: self.query.clone(),
+                                url: self.probe.clone(),
                                 title: if parsed.title.trim().is_empty() {
-                                    pretty_host(&parsed.site, &self.query)
+                                    pretty_host(&parsed.site, &self.probe)
                                 } else {
                                     parsed.title
                                 },
                                 site: parsed.site,
                                 summary: format!("{} articles · Select to add", parsed.items.len()),
                             }];
-                        } else {
-                            self.problem = Some(if truncated(&bytes, FEED_BYTES) {
-                            "The feed response was too large to read."
-                        } else {
-                            "This address did not return a feed. Enter its feed address, or search using the website name."
-                        }.to_owned());
+                        } else if too_large
+                            || (self.probing.is_none()
+                                && truncated(&bytes, FEED_BYTES)
+                                && bytes.trim_ascii_start().starts_with(b"{"))
+                        {
+                            // Half a JSON feed is not a page to look for a
+                            // feed in. It is a feed, and it did not fit.
+                            self.problem =
+                                Some("The feed response was too large to read.".to_owned());
+                        } else if self.probe_onwards(context, Some(&bytes)) {
+                            self.show(context);
+                            return;
+                        } else if self.problem.is_none() {
+                            self.no_feed_found();
                         }
                     }
                     Awaiting::Search => match search::results(&bytes) {
+                        Ok(found) if found.is_empty() && self.ask_the_site(context) => {
+                            self.show(context);
+                            return;
+                        }
                         Ok(found) => self.found = found,
                         Err(_) => {
                             self.problem = Some(if truncated(&bytes, SEARCH_BYTES) {
@@ -2706,10 +3310,11 @@ impl Feeds {
                             }.to_owned());
                         }
                     },
-                    Awaiting::Feed => match feed::parse(&bytes) {
-                        Some(parsed) => {
+                    Awaiting::Feed => match kept_feed(bytes) {
+                        Ok((bytes, parsed)) => {
                             feed_succeeded = true;
                             self.items = parsed.items;
+                            self.site.clone_from(&parsed.site);
                             if let Some(url) = self
                                 .open
                                 .and_then(|index| self.subscriptions.get(index))
@@ -2736,17 +3341,25 @@ impl Feeds {
                                 }
                             }
                         }
-                        None => {
-                            // It did answer with a feed; the feed did not fit.
-                            // Saying it was not a feed sends somebody looking for
-                            // a different address, which will not help.
-                            self.problem = Some(if truncated(&bytes, FEED_BYTES) {
-                                "That feed is larger than this can read.".to_owned()
-                            } else {
-                                "That address did not answer with a feed.".to_owned()
-                            });
-                        }
+                        Err(problem) => self.problem = Some(problem.to_owned()),
                     },
+                }
+            }
+            // One of the places a feed might have been, and it is missing or
+            // refused. That says the feed is not there, not that the search
+            // failed, so the next place is asked. A reader that has lost its
+            // network is a different matter, and is said as one.
+            TaskOutcome::Failed(error)
+                if awaiting == Awaiting::Probe
+                    && error != kobo_sdk::TaskError::Offline
+                    && (self.probing.is_some() || !self.query.contains("://")) =>
+            {
+                if self.probing.is_some() && self.probe_onwards(context, None) {
+                    self.show(context);
+                    return;
+                }
+                if self.problem.is_none() {
+                    self.no_feed_found();
                 }
             }
             TaskOutcome::Failed(error) => {
@@ -2769,6 +3382,38 @@ impl Feeds {
 fn refused_address(address: &str) -> Option<&'static str> {
     (address.contains("://") && !address.starts_with("https://"))
         .then_some("Use an HTTPS feed address.")
+}
+
+/// What is kept of a fetched feed and what it holds, or why there is nothing
+/// to keep.
+///
+/// A feed that did not fit is said to be too large rather than not a feed.
+/// It did answer with one, and saying otherwise sends somebody looking for a
+/// different address, which will not help.
+fn kept_feed(bytes: Vec<u8>) -> Result<(Vec<u8>, feed::Feed), &'static str> {
+    const TOO_LARGE: &str = "That feed is larger than this can read.";
+    let bytes = feed::within(bytes, FEED_BYTES as usize).ok_or(TOO_LARGE)?;
+    match feed::parse(&bytes) {
+        Some(parsed) => Ok((bytes, parsed)),
+        None if truncated(&bytes, FEED_BYTES) => Err(TOO_LARGE),
+        None => Err("That address did not answer with a feed."),
+    }
+}
+
+/// The request for the page behind a teaser.
+///
+/// Under the ceiling the keeper fetches pages under, so an article opened
+/// now and one put away by a refresh are the same article. Asked once and not
+/// retried: the owner is either waiting, and is owed the summary sooner than
+/// a second attempt, or is not, and the next refresh asks again.
+fn page_fetch(link: &str) -> Task {
+    Task::Fetch {
+        url: link.to_owned(),
+        offset: 0,
+        max_bytes: kobo_bookview::offline::PAGE_BYTES,
+        credential: None,
+        headers: Vec::new(),
+    }
 }
 
 fn main() -> ExitCode {
@@ -3051,11 +3696,14 @@ mod tests {
         });
         runner.action(action_id("search-retry"));
         let task = runner.app_mut().task.unwrap().0;
-        let commands = runner.task_outcome(
+        runner.task_outcome(
             task,
             TaskOutcome::Completed(b"<html><body>A home page</body></html>".to_vec()),
         );
+        // The page names no feed, and none of the usual places has one.
+        let commands = nothing_anywhere(&mut runner);
         let screen = screen_of(&commands);
+        assert!(format!("{screen:?}").contains("did not return a feed"));
         assert_eq!(
             banners_of(&screen),
             [(kobo_sdk::BannerLevel::Attention, None)]
@@ -3064,6 +3712,164 @@ mod tests {
             node,
             kobo_sdk::Node::Button { action, .. } if *action == action_id("add")
         )));
+    }
+
+    /// Answers "not found" at every place a feed is being looked for, and
+    /// gives back what the last answer drew.
+    fn nothing_anywhere(runner: &mut AppRunner<Feeds>) -> Vec<Command> {
+        let mut drawn = Vec::new();
+        while let Some((task, Awaiting::Probe)) = runner.app().task {
+            drawn = runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::NotFound));
+        }
+        drawn
+    }
+
+    const LETTER_HOME: &[u8] = br#"<html><head><title>The Tide Letter</title>
+        <link rel="alternate" type="application/rss+xml" href="/feed" title="The Tide Letter"/>
+        </head><body><h1>The Tide Letter</h1><p>A letter about the sea, most Sundays.</p>
+        </body></html>"#;
+
+    /// Types an address on the Add a feed screen and gives back what was
+    /// asked for because of it.
+    fn typed(runner: &mut AppRunner<Feeds>, address: &str) -> Vec<(TaskId, String)> {
+        runner.action(action_id("add"));
+        runner.action(action_id(super::FEED_ADDRESS));
+        fetched(&runner.type_text(address))
+    }
+
+    #[test]
+    fn a_pasted_page_is_followed_to_the_feed_it_names_without_the_search_service() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let mut asked = typed(&mut runner, "https://tide.example/");
+        assert_eq!(asked[0].1, "https://tide.example/");
+        let next =
+            fetched(&runner.task_outcome(asked[0].0, TaskOutcome::Completed(LETTER_HOME.to_vec())));
+        assert_eq!(next[0].1, "https://tide.example/feed");
+        asked.extend(next.clone());
+        let commands =
+            runner.task_outcome(next[0].0, TaskOutcome::Completed(ATOM.as_bytes().to_vec()));
+        let screen = screen_of(&commands);
+        fits_the_panel(&screen, "a feed found from its site's page");
+        assert!(format!("{screen:?}").contains("Feed preview"));
+        let app = runner.app();
+        assert_eq!(app.found.len(), 1);
+        assert_eq!(app.found[0].url, "https://tide.example/feed");
+        assert_eq!(app.found[0].title, "A Journal");
+        assert!(
+            asked.iter().all(|(_, url)| !url.contains("feedsearch")),
+            "a pasted address reached the search service: {asked:?}"
+        );
+        runner.action(action_id("found-0"));
+        assert_eq!(
+            runner.app().subscriptions[0].url,
+            "https://tide.example/feed"
+        );
+    }
+
+    #[test]
+    fn a_page_that_names_no_feed_is_looked_for_in_the_usual_places() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let asked = typed(&mut runner, "https://tide.example/");
+        let mut next = fetched(&runner.task_outcome(
+            asked[0].0,
+            TaskOutcome::Completed(b"<html><body><p>A letter.</p></body></html>".to_vec()),
+        ));
+        assert_eq!(next[0].1, "https://tide.example/feed");
+        // Missing there, and the place after it answers with the site's own
+        // page again, as a site that sends every unknown address home does.
+        next = fetched(&runner.task_outcome(
+            next[0].0,
+            TaskOutcome::Failed(kobo_sdk::TaskError::NotFound),
+        ));
+        assert_eq!(next[0].1, "https://tide.example/rss");
+        next = fetched(&runner.task_outcome(
+            next[0].0,
+            TaskOutcome::Completed(b"<html><body><p>A letter.</p></body></html>".to_vec()),
+        ));
+        assert_eq!(next[0].1, "https://tide.example/feed.xml");
+        runner.task_outcome(next[0].0, TaskOutcome::Completed(ATOM.as_bytes().to_vec()));
+        assert_eq!(runner.app().found[0].url, "https://tide.example/feed.xml");
+    }
+
+    #[test]
+    fn losing_the_network_part_way_through_looking_says_so_rather_than_no_feed() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let asked = typed(&mut runner, "https://tide.example/");
+        let next =
+            fetched(&runner.task_outcome(asked[0].0, TaskOutcome::Completed(LETTER_HOME.to_vec())));
+        // The SDK tries a lost connection once more on the application's
+        // behalf: a pause, then a second attempt, which fails the same way.
+        let offline = || TaskOutcome::Failed(kobo_sdk::TaskError::Offline);
+        let pause = runner.task_outcome(next[0].0, offline());
+        let [Command::Spawn { task: pause, .. }] = pause.as_slice() else {
+            panic!("the failure was not retried: {pause:?}");
+        };
+        let second = runner.task_outcome(*pause, TaskOutcome::Completed(Vec::new()));
+        let [Command::Spawn { task: second, .. }] = second.as_slice() else {
+            panic!("there was no second attempt: {second:?}");
+        };
+        let commands = runner.task_outcome(*second, offline());
+        let screen = format!("{:?}", screen_of(&commands));
+        assert!(screen.contains("Join Wi-Fi"), "{screen}");
+        assert!(!screen.contains("did not return a feed"), "{screen}");
+    }
+
+    #[test]
+    fn a_name_the_search_service_does_not_know_is_asked_of_the_site_itself() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let asked = typed(&mut runner, "tide.example");
+        assert!(asked[0].1.starts_with("https://feedsearch.dev/"));
+        let site =
+            fetched(&runner.task_outcome(asked[0].0, TaskOutcome::Completed(b"[]".to_vec())));
+        assert_eq!(site[0].1, "https://tide.example");
+        let feed =
+            fetched(&runner.task_outcome(site[0].0, TaskOutcome::Completed(LETTER_HOME.to_vec())));
+        assert_eq!(feed[0].1, "https://tide.example/feed");
+        runner.task_outcome(feed[0].0, TaskOutcome::Completed(ATOM.as_bytes().to_vec()));
+        assert_eq!(runner.app().found[0].url, "https://tide.example/feed");
+    }
+
+    #[test]
+    fn a_name_with_no_feed_anywhere_is_a_search_that_found_nothing() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let asked = typed(&mut runner, "tide.example");
+        let site =
+            fetched(&runner.task_outcome(asked[0].0, TaskOutcome::Completed(b"[]".to_vec())));
+        runner.task_outcome(
+            site[0].0,
+            TaskOutcome::Completed(b"<html><body><p>A letter.</p></body></html>".to_vec()),
+        );
+        let commands = nothing_anywhere(&mut runner);
+        let screen = screen_of(&commands);
+        let drawn = format!("{screen:?}");
+        assert!(drawn.contains("No feeds found"), "{drawn}");
+        assert!(drawn.contains("feedsearch.dev"), "{drawn}");
+        fits_the_panel(&screen, "a name with no feed anywhere");
+
+        // Words that are not an address are not turned into one.
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let asked = typed(&mut runner, "tide letter");
+        let after =
+            fetched(&runner.task_outcome(asked[0].0, TaskOutcome::Completed(b"[]".to_vec())));
+        assert!(after.is_empty(), "{after:?}");
     }
 
     /// The shelf under each banner it can carry, with badges on some rows,
@@ -3726,6 +4532,11 @@ mod tests {
                 key: kobo_bookview::offline::INDEX_KEY.into(),
                 value: None,
             });
+            let notes = runner.app().notes.key().to_owned();
+            runner.store_result(StoreResult::Loaded {
+                key: notes,
+                value: None,
+            });
             assert!(runner.app().subscription_save.load_failed);
             for action in ["add", "retry-subscriptions", "import-confirm"] {
                 let commands = runner.action(action_id(action));
@@ -3981,7 +4792,10 @@ mod tests {
 
     #[test]
     fn opening_an_article_persists_read_status_and_new_content_is_unread() {
-        let items = super::feed::parse(ATOM.as_bytes()).unwrap().items;
+        let mut items = super::feed::parse(ATOM.as_bytes()).unwrap().items;
+        // With no link there is no page to wait for, so the item opens at
+        // once as what the feed gave.
+        items[0].link.clear();
         let mut app = Feeds {
             loaded: true,
             view: View::Items,
@@ -4153,8 +4967,10 @@ mod tests {
                     <div><ul><li><a href=/today>Today</a></li><li><a href=/archive>Archive</a></li>\
                     <li><a href=/submit>Submissions</a></li><li><a href=/about>About</a></li></ul></div></div>\
                     <h2>A farewell to a telescope</h2><p>After twenty-two years it came home.</p>"
-                    .to_owned(),
-                body: "After twenty-two years it came home.".to_owned(),
+                    .to_owned()
+                    + &format!("<p>{}</p>", "It was a long watch. ".repeat(60)),
+                body: "After twenty-two years it came home. ".to_owned()
+                    + &"It was a long watch. ".repeat(60),
                 ..super::feed::Item::default()
             }],
             ..Feeds::default()
@@ -4785,19 +5601,542 @@ mod tests {
     }
 
     #[test]
+    fn a_refresh_lets_nothing_go_until_the_last_feeds_new_copy_is_saved() {
+        const EARLIER: &str = "<feed><title>A Journal</title>\
+            <entry><title>An older plot</title><link href=\"https://example.com/1\"/>\
+            <content type=\"html\">&lt;p&gt;Old.&lt;/p&gt;&lt;img src=\"/old.png\"&gt;</content>\
+            </entry></feed>";
+        const LATER: &str = "<feed><title>A Journal</title>\
+            <entry><title>A new plot</title><link href=\"https://example.com/3\"/>\
+            <content type=\"html\">&lt;p&gt;New.&lt;/p&gt;&lt;img src=\"/new.png\"&gt;</content>\
+            </entry>\
+            <entry><title>Another new plot</title><link href=\"https://example.com/2\"/>\
+            <content type=\"html\">&lt;p&gt;Newer.&lt;/p&gt;&lt;img src=\"/newer.png\"&gt;</content>\
+            </entry></feed>";
+        let url = following()[0].url.clone();
+        let mut app = Feeds {
+            loaded: true,
+            subscriptions: following(),
+            ..Feeds::default()
+        };
+        // The feed's saved copy and the keeper's index, as a reader that
+        // has been running for a while holds them.
+        let mut scratch = kobo_sdk::Context::default();
+        let mut cache = super::cache::Cache::new(&url);
+        cache.stored(
+            &mut scratch,
+            &kobo_sdk::StoreResult::Loaded {
+                key: cache.key.clone(),
+                value: None,
+            },
+        );
+        cache.bytes = Some(EARLIER.as_bytes().to_vec());
+        app.caches.insert(url.clone(), cache);
+        app.keeper.loaded(
+            &mut scratch,
+            kobo_bookview::offline::INDEX_KEY,
+            &kobo_sdk::StoreResult::Loaded {
+                key: kobo_bookview::offline::INDEX_KEY.into(),
+                value: None,
+            },
+        );
+        let mut runner = AppRunner::new(app);
+        let asked = fetched(&runner.action(action_id("refresh-all")));
+        runner.task_outcome(
+            asked[0].0,
+            TaskOutcome::Completed(LATER.as_bytes().to_vec()),
+        );
+        for item in &super::feed::parse(LATER.as_bytes()).unwrap().items {
+            assert!(
+                runner
+                    .app()
+                    .keeper
+                    .is_keeping(&super::article_id(item, &url)),
+                "{} was let go before the copy naming it was saved",
+                item.title
+            );
+        }
+        assert_eq!(runner.app().refresh, super::Refresh::Unfinished);
+    }
+
+    #[test]
     fn the_shelf_says_what_is_ready_offline() {
         let mut app = Feeds {
             loaded: true,
             subscriptions: two_feeds(),
             ..Feeds::default()
         };
-        app.offline
-            .insert("https://example.com/feed.xml".into(), (12, 4 * 1024 * 1024));
+        app.offline.insert(
+            "https://example.com/feed.xml".into(),
+            super::Saved {
+                whole: 12,
+                bytes: 4 * 1024 * 1024,
+                teasers: Vec::new(),
+            },
+        );
         let context = AppRunner::new(Feeds::default()).context();
         let screen = format!("{:?}", app.shelf(&context));
         assert!(
             screen.contains("Ready offline: 12 articles, 4.0 MB"),
             "{screen}"
         );
+    }
+    /// A feed of the common kind: a sentence of each story and a link.
+    const TEASERS: &str = "<rss><channel><title>The Harbour Post</title>\
+        <link>https://example.com/</link>\
+        <item><title>The wall is to be rebuilt</title><link>https://example.com/wall</link>\
+        <description>The council voted on Tuesday to rebuild the harbour wall. [\u{2026}]</description></item>\
+        <item><title>Ferry times change</title><link>https://example.com/ferry</link>\
+        <description>The first sailing moves to half past six from Monday. [\u{2026}]</description></item>\
+        </channel></rss>";
+
+    /// The page behind the first teaser, with a menu around the story and a
+    /// word in it that the feed never uses.
+    fn page_with_the_article() -> Vec<u8> {
+        format!(
+            "<html><body><nav><a href=/>Home</a><a href=/news>News</a></nav>\
+             <article><h1>The wall is to be rebuilt</h1>{}\
+             <p>The quartz facing will be kept.</p></article></body></html>",
+            "<p>The council voted on Tuesday to rebuild the harbour wall after two \
+             winters of storms.</p>"
+                .repeat(12)
+        )
+        .into_bytes()
+    }
+
+    fn empty_index(app: &mut Feeds) {
+        let mut scratch = kobo_sdk::Context::default();
+        app.keeper.loaded(
+            &mut scratch,
+            kobo_bookview::offline::INDEX_KEY,
+            &kobo_sdk::StoreResult::Loaded {
+                key: kobo_bookview::offline::INDEX_KEY.into(),
+                value: None,
+            },
+        );
+        app.progress.load(kobo_sdk::StoreResult::Loaded {
+            key: super::progress::KEY.into(),
+            value: None,
+        });
+    }
+
+    /// The teaser feed open on its list of articles, as it is after a
+    /// refresh, with nothing kept yet.
+    fn reading_teasers() -> AppRunner<Feeds> {
+        reading(TEASERS)
+    }
+
+    /// A short post the feed carries whole, with its picture, and with
+    /// nothing in it to say there is more elsewhere.
+    const SHORT_POST: &str = "<rss><channel><title>The Harbour Post</title>\
+        <link>https://example.com/</link>\
+        <item><title>The crane is back</title><link>https://example.com/crane</link>\
+        <description>&lt;p&gt;The crane on the east quay is working again.&lt;/p&gt;\
+        &lt;p&gt;&lt;img src=\"https://example.com/crane.png\" alt=\"\"/&gt;&lt;/p&gt;\
+        &lt;p&gt;It lifted its first boat this morning and the yard is open to visitors \
+        again from nine until four.&lt;/p&gt;</description></item>\
+        </channel></rss>";
+
+    fn reading(feed: &str) -> AppRunner<Feeds> {
+        let parsed = super::feed::parse(feed.as_bytes()).unwrap();
+        let mut app = Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            items: parsed.items,
+            site: parsed.site,
+            ..Feeds::default()
+        };
+        empty_index(&mut app);
+        AppRunner::new(app)
+    }
+
+    fn teaser_id(index: usize) -> String {
+        let items = super::feed::parse(TEASERS.as_bytes()).unwrap().items;
+        super::article_id(&items[index], &following()[0].url)
+    }
+
+    fn said(commands: &[Command]) -> String {
+        text_of(&screen_of(commands)).join(" ")
+    }
+
+    #[test]
+    fn a_teaser_waits_for_the_page_behind_it_and_opens_as_the_whole_article() {
+        let mut runner = reading_teasers();
+        let commands = runner.action(action_id("item-0"));
+        let asked = fetched(&commands);
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].1, "https://example.com/wall");
+        assert!(said(&commands).contains("Getting the article"));
+        fits_the_panel(&screen_of(&commands), "an article on its way");
+        assert!(!runner.app().reader.is_open());
+
+        let commands =
+            runner.task_outcome(asked[0].0, TaskOutcome::Completed(page_with_the_article()));
+        fits_the_panel(&screen_of(&commands), "the fetched article");
+        let id = teaser_id(0);
+        let app = runner.app();
+        let reader = app.reader.reader().expect("the article opened");
+        assert_eq!(reader.search("quartz", 4).len(), 1);
+        assert!(reader.search("News", 4).is_empty(), "the menu was kept");
+        assert!(
+            app.keeper.is_keeping(&id),
+            "the article was not put away for offline reading"
+        );
+        assert!(app
+            .notes
+            .words_of(&id)
+            .is_some_and(|text| text.contains("quartz")));
+        assert_eq!(app.article_was_read(&app.items[0]), Some(true));
+    }
+
+    #[test]
+    fn a_page_with_no_article_in_it_leaves_the_teaser_and_says_so_once() {
+        let mut runner = reading_teasers();
+        let asked = fetched(&runner.action(action_id("item-0")));
+        let stub = b"<html><body><h1>The wall is to be rebuilt</h1>\
+            <p>Subscribe to keep reading.</p></body></html>";
+        let commands = runner.task_outcome(asked[0].0, TaskOutcome::Completed(stub.to_vec()));
+        let shown = said(&commands);
+        assert!(shown.contains("The council voted on Tuesday"), "{shown}");
+        assert!(shown.contains(super::NO_MORE_ON_THE_PAGE), "{shown}");
+        assert!(!shown.contains("Subscribe"), "{shown}");
+        fits_the_panel(&screen_of(&commands), "a teaser with its note");
+        assert!(runner.app().notes.found_nothing(&teaser_id(0)));
+        assert!(!runner.app().keeper.is_keeping(&teaser_id(0)));
+
+        // The second opening neither asks the site again nor repeats itself.
+        runner.action(kobo_sdk::ActionId::BACK);
+        let commands = runner.action(action_id("item-0"));
+        assert!(
+            fetched(&commands).is_empty(),
+            "the page was asked for twice"
+        );
+        let shown = said(&commands);
+        assert!(shown.contains("The council voted on Tuesday"), "{shown}");
+        assert!(!shown.contains(super::NO_MORE_ON_THE_PAGE), "{shown}");
+    }
+
+    #[test]
+    fn a_short_post_that_was_whole_all_along_is_read_without_a_word_and_kept() {
+        let id = |runner: &AppRunner<Feeds>| {
+            super::article_id(&runner.app().items[0], &following()[0].url)
+        };
+        // Its page has nothing to add.
+        let mut runner = reading(SHORT_POST);
+        let asked = fetched(&runner.action(action_id("item-0")));
+        assert_eq!(asked.len(), 1, "a short post is asked for its page");
+        let stub = b"<html><body><h1>The crane is back</h1></body></html>";
+        let commands = runner.task_outcome(asked[0].0, TaskOutcome::Completed(stub.to_vec()));
+        let shown = said(&commands);
+        assert!(shown.contains("The crane on the east quay"), "{shown}");
+        assert!(!shown.contains(super::NO_MORE_ON_THE_PAGE), "{shown}");
+        let post = id(&runner);
+        assert!(runner.app().notes.found_nothing(&post));
+        assert!(
+            runner.app().keeper.is_keeping(&post),
+            "the feed's own copy was not kept with its picture"
+        );
+
+        // The site refuses, or its page is larger than is fetched.
+        for error in [kobo_sdk::TaskError::TooLarge, kobo_sdk::TaskError::NotFound] {
+            let mut runner = reading(SHORT_POST);
+            let asked = fetched(&runner.action(action_id("item-0")));
+            let commands = runner.task_outcome(asked[0].0, TaskOutcome::Failed(error));
+            let shown = said(&commands);
+            assert!(shown.contains("The crane on the east quay"), "{shown}");
+            assert!(!shown.contains(super::PAGE_REFUSED), "{error:?}: {shown}");
+            let post = id(&runner);
+            assert!(runner.app().keeper.is_keeping(&post), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn a_page_that_does_not_come_shows_the_teaser_and_opening_it_again_asks_again() {
+        for (error, sentence) in [
+            (kobo_sdk::TaskError::Offline, super::PAGE_NEEDS_WIFI),
+            (kobo_sdk::TaskError::Unreachable, super::PAGE_DID_NOT_COME),
+            (kobo_sdk::TaskError::TimedOut, super::PAGE_DID_NOT_COME),
+        ] {
+            let mut runner = reading_teasers();
+            let asked = fetched(&runner.action(action_id("item-0")));
+            let commands = runner.task_outcome(asked[0].0, TaskOutcome::Failed(error));
+            let shown = said(&commands);
+            assert!(shown.contains("The council voted on Tuesday"), "{shown}");
+            assert!(shown.contains(sentence), "{error:?}: {shown}");
+            fits_the_panel(&screen_of(&commands), "a teaser whose page did not come");
+            assert!(!runner.app().notes.found_nothing(&teaser_id(0)));
+            runner.action(kobo_sdk::ActionId::BACK);
+            let again = fetched(&runner.action(action_id("item-0")));
+            assert_eq!(again.len(), 1, "{error:?}: opening it again did not retry");
+        }
+    }
+
+    #[test]
+    fn a_page_the_site_refuses_is_said_once_and_not_asked_for_again() {
+        for error in [
+            kobo_sdk::TaskError::Unauthorized,
+            kobo_sdk::TaskError::NotFound,
+        ] {
+            let mut runner = reading_teasers();
+            let asked = fetched(&runner.action(action_id("item-0")));
+            let commands = runner.task_outcome(asked[0].0, TaskOutcome::Failed(error));
+            assert!(said(&commands).contains(super::PAGE_REFUSED));
+            fits_the_panel(&screen_of(&commands), "a teaser whose page was refused");
+            runner.action(kobo_sdk::ActionId::BACK);
+            let commands = runner.action(action_id("item-0"));
+            assert!(fetched(&commands).is_empty(), "{error:?}");
+            assert!(!said(&commands).contains(super::PAGE_REFUSED));
+        }
+    }
+
+    #[test]
+    fn going_back_while_the_article_is_on_its_way_stops_waiting_for_it() {
+        let mut runner = reading_teasers();
+        let asked = fetched(&runner.action(action_id("item-0")));
+        let commands = runner.action(kobo_sdk::ActionId::BACK);
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == asked[0].0)));
+        assert_eq!(runner.app().view, View::Items);
+        runner.task_outcome(asked[0].0, TaskOutcome::Cancelled);
+        assert_eq!(runner.app().view, View::Items);
+        assert!(!runner.app().reader.is_open());
+        let item = runner.app().items[0].clone();
+        assert_eq!(runner.app().article_was_read(&item), Some(false));
+    }
+
+    #[test]
+    fn an_article_kept_by_a_refresh_opens_without_asking_the_site() {
+        let mut runner = reading_teasers();
+        let asked = fetched(&runner.action(action_id("item-0")));
+        runner.task_outcome(asked[0].0, TaskOutcome::Completed(page_with_the_article()));
+        runner.action(kobo_sdk::ActionId::BACK);
+        // The keeper's file and index are acknowledged, as they are a moment
+        // after the article is first read.
+        let id = teaser_id(0);
+        let mut scratch = kobo_sdk::Context::default();
+        let index = format!("kept-index-v1\n{id}\t2048\n").into_bytes();
+        runner.app_mut().keeper = kobo_bookview::offline::Keeper::default();
+        runner.app_mut().keeper.loaded(
+            &mut scratch,
+            kobo_bookview::offline::INDEX_KEY,
+            &kobo_sdk::StoreResult::Loaded {
+                key: kobo_bookview::offline::INDEX_KEY.into(),
+                value: Some(index),
+            },
+        );
+        let commands = runner.action(action_id("item-0"));
+        assert!(fetched(&commands).is_empty(), "a kept article was fetched");
+        assert!(said(&commands).contains("Opening the saved article"));
+    }
+
+    /// A feed of `count` teasers on its own site.
+    fn teaser_feed(host: &str, count: usize) -> Vec<u8> {
+        let mut items = String::new();
+        for index in 0..count {
+            items.push_str(&format!(
+                "<item><title>Story {index}</title><link>https://{host}/{index}</link>\
+                 <description>One sentence about story number {index}.</description></item>"
+            ));
+        }
+        format!(
+            "<rss><channel><title>{host}</title><link>https://{host}/</link>{items}</channel></rss>"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn refresh_all_fetches_the_pages_behind_the_newest_teasers_one_at_a_time() {
+        let mut app = Feeds {
+            loaded: true,
+            subscriptions: two_feeds(),
+            ..Feeds::default()
+        };
+        empty_index(&mut app);
+        let mut runner = AppRunner::new(app);
+        let first = fetched(&runner.action(action_id("refresh-all")));
+        let after = fetched(&runner.task_outcome(
+            first[0].0,
+            TaskOutcome::Completed(teaser_feed("example.com", 15)),
+        ));
+        // The first page and the next feed, and no more than that.
+        let asked: Vec<&str> = after.iter().map(|(_, url)| url.as_str()).collect();
+        assert_eq!(
+            asked,
+            ["https://example.com/0", "https://example.org/feed.xml"]
+        );
+        let app = runner.app();
+        assert_eq!(
+            app.pages.len() + 1,
+            super::KEEP_NEWEST,
+            "a feed is owed its ten newest and no more"
+        );
+        assert!(app
+            .offline_line()
+            .contains("Getting whole articles for offline reading"));
+
+        // The page arrives and is put away; the next waits for the keeper.
+        let page = after[0].0;
+        let commands = runner.task_outcome(page, TaskOutcome::Completed(page_with_the_article()));
+        let id = {
+            let items = super::feed::parse(&teaser_feed("example.com", 15))
+                .unwrap()
+                .items;
+            super::article_id(&items[0], "https://example.com/feed.xml")
+        };
+        assert!(runner.app().keeper.is_keeping(&id));
+        assert!(
+            !fetched(&commands)
+                .iter()
+                .any(|(_, url)| url == "https://example.com/1"),
+            "a second page was fetched while the first was still being put away"
+        );
+    }
+
+    #[test]
+    fn one_refresh_fetches_no_more_pages_than_its_budget_however_many_feeds_there_are() {
+        let mut app = Feeds {
+            loaded: true,
+            page_budget: super::PAGES_PER_REFRESH,
+            ..Feeds::default()
+        };
+        empty_index(&mut app);
+        let mut context = kobo_sdk::Context::default();
+        let feeds = MAX_FEEDS + 10;
+        for index in 0..feeds {
+            // What the refresh has still to ask for after this feed.
+            app.refresh_queue = (index + 1..feeds).map(|rest| rest.to_string()).collect();
+            let host = format!("site{index}.example");
+            let parsed = super::feed::parse(&teaser_feed(&host, 15)).unwrap();
+            app.keep_newest(
+                &mut context,
+                &format!("https://{host}/feed.xml"),
+                &parsed.site,
+                &parsed.items,
+            );
+        }
+        let asked = app.pages.len() + usize::from(app.fetching_page.is_some());
+        assert_eq!(asked, super::PAGES_PER_REFRESH);
+        assert_eq!(app.page_budget, 0);
+        // Shared rather than spent on whichever feeds came first.
+        let first_feed = app
+            .pages
+            .iter()
+            .chain(app.fetching_page.iter().map(|(_, page)| page))
+            .filter(|page| page.link.starts_with("https://site0.example/"))
+            .count();
+        assert_eq!(first_feed, 1);
+    }
+
+    #[test]
+    fn the_shelf_counts_a_teaser_as_ready_only_once_the_article_behind_it_is_on_the_reader() {
+        let mut app = Feeds {
+            loaded: true,
+            subscriptions: two_feeds(),
+            ..Feeds::default()
+        };
+        app.offline.insert(
+            "https://example.com/feed.xml".into(),
+            super::Saved {
+                whole: 2,
+                bytes: 1024,
+                teasers: vec!["kept".into(), "nothing-more".into(), "waiting".into()],
+            },
+        );
+        let mut scratch = kobo_sdk::Context::default();
+        assert_eq!(app.offline_line(), "Ready offline: 2 articles, 1 KB");
+        app.keeper.loaded(
+            &mut scratch,
+            kobo_bookview::offline::INDEX_KEY,
+            &kobo_sdk::StoreResult::Loaded {
+                key: kobo_bookview::offline::INDEX_KEY.into(),
+                value: Some(b"kept-index-v1\nkept\t2048\n".to_vec()),
+            },
+        );
+        app.notes.found_no_article(&mut scratch, "nothing-more");
+        assert_eq!(app.offline_line(), "Ready offline: 4 articles, 3 KB");
+    }
+
+    #[test]
+    fn a_search_of_saved_articles_finds_words_only_the_fetched_article_holds() {
+        let url = following()[0].url.clone();
+        let mut app = Feeds {
+            loaded: true,
+            subscriptions: following(),
+            ..Feeds::default()
+        };
+        let mut cache = super::cache::Cache::new(&url);
+        cache.bytes = Some(TEASERS.as_bytes().to_vec());
+        app.caches.insert(url, cache);
+        let mut scratch = kobo_sdk::Context::default();
+        app.notes.found_article(
+            &mut scratch,
+            &teaser_id(0),
+            "The quartz facing will be kept.".to_owned(),
+        );
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("search-saved"));
+        runner.type_text("quartz wall");
+        let hits: Vec<_> = runner
+            .app()
+            .saved_hits
+            .iter()
+            .map(|hit| (hit.feed, hit.item))
+            .collect();
+        assert_eq!(hits, vec![(0, 0)]);
+
+        // And the same answer from inside the feed.
+        runner.action(action_id("hit-0-0"));
+        runner.action(kobo_sdk::ActionId::BACK);
+        runner.action(kobo_sdk::ActionId::BACK);
+        runner.action(action_id("feed-0"));
+        runner.action(action_id("search-articles"));
+        runner.type_text("quartz");
+        assert_eq!(runner.app().matching_items(), vec![0]);
+    }
+    #[test]
+    fn a_feed_larger_than_is_kept_is_asked_for_whole_and_cut_to_its_newest_issues() {
+        let issue = |number: usize| {
+            format!(
+                "<item><title>Issue {number}</title><description>{}</description></item>",
+                "Words of the issue. ".repeat(4000)
+            )
+        };
+        let issues: String = (0..12).rev().map(issue).collect::<Vec<_>>().concat();
+        let letter =
+            format!("<rss><channel><title>The Tide Letter</title>{issues}</channel></rss>");
+        assert!(letter.len() > FEED_BYTES as usize);
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            ..Feeds::default()
+        });
+        let commands = runner.action(action_id("refresh"));
+        let asked = commands.iter().find_map(|command| match command {
+            Command::Spawn {
+                task,
+                work: kobo_sdk::Task::Fetch { max_bytes, .. },
+            } => Some((*task, *max_bytes)),
+            _ => None,
+        });
+        let (task, ceiling) = asked.expect("the feed was asked for");
+        assert_eq!(ceiling, super::FEED_FETCH_BYTES);
+        let commands = runner.task_outcome(task, TaskOutcome::Completed(letter.into_bytes()));
+        let app = runner.app();
+        assert_eq!(app.items[0].title, "Issue 11");
+        assert!(
+            (1..12).contains(&app.items.len()),
+            "{} issues were kept",
+            app.items.len()
+        );
+        assert!(
+            crate::whole::words(&app.items.last().unwrap().body) > 1000,
+            "the last issue kept is half of one"
+        );
+        assert!(!format!("{:?}", screen_of(&commands)).contains("larger than this can read"));
     }
 }

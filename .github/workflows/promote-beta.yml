@@ -189,7 +189,21 @@ jobs:
           for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
             test -f "kobo-${VERSION}-${platform}.tar.gz"
           done
-          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 12
+          # The Mac app is two more files, one for each Mac. A beta from
+          # before the app shipped has neither and is promoted as it is; a
+          # beta with only one of them is not a release.
+          count=13
+          if [ -f "cobalt-app-${VERSION}-macos-x86_64.tar.gz" ] ||
+            [ -f "cobalt-app-${VERSION}-macos-arm64.tar.gz" ]; then
+            test -f "cobalt-app-${VERSION}-macos-x86_64.tar.gz"
+            test -f "cobalt-app-${VERSION}-macos-arm64.tar.gz"
+            grep -Eq "^host macos-x86_64-app cobalt-app-${VERSION}-macos-x86_64\.tar\.gz [0-9]+ [0-9a-f]{64}$" \
+              cobalt-host-manifest.txt
+            grep -Eq "^host macos-arm64-app cobalt-app-${VERSION}-macos-arm64\.tar\.gz [0-9]+ [0-9a-f]{64}$" \
+              cobalt-host-manifest.txt
+            count=15
+          fi
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq "$count"
           grep -Eq "^[0-9a-f]{64}  ${asset}$" "$digest"
           grep -Eq "^[0-9a-f]{64}  ${legacy_asset}$" "$digest"
           cmp "$digest" "cobalt-${VERSION}-ClaraBW.sha256"
@@ -238,7 +252,7 @@ jobs:
             test "$(wc -c < "$name" | tr -d ' ')" = "$bytes"
             test "$(sha256sum "$name" | cut -d' ' -f1)" = "$checksum"
           done < cobalt-host-manifest.txt
-          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 13
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq "$((count + 1))"
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1

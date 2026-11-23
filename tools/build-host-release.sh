@@ -78,6 +78,68 @@ for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
         -cf - -C "$package" . | gzip -n -9 > "$asset"
 done
 
+# The Mac app goes in an archive of its own, named on a host line of its own.
+# It cannot go in the host archive above: every installed updater checks that
+# archive against a fixed list of files, so a release whose archive had grown
+# is one no installed Mac could update to. An updater from before the app
+# reads past the new line and installs the command alone.
+#
+# The bundle arrives as the Mac runner built and sealed it. Nothing in it is
+# changed here but the modes, which an artifact does not keep.
+for platform in macos-x86_64 macos-arm64; do
+    bundle="$DIST/host-binaries/$platform/Cobalt.app"
+    for required in Contents/Info.plist Contents/MacOS/Cobalt \
+        Contents/Resources/Cobalt.icns Contents/_CodeSignature/CodeResources; do
+        [ -f "$bundle/$required" ] || {
+            echo "missing Mac app file $bundle/$required" >&2
+            exit 1
+        }
+    done
+    [ -z "$(find "$bundle" ! -type f ! -type d)" ] || {
+        echo "$bundle holds something that is neither a file nor a folder" >&2
+        exit 1
+    }
+    package="$build_root/$platform-app"
+    mkdir -p "$package"
+    cp -R "$bundle" "$package/Cobalt.app"
+    find "$package" -type d -exec chmod 755 {} +
+    find "$package" -type f -exec chmod 644 {} +
+    chmod 755 "$package/Cobalt.app/Contents/MacOS/Cobalt"
+    asset="$DIST/cobalt-app-$VERSION-$platform.tar.gz"
+    tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+        -cf - -C "$package" . | gzip -n -9 > "$asset"
+done
+
+# Windows ships no importer, which is unix-only for now, and no updater,
+# because install.sh is a shell script that does not run on Windows.
+platform=windows-x86_64
+binary="$DIST/host-binaries/$platform/kobo.exe"
+sidekick="$DIST/host-binaries/$platform/kobo-sidekickd.exe"
+for required in "$binary" "$sidekick"; do
+    [ -f "$required" ] || {
+        echo "missing host binary $required" >&2
+        exit 1
+    }
+done
+package="$build_root/$platform"
+mkdir -p "$package/licenses"
+cp "$binary" "$package/kobo.exe"
+cp "$sidekick" "$package/kobo-sidekickd.exe"
+cp LICENSE "$package/LICENSE"
+cp THIRD-PARTY.md "$package/THIRD-PARTY.md"
+cp licenses/LICENSE-Rust-dependencies.txt \
+    "$package/licenses/LICENSE-Rust-dependencies.txt"
+{
+    printf 'Cobalt %s\n' "$VERSION"
+    printf 'source https://github.com/BandarLabs/Cobalt/commit/%s\n' "$SOURCE_SHA"
+    printf 'release train immutable beta candidate, promotable unchanged to stable\n'
+    printf 'host platform %s\n' "$platform"
+    printf 'commands kobo,kobo-sidekickd\n'
+} > "$package/SOURCE.txt"
+asset="$DIST/kobo-$VERSION-$platform.tar.gz"
+tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+    -cf - -C "$package" . | gzip -n -9 > "$asset"
+
 manifest="$DIST/cobalt-host-manifest.txt"
 {
     printf 'cobalt-host-release 1\n'
@@ -88,9 +150,17 @@ manifest="$DIST/cobalt-host-manifest.txt"
         "$device" "$(size_file "$DIST/$device")" "$(sha256_file "$DIST/$device")"
     printf 'bootstrap install.sh %s %s\n' \
         "$(size_file "$DIST/install.sh")" "$(sha256_file "$DIST/install.sh")"
-    for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
+    for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64 windows-x86_64; do
         asset="kobo-$VERSION-$platform.tar.gz"
         printf 'host %s %s %s %s\n' \
+            "$platform" "$asset" "$(size_file "$DIST/$asset")" \
+            "$(sha256_file "$DIST/$asset")"
+    done
+    # After every line an older reader of this file knows, so what it reads
+    # first is what it has always read.
+    for platform in macos-x86_64 macos-arm64; do
+        asset="cobalt-app-$VERSION-$platform.tar.gz"
+        printf 'host %s-app %s %s %s\n' \
             "$platform" "$asset" "$(size_file "$DIST/$asset")" \
             "$(sha256_file "$DIST/$asset")"
     done

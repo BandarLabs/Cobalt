@@ -142,7 +142,7 @@ impl Store {
         {
             reader.addresses.retain(|a| a != address);
             reader.addresses.insert(0, address.to_owned());
-            reader.addresses.truncate(4);
+            forget_oldest_lease(&mut reader.addresses);
             return;
         }
         let Some(nickname) = nickname else {
@@ -200,6 +200,39 @@ impl Store {
     }
 }
 
+/// How many addresses are kept for one reader.
+const ADDRESSES_KEPT: usize = 4;
+
+/// Cuts a reader's addresses back to [`ADDRESSES_KEPT`], oldest home lease
+/// first.
+///
+/// The list used to be cut from the end whatever was there. That is right for
+/// leases, which are worth less the older they are, and wrong for the one
+/// address that is not a lease: a tailnet address or name is the same for as
+/// long as the reader is on the tailnet, and it is the only way to the reader
+/// from another network. Four new leases at home pushed it off the end, and
+/// the reader was then unreachable from anywhere else until it was paired
+/// again. So an address the home router handed out goes first, and one that
+/// came from somewhere steadier is dropped only when there is nothing else.
+fn forget_oldest_lease(addresses: &mut Vec<String>) {
+    while addresses.len() > ADDRESSES_KEPT {
+        let oldest = addresses
+            .iter()
+            .rposition(|address| is_home_lease(address))
+            .unwrap_or(addresses.len() - 1);
+        addresses.remove(oldest);
+    }
+}
+
+/// Whether `address` is the kind a home router hands out and takes back: a
+/// private or link-local IPv4 address. A tailnet address, any name and any
+/// IPv6 address are not.
+fn is_home_lease(address: &str) -> bool {
+    address
+        .parse::<std::net::Ipv4Addr>()
+        .is_ok_and(|address| address.is_private() || address.is_link_local())
+}
+
 impl SavedReader {
     fn empty() -> Self {
         Self {
@@ -218,11 +251,8 @@ pub fn store_path() -> PathBuf {
     if let Some(value) = std::env::var_os("KOBO_CONFIG_DIR") {
         return PathBuf::from(value).join("readers");
     }
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(home)
-        .join(".config")
-        .join("kobo")
-        .join("readers")
+    let home = kobo_abi::home_directory().unwrap_or_default();
+    home.join(".config").join("kobo").join("readers")
 }
 
 /// Resolves a saved nickname to an address that provably is that reader.
@@ -327,6 +357,55 @@ mod tests {
         assert_eq!(clara.addresses.len(), 2);
         assert!(clara.paired, "a new lease must not forget the pairing");
         assert_eq!(store.readers.len(), 2, "a new lease is not a new reader");
+    }
+
+    #[test]
+    fn new_home_leases_never_push_out_a_tailnet_address_or_name() {
+        let mut store = Store::default();
+        store.remember("N1234", "192.168.1.20", Some("kobo"));
+        // Paired over the tailnet once, by address and by name.
+        store.remember("N1234", "100.64.0.7", None);
+        store.remember("N1234", "kobo-cobalt.example.ts.net", None);
+        // Then a month at home, with a new lease every few days.
+        for last in 21..40 {
+            store.remember("N1234", &format!("192.168.1.{last}"), None);
+        }
+        let addresses = &store.find("kobo").expect("saved").addresses;
+        assert_eq!(
+            addresses,
+            &[
+                "192.168.1.39",
+                "192.168.1.38",
+                "kobo-cobalt.example.ts.net",
+                "100.64.0.7"
+            ]
+        );
+        // With nothing but steady addresses, the oldest still goes.
+        let mut steady = Store::default();
+        for name in ["a.ts.net", "b.ts.net", "c.ts.net", "d.ts.net", "e.ts.net"] {
+            steady.remember("N9", name, Some("study"));
+        }
+        assert_eq!(
+            steady.find("study").expect("saved").addresses,
+            ["e.ts.net", "d.ts.net", "c.ts.net", "b.ts.net"]
+        );
+    }
+
+    #[test]
+    fn only_addresses_a_home_router_hands_out_count_as_leases() {
+        for lease in ["192.168.1.20", "10.0.0.5", "172.16.4.4", "169.254.3.3"] {
+            assert!(is_home_lease(lease), "{lease}");
+        }
+        for steady in [
+            "100.64.0.7",
+            "100.101.102.103",
+            "kobo-cobalt",
+            "kobo-cobalt.example.ts.net",
+            "fd7a:115c:a1e0::7",
+            "203.0.113.9",
+        ] {
+            assert!(!is_home_lease(steady), "{steady}");
+        }
     }
 
     #[test]

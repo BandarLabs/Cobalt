@@ -510,7 +510,7 @@ fn photos(arguments: &[String]) -> Result<(), String> {
 fn default_photo_cache() -> PathBuf {
     std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+        .or_else(|| kobo_abi::home_directory().map(|home| home.join(".cache")))
         .unwrap_or_else(std::env::temp_dir)
         .join("cobalt/fieldbook")
 }

@@ -1,0 +1,84 @@
+# Find in River.epub. The lens in the controls opens the reader's keyboard,
+# the results say how many passages have the words and list each with a line
+# of context and its page, a result goes to its page with the words marked,
+# and the way back to the page the search was made from is Back, or the
+# control that names that page.
+wait-for River
+tap River
+wait-for Marker 1
+page next
+tap-id reader-controls
+wait-for Page 2 of
+shot books-find-controls
+tap-id reader-find
+wait-for-id kb.enter
+expect A word or a few words
+shot books-find
+type marker 9
+tap-id kb.enter
+wait-for is in 2 passages
+expect This is reading marker 9.
+expect Search again
+shot books-found
+tap-id reader-found-1
+wait-for reading marker 8.
+expect-missing passages
+shot books-found-page
+# The controls name the page Back leads to, and the control goes there.
+tap-id reader-controls
+wait-for Back to page 2
+shot books-found-return
+tap Back to page 2
+wait-idle
+tap-id reader-controls
+wait-for Page 2 of
+expect-missing Back to page
+tap-id 4294967295
+wait-idle
+# Back does the same from the page itself.
+tap-id reader-controls
+tap-id reader-find
+wait-for is in 2 passages
+tap-id reader-found-0
+wait-for reading marker 8.
+tap-id 4294967295
+wait-idle
+tap-id reader-controls
+wait-for Page 2 of
+# The last search is kept. Search again opens the field with its words in
+# it, and a word in every paragraph pages its results.
+tap-id reader-find
+wait-for is in 2 passages
+tap Search again
+wait-for-id kb.enter
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+type bench
+tap-id kb.enter
+wait-for is in 40 passages
+expect A wooden bench faces the bend.
+shot books-found-many
+tap-id reader-list-next
+wait-for 2 of
+# Words that are not in the book are said not to be.
+tap Search again
+wait-for-id kb.enter
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+type heron
+tap-id kb.enter
+wait-for Nothing here matches
+shot books-found-none
+tap Back to the book
+wait-idle
+expect-missing Nothing here matches
+expect reading marker

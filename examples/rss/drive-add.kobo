@@ -1,4 +1,4 @@
-# sweep: --bare
+# sweep: --bare needs https://feedsearch.dev/ needs https://xkcd.com/atom.xml needs https://science.nasa.gov/feed/
 # Every way in: a website name looked up, a feed address previewed, an
 # address with no feed, a lookup with no network, and an OPML file sent from
 # the computer. A feed comes off the shelf from its row's menu.

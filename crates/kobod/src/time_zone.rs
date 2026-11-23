@@ -51,9 +51,7 @@ pub fn choose(root: &Path, zone: Option<&Zone>) -> Result<(), DeviceError> {
         .and_then(|()| file.sync_all())
         .map_err(|_| DeviceError::Backend)?;
     fs::rename(&next, &path).map_err(|_| DeviceError::Backend)?;
-    fs::File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_directory(parent).map_err(|_| DeviceError::Backend)
 }
 
 #[cfg(test)]
@@ -64,6 +62,19 @@ mod tests {
         let root = std::env::temp_dir().join(format!("kobod-zone-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         root
+    }
+
+    #[test]
+    fn the_choice_is_kept_under_a_name_no_application_can_take() {
+        // An application's state folder is named after its identifier, in
+        // the same folder as this file. One published as time-zone would
+        // have been handed the owner's choice as its own state.
+        let name = state_file(std::path::Path::new(""));
+        let name = name
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("a name");
+        assert!(kobo_app_store::is_public_reserved_app_id(name), "{name}");
     }
 
     #[test]

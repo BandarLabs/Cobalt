@@ -2483,6 +2483,7 @@ mod tests {
         path
     }
 
+    #[cfg(unix)] // Only the unix acceptance test drives the fixture.
     fn fixture(path: &Path) {
         fs::create_dir_all(path).expect("fixture directory");
         fs::write(path.join(FIXTURE_SEED), format!("{}\n", "2a".repeat(32))).expect("fixture seed");
@@ -2566,6 +2567,8 @@ mod tests {
         assert!(parse(&beta).is_ok());
     }
 
+    // The mock command is a /bin/sh script; covered on the Linux host job.
+    #[cfg(unix)]
     #[test]
     fn mock_command_runs_the_complete_acceptance_matrix() {
         let fixture_path = root("fixture");
@@ -2618,6 +2621,9 @@ mod tests {
         }
     }
 
+    // Fixtures stage mock commands as /bin/sh scripts; covered on the Linux
+    // host job.
+    #[cfg(unix)]
     #[test]
     fn an_installed_manifest_without_its_binary_blocks_acceptance_and_reinstall() {
         let root = root("missing-installed-binary");
@@ -2759,6 +2765,9 @@ mod tests {
         assert!(redacted.ends_with("ok"));
     }
 
+    // Fixtures stage mock commands as /bin/sh scripts; covered on the Linux
+    // host job.
+    #[cfg(unix)]
     #[test]
     fn target_state_changes_are_separate_from_unrelated_preservation() {
         let root = root("preservation");
