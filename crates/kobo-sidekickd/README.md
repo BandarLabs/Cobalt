@@ -45,7 +45,11 @@ once, a leaf certificate minted from it for the machine's current addresses
 authority also lands in `~/.config/kobo/trust`, where the host runtimes
 already look, so the simulator trusts the daemon with no further ceremony,
 and where `kobo setup` looks, so a reader picks it up with the install.
-`kobo sidekick init` installs it on a reader set up earlier.
+`kobo sidekick init` installs it on a reader set up earlier. On a computer
+that is on a Tailscale tailnet it also passes the computer's tailnet name and
+address as `--host`, so the certificate serves a reader that reaches it over
+the tailnet, and `kobo sidekick init --tailnet` writes the tailnet name onto
+the reader as the address to dial.
 
 ### Choosing an integration
 
