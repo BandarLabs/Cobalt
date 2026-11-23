@@ -129,8 +129,17 @@ fn a_screen_without_an_accent_keeps_a_paper_bar_and_the_platforms_cobalt() {
         palette.emphasis(),
         Paint::Colour(Accent::Cobalt.shades().strong)
     );
+    assert_eq!(palette.bar_rule(), None);
     let orange = Palette::new(Appearance::Colour, Some(Accent::Orange));
-    assert_eq!(orange.bar(), Paint::Colour(Accent::Orange.shades().tint));
+    assert_eq!(orange.bar(), Paint::Grey(tone::PAPER));
+    assert_eq!(
+        orange.bar_rule(),
+        Some(Paint::Colour(Accent::Orange.shades().strong))
+    );
+    assert_eq!(
+        Palette::new(Appearance::Grey, Some(Accent::Orange)).bar_rule(),
+        None
+    );
     assert_eq!(
         orange.emphasis(),
         Paint::Colour(Accent::Orange.shades().strong)
@@ -389,18 +398,28 @@ fn the_grey_plane_of_a_colour_frame_is_the_luminance_of_every_pixel() {
 }
 
 #[test]
-fn an_accented_bar_is_the_tint_with_its_title_and_controls_still_in_ink() {
+fn an_accented_bar_stays_paper_and_wears_its_colour_as_the_line_under_it() {
     let screen = kitchen_sink(Some(Accent::Orange));
     let surface = paint(&screen, Appearance::Colour);
-    let Shades { tint, .. } = Accent::Orange.shades();
+    let Shades { tint, strong } = Accent::Orange.shades();
     let bar = rect_of(&screen, |kind| *kind == LayoutKind::TopBar);
     let at = |x: i32, y: i32| surface.rgb_at(y as usize * surface.width + x as usize);
-    // The corners of the bar carry nothing but the field.
-    assert_eq!(at(bar.x + 1, bar.y + 1), Some(tint));
-    assert_eq!(
-        at(bar.x + bar.width - 2, bar.y + bar.height - 2),
-        Some(tint)
-    );
+    // The field is paper from corner to corner: a band of the accent across
+    // the top was the heaviest thing on the screen.
+    assert_eq!(at(bar.x + 1, bar.y + 1), Some([tone::PAPER; 3]));
+    assert_eq!(at(bar.x + bar.width - 2, bar.y + 1), Some([tone::PAPER; 3]));
+    assert_eq!(count_colour(&surface, tint), 0);
+    // The line under it is the strong shade, edge to edge, and ends exactly
+    // where the grey rule ends, so the page under it has not moved.
+    let rule = rect_of(&screen, |kind| *kind == LayoutKind::BarRule);
+    let accent = bar_accent_rect(rule, &CLARA_BW_METRICS);
+    assert_eq!(accent.y + accent.height, rule.y + rule.height);
+    assert!(accent.height > rule.height);
+    for y in accent.y..accent.y + accent.height {
+        assert_eq!(at(accent.x, y), Some(strong));
+        assert_eq!(at(accent.x + accent.width - 1, y), Some(strong));
+    }
+    assert_eq!(at(accent.x + 1, accent.y - 1), Some([tone::PAPER; 3]));
     let title = rect_of(&screen, |kind| *kind == LayoutKind::TopBarTitle);
     let mut ink = 0;
     for y in title.y..title.y + title.height {
@@ -410,17 +429,25 @@ fn an_accented_bar_is_the_tint_with_its_title_and_controls_still_in_ink() {
             }
         }
     }
-    assert!(ink > 0, "the title is not drawn in ink on the tint");
-    // The band above the bar stays paper, so the tint is a bar and not a
-    // header across the whole top of the panel.
-    let band = rect_of(&screen, |kind| *kind == LayoutKind::StatusBand);
-    assert_eq!(at(band.x + 1, band.y + 1), Some([tone::PAPER; 3]));
-    // And the bottom bar stays paper too.
+    assert!(ink > 0, "the title is not drawn in ink");
     let nav = rect_of(&screen, |kind| *kind == LayoutKind::NavBar);
     assert_eq!(
         at(nav.x + 1, nav.y + nav.height - 2),
         Some([tone::PAPER; 3])
     );
+}
+
+#[test]
+fn a_grey_panel_draws_the_plain_rule_under_an_accented_bar() {
+    let screen = kitchen_sink(Some(Accent::Orange));
+    let surface = paint(&screen, Appearance::Grey);
+    let rule = rect_of(&screen, |kind| *kind == LayoutKind::BarRule);
+    let accent = bar_accent_rect(rule, &CLARA_BW_METRICS);
+    let at = |x: i32, y: i32| surface.pixels[y as usize * surface.width + x as usize];
+    // Above the rule, where the accent would have risen into the bar, the
+    // bar is still paper; the rule itself is the grey it always was.
+    assert_eq!(at(accent.x + 1, accent.y), tone::PAPER);
+    assert_eq!(at(rule.x + 1, rule.y), tone::RULE);
 }
 
 #[test]
@@ -434,6 +461,13 @@ fn a_screen_with_no_accent_is_drawn_in_cobalt_with_a_paper_bar() {
     );
     assert!(count_colour(&surface, Accent::Cobalt.shades().strong) > 0);
     assert_eq!(count_colour(&surface, Accent::Cobalt.shades().tint), 0);
+    // No accent, so the line under the bar is the grey rule.
+    let rule = rect_of(&screen, |kind| *kind == LayoutKind::BarRule);
+    let accent = bar_accent_rect(rule, &CLARA_BW_METRICS);
+    assert_eq!(
+        surface.rgb_at(accent.y as usize * surface.width + 1),
+        Some([tone::PAPER; 3])
+    );
 }
 
 #[test]

@@ -1005,23 +1005,22 @@ mod tests {
 
     #[test]
     fn account_fields_and_their_prompts_fit_all_interface_sizes() {
-        let panels =
-            [kobo_ui::CLARA_BW_METRICS]
-                .into_iter()
-                .chain(kobo_profile::SUPPORTED_PROFILES.iter().map(|profile| {
-                    crate::DisplayMetrics {
-                        width: i32::try_from(profile.width).unwrap(),
-                        height: i32::try_from(profile.height).unwrap(),
-                        pixels_per_inch: i32::from(profile.pixels_per_inch),
-                        text_scale: kobo_ui::TextScale::Default,
-                    }
-                }))
-                .chain([crate::DisplayMetrics {
-                    width: 758,
-                    height: 1024,
-                    pixels_per_inch: 212,
-                    text_scale: kobo_ui::TextScale::Default,
-                }]);
+        let panels = [kobo_ui::CLARA_BW_METRICS]
+            .into_iter()
+            .chain(kobo_profile::SUPPORTED_PROFILES.iter().map(|profile| {
+                crate::DisplayMetrics::for_panel(
+                    i32::try_from(profile.width).unwrap(),
+                    i32::try_from(profile.height).unwrap(),
+                    i32::from(profile.pixels_per_inch),
+                    kobo_ui::TextScale::Default,
+                )
+            }))
+            .chain([crate::DisplayMetrics {
+                width: 758,
+                height: 1024,
+                pixels_per_inch: 212,
+                text_scale: kobo_ui::TextScale::Default,
+            }]);
         let panels = panels.flat_map(|portrait| {
             [
                 portrait,
