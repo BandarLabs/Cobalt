@@ -147,6 +147,9 @@ pub fn profile_from_probe(
         // on a board nobody has watched. The aggregate layout is what every
         // other family has been measured with.
         front_light: LightLayout::from_compatible(&snapshot.compatible),
+        // Which end of a warmth control is the warm one cannot be probed, so
+        // a reader nobody has looked at keeps the warmth its owner set.
+        warmth: crate::Warmth::Unmapped,
     };
     Ok(Box::leak(Box::new(profile)))
 }
@@ -652,5 +655,20 @@ mod tests {
         mediatek.framebuffer.as_mut().unwrap().id = "hwtcon".to_owned();
         let mediatek = profile_from_probe(&mediatek, TouchTransform::Direct).expect("derivable");
         assert_eq!(mediatek.front_light, crate::LightLayout::Aggregate);
+    }
+
+    /// A probe can find a warmth file and still not know which end of it is
+    /// the warm one, so no derived profile is given a mapping, whatever
+    /// board it was derived from.
+    #[test]
+    fn a_provisional_reader_is_never_given_a_warmth_mapping() {
+        let imx =
+            profile_from_probe(&unmeasured_snapshot(), TouchTransform::Direct).expect("derivable");
+        assert_eq!(imx.warmth, crate::Warmth::Unmapped);
+        let mut mediatek = unmeasured_snapshot();
+        mediatek.compatible = vec!["mediatek,mt8110".to_owned()];
+        mediatek.framebuffer.as_mut().unwrap().id = "hwtcon".to_owned();
+        let mediatek = profile_from_probe(&mediatek, TouchTransform::Direct).expect("derivable");
+        assert_eq!(mediatek.warmth, crate::Warmth::Unmapped);
     }
 }

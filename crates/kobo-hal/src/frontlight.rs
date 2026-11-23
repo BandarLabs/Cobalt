@@ -62,6 +62,19 @@
 //! remembered and put back by [`Frontlight::restore`] exactly as the brightness
 //! is, so a session that ends leaves nothing moved.
 //!
+//! # Why a warmth that was asked for ends the special case
+//!
+//! The balance between the banks is the warmth of the light, and on a reader
+//! whose profile says which end is the warm one it can be set in its own
+//! right, with [`Frontlight::set_warmth`]. Somebody who has done that has
+//! said where they want the balance, and a brightness that then moved it,
+//! at the top of the range or on the way back down, would be undoing a
+//! choice to honour a guess. So from the first warmth that is set until the
+//! session ends, brightness leaves the balance exactly where it was put.
+//! Until then nothing changes: the top of the range still lights every bank.
+//! [`Frontlight::restore`] puts back the balance the session found either
+//! way, never the one that was chosen during it.
+//!
 //! # Why the i.MX readers are different
 //!
 //! Everything above was measured on the `MediaTek` readers. The i.MX6 readers
@@ -77,8 +90,12 @@
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 mod recovery;
+mod warmth;
+
+pub use warmth::WarmthReading;
 
 /// Where Linux publishes backlight controls.
 const BACKLIGHTS: &str = "/sys/class/backlight";
@@ -92,7 +109,7 @@ const PREFERRED: &str = "lm3630a_led";
 /// The brightness control on the i.MX6 readers.
 const IMX_PREFERRED: &str = "mxc_msp430.0";
 
-pub use kobo_profile::LightLayout;
+pub use kobo_profile::{LightLayout, Warmth};
 
 /// The control a layout prefers for brightness.
 const fn preferred(layout: LightLayout) -> &'static str {
@@ -124,6 +141,13 @@ pub struct Frontlight {
     /// [`None`] on a light with a single bank, and on any device that does not
     /// publish the file, which is why nothing here requires it.
     balance: Option<Balance>,
+    /// The balance last asked for as a warmth, if one has been this session.
+    ///
+    /// Shared between clones, because a clone is another handle on the same
+    /// lamp: a warmth set through one must stop a brightness set through
+    /// another from moving the balance. What the session found is kept apart
+    /// in `balance` and is never touched by this.
+    chosen_warmth: Arc<Mutex<Option<u32>>>,
 }
 
 /// The balance between the two banks of a light that has two.
@@ -204,6 +228,7 @@ impl Frontlight {
             original,
             original_raw: raw,
             balance,
+            chosen_warmth: Arc::default(),
         })
     }
 
@@ -236,13 +261,20 @@ impl Frontlight {
     /// hands the warmth back straight away instead of at the end of the
     /// session.
     ///
+    /// None of that applies once a warmth has been set with
+    /// [`Self::set_warmth`]. From then on the balance is where somebody put
+    /// it, and this writes the level and nothing else.
+    ///
     /// # Errors
     ///
     /// When the control cannot be written, which on this device means the file
     /// vanished or the process is not root.
     pub fn set(&self, percent: u8) -> io::Result<u8> {
         let percent = percent.min(100);
-        if let Some(balance) = self.balance {
+        // Held across both writes, so a warmth set from another handle lands
+        // wholly before this or wholly after it, never between the two.
+        let chosen = self.chosen_warmth();
+        if let (Some(balance), None) = (self.balance, *chosen) {
             self.balance(if percent == 100 {
                 balance.even()
             } else {
@@ -252,11 +284,22 @@ impl Frontlight {
         self.brightness(percent)
     }
 
+    /// The warmth this session was asked for, behind the lock that keeps a
+    /// brightness and a warmth from being written across each other.
+    ///
+    /// A handle that panicked while holding it left a plain number behind,
+    /// which is as good as it was, so the lock is taken regardless.
+    fn chosen_warmth(&self) -> MutexGuard<'_, Option<u32>> {
+        self.chosen_warmth
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Writes the balance between the banks.
     ///
-    /// Always before the brightness, never after: the driver works the split
-    /// out when it is handed a level, so a balance written afterwards would sit
-    /// in the file until something else moved the light.
+    /// Before the brightness when both are being written, so the panel
+    /// changes once, to the level on the split it was asked for, and not to
+    /// the level on the old split first.
     fn balance(&self, colour: u32) -> io::Result<()> {
         fs::write(self.control.join("color"), format!("{colour}\n"))
     }
@@ -275,10 +318,15 @@ impl Frontlight {
     /// every bank and get their warmth changed by the very call meant to undo
     /// us.
     ///
+    /// A warmth that was set during the session is forgotten once everything
+    /// is back, so a handle that outlives the restore behaves as one that was
+    /// just opened.
+    ///
     /// # Errors
     ///
     /// As [`Self::set`].
     pub fn restore(&self) -> io::Result<u8> {
+        let mut chosen = self.chosen_warmth();
         if read_number(&self.control.join("max_brightness")) != Some(self.maximum) {
             return Err(io::Error::other("front light range changed since capture"));
         }
@@ -313,7 +361,9 @@ impl Frontlight {
             }
         });
         balance_result?;
-        brightness_result
+        let restored = brightness_result?;
+        *chosen = None;
+        Ok(restored)
     }
 }
 
