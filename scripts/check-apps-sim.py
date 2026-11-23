@@ -12,6 +12,7 @@ import sqlite3
 import contextlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -85,6 +86,13 @@ def seed(app, state, kobo, env, log):
         shutil.copyfile(fixtures / 'chapters.m4b', shelf / 'The Quiet Shelf.m4b')
         shutil.copyfile(fixtures / 'pcm.wav', parts / '01 - A Low Tone.wav')
         shutil.copyfile(fixtures / 'lossless.flac', parts / '02 - A Higher Tone.flac')
+    elif app == 'launcher':
+        # A reader whose owner has read the What's new notes. Without this
+        # every route opens on the sheet from the day the workspace version
+        # is the one the notes are for. A route about the sheet itself runs
+        # with --bare, which is a reader that has not read them.
+        subprocess.run([sys.executable, str(ROOT / 'scripts/sim-notes-read.py'), state],
+                       cwd=ROOT, env=env, stdout=log, stderr=log, timeout=30, check=True)
 
 
 def write_epub(path, title, author, words):
