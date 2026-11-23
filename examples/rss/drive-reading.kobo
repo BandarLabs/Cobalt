@@ -15,7 +15,9 @@ shot feed-page-2
 tap-id list-back
 wait-for 1 of 2
 tap-id item-0
-wait-idle 20000
+# The article is live, and one with a picture on every screen takes most of a
+# minute to finish fetching them.
+wait-idle 60000
 clean
 shot article
 # Page turns to the end of the article; the reader says when there is no more.
