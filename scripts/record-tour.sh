@@ -21,6 +21,9 @@
 #
 # # Before running it
 #
+# - What's new has been put away. A reader that has just been updated opens
+#   the launcher on that sheet once, and the tour's first tap would land on
+#   it and the take would open with the sheet across the grid.
 # - The reader is in Cobalt on the launcher, charging, with Lichess not in the
 #   middle of a game (finish or abort it), so Play the computer starts afresh.
 #   Lichess remembers the last side and clock chosen, so the script picks White
@@ -47,7 +50,7 @@ OUT=""
 SECONDS_TOTAL=170
 FPS=2
 
-usage() { sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
