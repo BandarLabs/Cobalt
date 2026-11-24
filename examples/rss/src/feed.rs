@@ -584,7 +584,7 @@ fn xml_feed(input: &str) -> Feed {
     feed
 }
 
-fn escape_html(text: &str) -> String {
+pub fn escape_html(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
