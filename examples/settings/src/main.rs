@@ -4892,6 +4892,121 @@ mod tests {
             .collect()
     }
 
+    /// Names the panel a test process was started to check.
+    const PANEL: &str = "KOBO_SETTINGS_TEST_PANEL";
+
+    /// The panels Cobalt supports, by the geometry that decides what fits:
+    /// the Claras, the 7 inch Libras, the Elipsa 2E and the Nia.
+    const PANELS: [(&str, i32, i32, i32); 4] = [
+        ("clara", 1072, 1448, 300),
+        ("libra", 1264, 1680, 300),
+        ("elipsa", 1404, 1872, 227),
+        ("nia", 758, 1024, 212),
+    ];
+
+    /// Runs the ignored test `test` once for every panel in `PANELS`, each
+    /// in a process of its own.
+    ///
+    /// Type is sized once for a whole process, for the first panel a runner
+    /// is made for, so a loop over panels in one process measures all of
+    /// them in a Clara's type. On a Nia that is two fifths too large, and the
+    /// question here is whether words fit.
+    fn on_every_panel_in_a_process_of_its_own(test: &str) {
+        let tests = std::env::current_exe().expect("the test binary has a path");
+        for (panel, ..) in PANELS {
+            let output = std::process::Command::new(&tests)
+                .args([&format!("tests::{test}"), "--exact", "--ignored"])
+                .env(PANEL, panel)
+                .output()
+                .expect("the test binary runs");
+            let said = String::from_utf8_lossy(&output.stdout);
+            // A name that matches nothing runs nothing and succeeds.
+            assert!(
+                output.status.success() && said.contains("1 passed"),
+                "{panel}:\n{said}"
+            );
+        }
+    }
+
+    /// The panel this process was started for, upright and sideways, at
+    /// every text size: the Clara when it was started for none.
+    fn this_panel_at_every_size() -> Vec<kobo_sdk::DisplayMetrics> {
+        let wanted = std::env::var(PANEL).unwrap_or_else(|_| "clara".to_owned());
+        let (_, width, height, density) = PANELS
+            .into_iter()
+            .find(|(name, ..)| *name == wanted)
+            .expect("the panel is one of PANELS");
+        let mut scale = CLARA_BW_METRICS.text_scale;
+        while let Some(smaller) = scale.smaller() {
+            scale = smaller;
+        }
+        let mut every = Vec::new();
+        loop {
+            let upright = kobo_sdk::DisplayMetrics::for_panel(width, height, density, scale);
+            every.push(upright);
+            every.push(upright.oriented(kobo_sdk::Orientation::Landscape));
+            match scale.larger() {
+                Some(larger) => scale = larger,
+                None => return every,
+            }
+        }
+    }
+
+    #[test]
+    fn every_update_screen_fits_every_panel_at_every_text_size() {
+        on_every_panel_in_a_process_of_its_own(
+            "every_update_screen_fits_this_panel_at_every_text_size",
+        );
+    }
+
+    #[test]
+    #[ignore = "run once for each panel, in a process of its own, by the test above"]
+    fn every_update_screen_fits_this_panel_at_every_text_size() {
+        let notes = super::release_notes::parse(super::release_notes::RELEASE_0_3_41);
+        let flows = [
+            super::UpdateFlow::Idle,
+            super::UpdateFlow::UpToDate {
+                latest: "0.3.41".to_owned(),
+            },
+            super::UpdateFlow::Ahead {
+                latest: "0.3.40".to_owned(),
+            },
+            super::UpdateFlow::Ready {
+                version: "0.3.42".to_owned(),
+                url: "https://example.test/KoboRoot.tgz".to_owned(),
+                sha256: "a".repeat(64),
+                notes: Vec::new(),
+            },
+            super::UpdateFlow::Ready {
+                version: "0.3.42".to_owned(),
+                url: "https://example.test/KoboRoot.tgz".to_owned(),
+                sha256: "a".repeat(64),
+                notes,
+            },
+            super::UpdateFlow::Installing {
+                version: "0.3.42".to_owned(),
+            },
+            super::UpdateFlow::Installed {
+                version: "0.3.42".to_owned(),
+            },
+            super::UpdateFlow::Offline,
+            super::UpdateFlow::Failed("The download did not match its digest.".to_owned()),
+        ];
+        for metrics in this_panel_at_every_size() {
+            let context = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics).context();
+            for update in flows.clone() {
+                let what = format!("{update:?}");
+                let settings = Settings {
+                    update,
+                    auto_update: Some((true, true)),
+                    update_channel: Some(UpdateChannel::Stable),
+                    ..Settings::default()
+                };
+                fits(&settings.update_for(&context), metrics, &what);
+            }
+        }
+    }
+
     fn fits(screen: &kobo_sdk::Screen, metrics: kobo_sdk::DisplayMetrics, what: &str) {
         let report = screen.diagnostics(&metrics, &Chrome::measuring(true));
         assert!(
