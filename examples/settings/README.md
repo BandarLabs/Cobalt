@@ -27,7 +27,10 @@ updates.
   temperature, voltage, current and charge figures from the fuel gauge.
   **Read again** refreshes them.
 - **Light**: brightness from off to 100%, in steps of 5% and of 1% at 10% and
-  below. The level lasts until Cobalt closes. The Kobo reader keeps its own.
+  below, and warmth from coolest to warmest, one setting of the lamp at a
+  time. Both last until Cobalt closes. The Kobo reader keeps its own. Warmth
+  is offered on the Clara BW, Clara Colour and Libra Colour. On other readers
+  the page says that this version of Cobalt cannot set it.
 - **Time zone**: pick a region, then your city. Cobalt's clock, and every
   app's, follows it, daylight saving included. With none picked yet, a city
   is suggested from the network the reader is on.
@@ -38,8 +41,7 @@ updates.
 - **About**: the model and versions, the reader's Wi-Fi address when the
   runtime provides it, and how `kobo` on a computer finds the reader.
 
-The warmth of the light, accounts and firmware stay in the Kobo's own
-settings.
+Accounts and firmware stay in the Kobo's own settings.
 
 ## Development
 

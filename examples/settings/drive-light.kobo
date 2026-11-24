@@ -2,12 +2,14 @@
 # light answers: by fives above 10%, by ones at the dim end, stopping at off
 # and at full. A level moved while Settings was away is read when it comes
 # back, a refused step is said over the control, and the home row says the
-# level the page left.
+# level the page left. The warmth under it has a route of its own,
+# drive-light-warmth.kobo.
 wait-for Settings
 tap-paged Light
 wait-for Brightness
 expect 20%
-expect Lasts until Cobalt closes. The Kobo reader keeps its own level.
+expect Warmth
+expect Both last until Cobalt closes. The Kobo reader keeps its own brightness and warmth.
 expect-missing Reading the light.
 expect-state /device#/frontlightPercent 20
 shot settings-light

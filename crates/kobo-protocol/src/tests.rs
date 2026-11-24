@@ -82,6 +82,9 @@ fn every_device_request_round_trips() {
         DeviceRequest::SetFrontlight { percent: 100 },
         DeviceRequest::SetFrontlight { percent: 0 },
         DeviceRequest::ReadFrontlight,
+        DeviceRequest::ReadWarmth,
+        DeviceRequest::SetWarmth { percent: 100 },
+        DeviceRequest::SetWarmth { percent: 0 },
         DeviceRequest::ReadBluetooth,
         DeviceRequest::SetBluetooth { enabled: true },
         DeviceRequest::ScanBluetooth,
@@ -243,6 +246,10 @@ fn every_device_result_round_trips() {
             charging: false,
         },
         DeviceResult::Frontlight { percent: 42 },
+        DeviceResult::Warmth {
+            percent: 40,
+            steps: 11,
+        },
         DeviceResult::Denied(DenyReason::NotDeclared),
         DeviceResult::Denied(DenyReason::WithheldForBattery),
         DeviceResult::Denied(DenyReason::Unsupported),
@@ -540,6 +547,98 @@ fn secret_presence_round_trips_and_stays_bounded() {
             message,
         };
         assert!(encode(&frame).is_err());
+    }
+}
+
+/// The two bytes a warmth request adds and the three its answer does are
+/// part of what an installed Settings and its runtime agree on, so they are
+/// pinned here and not only round-tripped.
+#[test]
+fn a_warmth_travels_both_ways_on_its_own_tags_and_nothing_out_of_range_does() {
+    let body = |message: Message| {
+        let bytes = encode(&Frame {
+            version: VERSION,
+            request_id: 9,
+            message: message.clone(),
+        })
+        .expect("encode");
+        assert_eq!(
+            decode(&bytes).expect("decode").message,
+            message,
+            "{message:?}"
+        );
+        bytes
+    };
+    assert!(body(Message::DeviceRequest(DeviceRequest::ReadWarmth)).ends_with(&[64]));
+    assert!(body(Message::DeviceRequest(DeviceRequest::SetWarmth {
+        percent: 70
+    }))
+    .ends_with(&[65, 70]));
+    for (percent, steps) in [(0, 2), (50, 11), (100, 101)] {
+        assert!(body(Message::DeviceResult(DeviceResult::Warmth {
+            percent,
+            steps
+        }))
+        .ends_with(&[27, percent, steps]));
+    }
+
+    let refused = |message: Message| {
+        encode(&Frame {
+            version: VERSION,
+            request_id: 9,
+            message,
+        })
+        .is_err()
+    };
+    assert!(refused(Message::DeviceRequest(DeviceRequest::SetWarmth {
+        percent: 101
+    })));
+    for (percent, steps) in [(101, 11), (50, 0), (50, 1), (50, 102), (50, u8::MAX)] {
+        assert!(
+            refused(Message::DeviceResult(DeviceResult::Warmth {
+                percent,
+                steps
+            })),
+            "{percent} of {steps}"
+        );
+    }
+
+    // What an encoder would refuse to write is refused when it is read too.
+    let mut set = encode(&Frame {
+        version: VERSION,
+        request_id: 9,
+        message: Message::DeviceRequest(DeviceRequest::SetWarmth { percent: 100 }),
+    })
+    .expect("encode");
+    *set.last_mut().expect("a percent") = 101;
+    assert!(decode(&set).is_err());
+    let mut reading = encode(&Frame {
+        version: VERSION,
+        request_id: 9,
+        message: Message::DeviceResult(DeviceResult::Warmth {
+            percent: 50,
+            steps: 11,
+        }),
+    })
+    .expect("encode");
+    *reading.last_mut().expect("a count") = 1;
+    assert!(decode(&reading).is_err());
+
+    // A frame at an earlier protocol never carries either.
+    for message in [
+        Message::DeviceRequest(DeviceRequest::ReadWarmth),
+        Message::DeviceRequest(DeviceRequest::SetWarmth { percent: 50 }),
+        Message::DeviceResult(DeviceResult::Warmth {
+            percent: 50,
+            steps: 11,
+        }),
+    ] {
+        let old = Frame {
+            version: WARMTH_VERSION - 1,
+            request_id: 9,
+            message,
+        };
+        assert!(encode(&old).is_err());
     }
 }
 
