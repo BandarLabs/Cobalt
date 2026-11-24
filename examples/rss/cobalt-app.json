@@ -3,7 +3,7 @@
   "display_name": "Feeds",
   "short_label": "Feeds",
   "summary": "Follow feeds, search saved articles and read offline with images.",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "glyph": "rss",
   "capabilities": [
     "network"
@@ -27,5 +27,5 @@
       }
     ]
   },
-  "release_notes": "Feeds that carry only a summary now open the whole article, kept for reading offline. Paste a newsletter's site address to follow it. Find and Go to are in the reading controls."
+  "release_notes": "An article opens with its title, its writer and the day it was published. When a feed carries only the opening, the note under it says the rest is on the publisher's site. Search lists a newsletter before its podcast."
 }

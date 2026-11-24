@@ -80,7 +80,7 @@ pub fn results(bytes: &[u8]) -> Result<Vec<Found>, InvalidResponse> {
     }) {
         return Err(InvalidResponse);
     }
-    let mut found: Vec<(f64, Found)> = entries
+    let mut found: Vec<(bool, f64, Found)> = entries
         .iter()
         .filter_map(|entry| {
             let url = entry.get("url").and_then(Value::as_str)?.trim();
@@ -100,7 +100,9 @@ pub fn results(bytes: &[u8]) -> Result<Vec<Found>, InvalidResponse> {
                 url,
             );
             let score = entry.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+            let podcast = entry.get("is_podcast").and_then(Value::as_bool) == Some(true);
             Some((
+                podcast,
                 score,
                 Found {
                     url: url.to_owned(),
@@ -111,12 +113,16 @@ pub fn results(bytes: &[u8]) -> Result<Vec<Found>, InvalidResponse> {
             ))
         })
         .collect();
-    // Highest score first. The service computes it from how closely the feed's
-    // address matches what was asked for, which is a better guess at what
-    // somebody meant than the order a crawler happened to find things in.
-    found.sort_by(|left, right| right.0.total_cmp(&left.0));
+    // Feeds to read before podcasts, then highest score first. The score comes
+    // from how closely the feed's address matches what was asked for, which is
+    // a better guess at what somebody meant than the order a crawler happened
+    // to find things in. But a newsletter that also publishes audio has a
+    // podcast feed under the same name, often scored higher, and this app
+    // reads; it does not play. A main feed the service has wrongly called a
+    // podcast only moves below the site's other feeds, which read the same.
+    found.sort_by(|left, right| left.0.cmp(&right.0).then(right.1.total_cmp(&left.1)));
     let mut kept: Vec<Found> = Vec::new();
-    for (_, entry) in found {
+    for (_, _, entry) in found {
         let twin = kept.iter().find(|earlier| {
             earlier.title == entry.title
                 && earlier.site == entry.site
@@ -248,28 +254,50 @@ mod tests {
     }
 
     #[test]
-    fn results_come_back_best_first() {
+    fn results_come_back_best_first_with_podcasts_after_feeds_to_read() {
         let found = results(ANSWER.as_bytes()).unwrap();
         assert_eq!(found.len(), 2);
-        assert_eq!(found[0].url, "https://arstechnica.com/feed/");
         assert_eq!(
-            found[1].url,
+            found[0].url,
             "http://feeds.arstechnica.com/arstechnica/index"
+        );
+        assert_eq!(found[1].url, "https://arstechnica.com/feed/");
+    }
+
+    #[test]
+    fn a_newsletters_podcast_comes_after_the_newsletter_whatever_its_score() {
+        let answer = r#"[
+            {"url":"https://api.substack.com/feed/podcast/89120.rss","title":"Astral Codex Ten",
+             "item_count":2,"score":60,"is_podcast":true},
+            {"url":"https://www.astralcodexten.com/feed","title":"Astral Codex Ten",
+             "item_count":20,"score":40,"is_podcast":false},
+            {"url":"https://other.example/feed","title":"Other",
+             "item_count":5,"score":10,"is_podcast":false}
+        ]"#;
+        let found = results(answer.as_bytes()).unwrap();
+        let urls: Vec<&str> = found.iter().map(|found| found.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            [
+                "https://www.astralcodexten.com/feed",
+                "https://other.example/feed",
+                "https://api.substack.com/feed/podcast/89120.rss",
+            ]
         );
     }
 
     #[test]
     fn a_feed_with_no_title_of_its_own_borrows_the_sites() {
         let found = results(ANSWER.as_bytes()).unwrap();
-        assert_eq!(found[0].title, "Ars Technica");
-        assert_eq!(found[0].site, "https://arstechnica.com/");
+        assert_eq!(found[1].title, "Ars Technica");
+        assert_eq!(found[1].site, "https://arstechnica.com/");
     }
 
     #[test]
     fn a_summary_says_what_the_feed_is_rather_than_repeating_the_site() {
         let found = results(ANSWER.as_bytes()).unwrap();
-        assert_eq!(found[0].summary, "Podcast \u{b7} 1 article");
-        assert_eq!(found[1].summary, "20 articles");
+        assert_eq!(found[1].summary, "Podcast \u{b7} 1 article");
+        assert_eq!(found[0].summary, "20 articles");
     }
 
     #[test]

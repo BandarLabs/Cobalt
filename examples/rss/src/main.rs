@@ -22,6 +22,7 @@
 mod cache;
 mod discover;
 mod feed;
+mod head;
 mod illustrations;
 mod opml;
 mod progress;
@@ -152,10 +153,12 @@ const KEEP_NEWEST: usize = 10;
 /// or when the article is opened.
 const PAGES_PER_REFRESH: usize = 40;
 
-/// Said once, under the teaser, when the page behind it was fetched and held
-/// no more to read than the feed had given: a paywall, a page drawn entirely
-/// by scripts, or a short post the feed carried whole all along.
-const NO_MORE_ON_THE_PAGE: &str = "The page behind this had no more to read than the feed gave.";
+/// Said once, under a teaser whose feed promised more, when the page behind
+/// it was fetched and held no more to read than the feed had given: a
+/// paywall, or a page drawn entirely by scripts. Which one is not known
+/// here, so it says where the rest is rather than why it is missing.
+const NO_MORE_ON_THE_PAGE: &str =
+    "The feed has only the opening of this article. The rest is on the publisher's site.";
 
 /// Said once, under the teaser, when the site refused the page outright.
 const PAGE_REFUSED: &str =
@@ -273,19 +276,29 @@ struct Page {
     /// the page has no more this is kept in its place, as it was before
     /// pages were asked for at all.
     own: Option<String>,
+    /// The article's title, to tell a page that opens with it already.
+    title: String,
+    /// What the article opens with: see [`head`].
+    head: String,
 }
 
 impl Page {
     fn behind(item: &feed::Item, id: String) -> Self {
+        let head = head::head(item, status::now());
         Self {
             id,
             link: item.link.trim().to_owned(),
             floor: whole::article_floor(item),
             promised_more: whole::promises_more(item),
-            own: item
-                .html
-                .contains("<img")
-                .then(|| kobo_html::article::main_content(&item.html)),
+            own: item.html.contains("<img").then(|| {
+                head::headed(
+                    &item.title,
+                    &head,
+                    &kobo_html::article::main_content(&item.html),
+                )
+            }),
+            title: item.title.trim().to_owned(),
+            head,
         }
     }
 }
@@ -994,7 +1007,11 @@ impl Feeds {
                     context,
                     &id,
                     origin,
-                    &kobo_html::article::main_content(&item.html),
+                    &head::headed(
+                        &item.title,
+                        &head::head(item, status::now()),
+                        &kobo_html::article::main_content(&item.html),
+                    ),
                 );
                 continue;
             }
@@ -1160,6 +1177,8 @@ impl Feeds {
         text: String,
         waiting: bool,
     ) {
+        let headed = head::headed(&page.title, &page.head, cut);
+        let cut = headed.as_str();
         // Noted only when it is kept or on its way to being: the words of an
         // article that is not on the reader would make a search promise
         // something that then opens as a teaser.
@@ -1972,7 +1991,11 @@ impl Feeds {
             // link, so the kept copy and this one read the same.
             self.reader.open(
                 context,
-                kobo_doc::html::parse(&kobo_html::article::main_content(&item.html)),
+                kobo_doc::html::parse(&head::headed(
+                    &item.title,
+                    &head::head(&item, status::now()),
+                    &kobo_html::article::main_content(&item.html),
+                )),
                 memory,
             );
             self.illustrations.open(context, &mut self.reader, &origin);
