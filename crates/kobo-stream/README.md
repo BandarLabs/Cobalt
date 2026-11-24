@@ -17,14 +17,15 @@ with `--device READER_IP` or `--reader NAME`, pair the simulator with `--sim`,
 and name the certificate's addresses yourself with `--host ADDRESS`. `kobo
 sidekick init` pairs Paperterm too. `kobo stream monitor` shares `top`.
 
-The reader is given one address for this computer: the first `--host`, or
-else its address on the network it is on. On a computer that is on a
-Tailscale tailnet, the certificate also names its tailnet name and address,
-and `--tailnet` gives the reader the tailnet name instead, which works from
-any network while Tailscale is on at both ends. A session that finds the
-computer at a new local address renews the certificate, keeping every name
-and tailnet address, and speaks up only when the address the reader was
-given is one the computer no longer has.
+The reader is given this computer's address on the network it is on. On a
+computer that is on a Tailscale tailnet, the certificate also names its
+tailnet name and address, and the reader is given the tailnet name second,
+which works from any network while Tailscale is on at both ends; Paperterm
+tries the one that answered last first. `--tailnet` gives the reader the
+tailnet name alone, and `--host` the first host named, alone. A session that
+finds the computer at a new local address renews the certificate, keeping
+every name and tailnet address, and speaks up only when no host the reader
+was given is one the computer still has.
 
 The service uses a per-run random session id, requires the six-character
 pairing code on every route, limits readers to sixteen connections, limits

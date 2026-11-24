@@ -1043,23 +1043,26 @@ pub fn is_tailnet_address(host: &str) -> bool {
 
 /// Remembers which of this computer's hosts the reader was given.
 ///
-/// The certificate can name several hosts and the reader dials one. Without
-/// knowing which, a session that renewed the certificate could only guess
-/// whether the reader was affected, and it guessed aloud every time: a reader
-/// paired by name was told to pair again after a move that had not touched
-/// it. The caller records the host once the pairing is on the reader.
+/// The certificate can name several hosts and the reader dials one or two of
+/// them. Without knowing which, a session that renewed the certificate could
+/// only guess whether the reader was affected, and it guessed aloud every
+/// time: a reader paired by name was told to pair again after a move that
+/// had not touched it. The caller records the hosts once the pairing is on
+/// the reader.
 ///
 /// # Errors
 /// Fails when the record cannot be written.
-pub fn record_paired_host(host: &str) -> Result<(), String> {
+pub fn record_paired_hosts(hosts: &[String]) -> Result<(), String> {
     let directory = identity_dir()?;
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
-    std::fs::write(directory.join(PAIRED_HOST), host.trim())
+    let hosts: Vec<&str> = hosts.iter().map(|host| host.trim()).collect();
+    std::fs::write(directory.join(PAIRED_HOST), hosts.join("\n"))
         .map_err(|error| format!("save the paired address: {error}"))
 }
 
-/// The file holding the host the reader was last given, without a port.
+/// The file holding the hosts the reader was last given, one per line,
+/// without a port.
 const PAIRED_HOST: &str = "paired";
 
 /// Renews the certificate if this computer moved, and returns what the owner
@@ -1079,21 +1082,29 @@ fn check_pairing_is_still_served() -> Result<Option<String>, String> {
 /// What a session says when the reader's pairing no longer reaches it.
 ///
 /// It speaks only about a pairing that has stopped working. A renewal that
-/// leaves the reader's host named is said nothing about, because there is
-/// nothing for the owner to do. When the reader's host is on record and the
-/// certificate no longer names it, that is said at every session until the
-/// reader is paired again, not only at the one that renewed. An identity
-/// older than the record, or a pairing typed on the reader, leaves no record:
-/// then the only evidence is an address the renewal dropped, and the notice
-/// says "if".
+/// leaves one of the reader's hosts named is said nothing about, because
+/// there is nothing for the owner to do: a reader given the local address
+/// and the tailnet name still reaches a computer that has left home by the
+/// name. When the reader's hosts are on record and the certificate names
+/// none of them, that is said at every session until the reader is paired
+/// again, not only at the one that renewed. An identity older than the
+/// record, or a pairing typed on the reader, leaves no record: then the only
+/// evidence is an address the renewal dropped, and the notice says "if".
 fn pairing_notice(paired: Option<&str>, served: &str, renewal: Option<&Renewal>) -> Option<String> {
     if let Some(paired) = paired {
-        if served
+        let paired: Vec<&str> = paired
             .lines()
-            .any(|host| host.trim().eq_ignore_ascii_case(paired))
-        {
+            .map(str::trim)
+            .filter(|host| !host.is_empty())
+            .collect();
+        if paired.iter().any(|paired| {
+            served
+                .lines()
+                .any(|host| host.trim().eq_ignore_ascii_case(paired))
+        }) {
             return None;
         }
+        let paired = paired.join(" and ");
         return Some(format!(
             "The reader was paired with this computer at {paired}, and this computer no longer answers there.\n\
              Run kobo stream init to pair the reader again."
@@ -1640,6 +1651,32 @@ mod tests {
                 "{paired} is still named, and the owner was told to pair again"
             );
         }
+    }
+
+    #[test]
+    fn a_reader_given_the_local_address_and_the_tailnet_name_is_not_told_to_pair_after_a_move() {
+        let renewal = super::hosts_after_move("192.168.1.20\nstudio.example.ts.net", "10.0.0.7")
+            .expect("a new address");
+        let served = renewal.hosts.join("\n");
+        assert_eq!(
+            super::pairing_notice(
+                Some("192.168.1.20\nstudio.example.ts.net"),
+                &served,
+                Some(&renewal)
+            ),
+            None,
+            "the reader still reaches this computer by its tailnet name"
+        );
+        let gone = super::pairing_notice(
+            Some("192.168.1.20\nstudio.example.ts.net"),
+            "10.0.0.7",
+            None,
+        )
+        .expect("neither host is served");
+        assert!(
+            gone.contains("at 192.168.1.20 and studio.example.ts.net,"),
+            "{gone}"
+        );
     }
 
     #[test]
