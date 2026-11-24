@@ -206,6 +206,12 @@ for app in $APPS; do
             TMPDIR="$store" "$KOBO" vault init --sim >/dev/null
             TMPDIR="$store" "$KOBO" vault push "$PWD/scripts/fixtures/vault" --sim >/dev/null
             ;;
+        launcher)
+            # Filmed as a reader whose owner has read the What's new notes,
+            # or every take would open on the sheet once the workspace
+            # version is the one the notes are for.
+            python3 "$PWD/scripts/sim-notes-read.py" "$store"
+            ;;
     esac
     case "$app" in
         fanshelf) (cd "$directory" && TMPDIR="$store" FANSHELF_DEMO=1 exec "$KOBO" dev "$ADDRESS") > "$log" 2>&1 & ;;

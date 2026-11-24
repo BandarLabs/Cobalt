@@ -67,13 +67,55 @@ same steps. On the computer:
 
 If `init` cannot reach the reader, it prints an address and a six-character
 code to enter in Paperterm. The default port is 9332, and `kobo stream
-pairing` shows them again. When the computer's address changes, the next
-session renews its certificate for the new address; run `kobo stream init`
+pairing` shows them again. When the computer's address on your network
+changes, the next session renews its certificate for the new address and
+says so if the reader was paired with the old one; run `kobo stream init`
 again to update the reader. `kobo stream demo` is a connection check that
 runs no commands.
 
 Until the computer has answered once, Paperterm says **Not connected yet**
 and what to run, rather than that a connection was lost.
+
+## From anywhere
+
+Paired as above, the reader reaches the computer at its address on your own
+network, so the two have to be on the same Wi-Fi. With
+[Tailscale](../tailscale/) on both, Paperterm also works with the computer at
+home and the reader on another network.
+
+1. Put the reader on your tailnet with the Tailscale app, then save the
+   tailnet address its screen shows, so the computer finds the reader on any
+   network:
+
+   ```sh
+   kobo pair kobo --device 100.64.0.7
+   ```
+
+2. Pair again, giving the reader the computer's tailnet name:
+
+   ```sh
+   kobo stream init --tailnet
+   ```
+
+3. Share a terminal and leave it open, then open Paperterm on the reader.
+
+   ```sh
+   kobo stream terminal
+   ```
+
+The reader keeps one address for the computer. Paired with the tailnet name,
+Paperterm works from any network, your own included, and only while Tailscale
+is on at both ends: on the computer, and the switch in the reader's Tailscale
+app. `kobo stream init` without `--tailnet` goes back to the address on your
+own network, which needs no Tailscale and works on that network only.
+`kobo sidekick init --tailnet` pairs Sidekick, Deck and Books the same way.
+
+A computer on a tailnet has its tailnet name and address in its certificate
+whichever way the reader is paired, and they stay there when the computer
+moves between networks. To name other hosts yourself, pass `--host ADDRESS`
+once for each; the reader is given the first.
+
+No reader has run Paperterm from another network yet.
 
 ## Sharing a session
 

@@ -14,8 +14,17 @@ kobo stream --interactive -- /bin/sh    # or share a command of your choice
 `stream init` installs the trust root and writes Paperterm's pairing onto the
 saved reader over SSH, so nothing is typed on the reader. Name another reader
 with `--device READER_IP` or `--reader NAME`, pair the simulator with `--sim`,
-and add certificate addresses with `--host ADDRESS`. `kobo sidekick init`
-pairs Paperterm too. `kobo stream monitor` shares `top`.
+and name the certificate's addresses yourself with `--host ADDRESS`. `kobo
+sidekick init` pairs Paperterm too. `kobo stream monitor` shares `top`.
+
+The reader is given one address for this computer: the first `--host`, or
+else its address on the network it is on. On a computer that is on a
+Tailscale tailnet, the certificate also names its tailnet name and address,
+and `--tailnet` gives the reader the tailnet name instead, which works from
+any network while Tailscale is on at both ends. A session that finds the
+computer at a new local address renews the certificate, keeping every name
+and tailnet address, and speaks up only when the address the reader was
+given is one the computer no longer has.
 
 The service uses a per-run random session id, requires the six-character
 pairing code on every route, limits readers to sixteen connections, limits
@@ -56,7 +65,8 @@ Open Paperterm and connect to this computer. Type a short message on the reader
 and press Enter; both screens show it. Type another message on the computer to
 check the other direction. The check echoes text and never treats it as a shell
 command. It is included in the CLI, so no Python, sample project or shell script
-is needed. Keep the computer awake and on the same network.
+is needed. Keep the computer awake and where the reader can reach it: on the
+same Wi-Fi, or on the same tailnet with the reader's Tailscale switch on.
 
 Type `exit` on either screen to finish. The final screen stays available for
 one minute, then sharing ends. `--port PORT` is available when the default port
