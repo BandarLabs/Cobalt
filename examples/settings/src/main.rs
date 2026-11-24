@@ -11,6 +11,10 @@ use kobo_sdk::{
 };
 use std::process::ExitCode;
 
+mod release_notes;
+
+use release_notes::Note;
+
 const BLUETOOTH: &str = "bluetooth";
 const WIFI: &str = "wifi";
 const BATTERY: &str = "battery";
@@ -103,6 +107,20 @@ const fn release_window(channel: UpdateChannel) -> u32 {
         UpdateChannel::Beta => 4 * 1024 * 1024,
     }
 }
+
+/// How one change in a release is set on the update screen: the same way
+/// the launcher's What's new sheet sets the changes it shows after the
+/// update, so the list read before installing and the one read after it
+/// look like one list. Lines after the first stand in from the margin, so
+/// the bold leads run down the edge by themselves and the eye finds where
+/// each change starts without a dash or a dot in front of it, and a quarter
+/// of a line after each keeps two changes from reading as one.
+const CHANGE: kobo_sdk::ParagraphPresentation = kobo_sdk::ParagraphPresentation {
+    start_indent_em: 100,
+    first_line_indent_em: -100,
+    margin_after_em: 25,
+    ..kobo_sdk::ParagraphPresentation::PLAIN
+};
 
 /// The lines under the two automatic-update switches: what happens now with
 /// each one as it is, rather than what tapping it would do.
@@ -447,6 +465,9 @@ enum UpdateFlow {
         version: String,
         url: String,
         sha256: String,
+        /// What the release's description says is new, shown above the
+        /// button that installs it. Empty when it says nothing readable.
+        notes: Vec<Note>,
     },
     Installing {
         version: String,
@@ -621,6 +642,29 @@ struct Settings {
     zone_trouble: Option<String>,
 }
 
+/// `screen` with what is new in `version` under one heading, each change
+/// set as the launcher's What's new sheet sets it, or untouched when there
+/// is nothing to list.
+fn changes(mut screen: ScreenBuilder, version: &str, notes: &[Note]) -> ScreenBuilder {
+    if notes.is_empty() {
+        return screen;
+    }
+    screen = screen.section(format!("What's new in {version}"));
+    for note in notes {
+        let (text, lead) = note.set();
+        let lead = kobo_sdk::RichTextSpan {
+            start: 0,
+            end: lead,
+            presentation: kobo_sdk::TextPresentation {
+                strong: true,
+                ..kobo_sdk::TextPresentation::default()
+            },
+        };
+        screen = screen.rich_text(text, vec![lead], CHANGE);
+    }
+    screen
+}
+
 impl Settings {
     fn show(&mut self, context: &mut Context) {
         self.keep_scanning(context);
@@ -638,7 +682,7 @@ impl Settings {
             View::Battery => self.battery(),
             View::Light => self.light_for(context),
             View::About => self.about_for(context),
-            View::Update => self.update(),
+            View::Update => self.update_for(context),
             View::UpdateOptions => self.update_options_for(context),
             View::UpdateChannelConfirm => self.update_channel_confirmation_for(context),
             View::TimeZone => self.time_zones(),
@@ -1066,7 +1110,41 @@ impl Settings {
         }
     }
 
+    /// The update screen, holding as many of a ready release's changes as
+    /// the panel has room for at this text size.
+    ///
+    /// Install is the one thing this screen is for, so it is never what
+    /// gives way. Changes are given up from the last, whole, until the rest
+    /// of the screen stands on the panel; when not even the first fits, the
+    /// heading over them goes too and the screen is the one drawn before
+    /// releases had notes, whatever room that one has. Nothing else on the
+    /// screen is given up for a change: the notes can add to the screen,
+    /// never take a word of it away.
+    fn update_for(&self, context: &Context) -> Screen {
+        let metrics = context.metrics();
+        let written = match &self.update {
+            UpdateFlow::Ready { notes, .. } => notes.len(),
+            _ => 0,
+        };
+        (1..=written)
+            .rev()
+            .map(|shown| self.update_shaped(shown))
+            .find(|screen| {
+                !screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| self.update_shaped(0))
+    }
+
+    #[cfg(test)]
     fn update(&self) -> Screen {
+        self.update_for(&Context::default())
+    }
+
+    /// The update screen with the first `shown` of a ready release's
+    /// changes, and none of the rest.
+    fn update_shaped(&self, shown: usize) -> Screen {
         let mut screen = ScreenBuilder::new("settings-update")
             .top_bar("Software update")
             .owns_back(true);
@@ -1108,13 +1186,17 @@ impl Settings {
                     .text(format!("{latest} is the newest release on this channel. This reader is already running a newer version, so nothing is downgraded."))
                     .button(CHECK, "Check again");
             }
-            UpdateFlow::Ready { version, .. } => {
+            UpdateFlow::Ready { version, notes, .. } => {
                 screen = screen
                     .banner(BannerLevel::Info, format!("Cobalt {version} is available."))
                     .facts([("Installed", VERSION), ("Available", version.as_str())])
                     .text(
                         "The download is checked before it is installed. The version you have now is kept in case the update has to be undone.",
-                    )
+                    );
+                // Under the facts and the promise about the download, so the
+                // changes are the last thing read before the button, as an
+                // update on a phone lists them above the one way to install.
+                screen = changes(screen, version, &notes[..shown.min(notes.len())])
                     .primary_button(INSTALL, "Install update");
             }
             UpdateFlow::Installing { version } => {
@@ -2273,6 +2355,7 @@ impl Settings {
             version,
             url,
             sha256,
+            ..
         } = self.update.clone()
         else {
             return;
@@ -2346,6 +2429,7 @@ impl Settings {
                         version: release.version,
                         url: release.archive,
                         sha256,
+                        notes: release.notes,
                     },
                     None => UpdateFlow::Failed(
                         "The update could not be verified, so it was not installed. Try again later."
@@ -3255,9 +3339,26 @@ struct Release {
     manifest: String,
     /// Where the manifest's raw detached Ed25519 signature is.
     signature: String,
+    /// What the release's description says it changes. Nothing here is
+    /// signed or checked, and nothing depends on it: it is words for the
+    /// owner to read before choosing, and an empty list changes nothing.
+    notes: Vec<Note>,
 }
 
 impl Release {
+    /// The release with the changes its description lists, read from the
+    /// feed entry it came from.
+    fn described_by(self, value: &Value) -> Self {
+        Self {
+            notes: value
+                .get("body")
+                .and_then(Value::as_str)
+                .map(release_notes::parse)
+                .unwrap_or_default(),
+            ..self
+        }
+    }
+
     /// Strictly newer, so the same version and anything unparseable both
     /// answer no and nothing is offered.
     fn newer_than(&self, installed: &str) -> bool {
@@ -3303,14 +3404,24 @@ fn latest_release(body: &str, channel: UpdateChannel) -> Result<Release, String>
     })?;
     match channel {
         UpdateChannel::Stable => stable_release(&value),
+        // The notes are those of the one release that would be installed,
+        // read after it is chosen. A reader several betas behind is offered
+        // the newest, and the page says what is new in that version only:
+        // the changes of the betas it skips were each written against the
+        // one before, and laid end to end they would describe features
+        // twice, half finished and then finished, under a version number
+        // that is not the one in any of them.
         UpdateChannel::Beta => value
             .as_array()
             .and_then(|releases| {
                 releases
                     .iter()
-                    .filter_map(|release| release_value(release, "beta-v", true))
-                    .max_by_key(|release| numbers(&release.version))
+                    .filter_map(|entry| {
+                        release_value(entry, "beta-v", true).map(|release| (release, entry))
+                    })
+                    .max_by_key(|(release, _)| numbers(&release.version))
             })
+            .map(|(release, entry)| release.described_by(entry))
             .ok_or_else(|| "There is no beta update for this reader yet.".to_owned()),
     }
 }
@@ -3350,7 +3461,9 @@ fn stable_release(value: &Value) -> Result<Release, String> {
         archive,
         manifest,
         signature,
-    })
+        notes: Vec::new(),
+    }
+    .described_by(value))
 }
 
 fn release_value(value: &Value, tag_prefix: &str, prerelease: bool) -> Option<Release> {
@@ -3384,6 +3497,7 @@ fn release_value(value: &Value, tag_prefix: &str, prerelease: bool) -> Option<Re
         manifest: url_of("cobalt-host-manifest.txt")?,
         signature: url_of("cobalt-host-manifest.txt.sig")?,
         version,
+        notes: Vec::new(),
     })
 }
 
@@ -4477,6 +4591,7 @@ mod tests {
             archive: String::new(),
             manifest: String::new(),
             signature: String::new(),
+            notes: Vec::new(),
         };
         assert!(
             !strange.newer_than(super::VERSION),
@@ -4487,6 +4602,7 @@ mod tests {
             archive: String::new(),
             manifest: String::new(),
             signature: String::new(),
+            notes: Vec::new(),
         };
         assert!(older.older_than(super::VERSION));
     }
@@ -4545,6 +4661,7 @@ mod tests {
                 version: "9.9.9".to_owned(),
                 url: "https://example.test/KoboRoot.tgz".to_owned(),
                 sha256: "a".repeat(64),
+                notes: Vec::new(),
             },
             super::UpdateFlow::Installing {
                 version: "9.9.9".to_owned(),
@@ -4576,6 +4693,7 @@ mod tests {
                 version: "9.9.9".to_owned(),
                 url: "https://example.test/KoboRoot.tgz".to_owned(),
                 sha256: "a".repeat(64),
+                notes: Vec::new(),
             },
             ..Settings::default()
         };
@@ -4612,6 +4730,7 @@ mod tests {
                 version: "9.9.9".to_owned(),
                 url: "https://example.test/KoboRoot.tgz".to_owned(),
                 sha256: "a".repeat(64),
+                notes: Vec::new(),
             },
             ..Settings::default()
         }
@@ -4640,6 +4759,311 @@ mod tests {
                 ..
             } if *action == action_id(super::INSTALL) && label == "Install update"
         )));
+    }
+
+    /// Settings with a verified release ready to install, whose description
+    /// listed `notes`.
+    fn ready_with(notes: Vec<super::Note>) -> Settings {
+        Settings {
+            view: View::Update,
+            update: super::UpdateFlow::Ready {
+                version: "9.9.9".to_owned(),
+                url: "https://example.test/KoboRoot.tgz".to_owned(),
+                sha256: "a".repeat(64),
+                notes,
+            },
+            ..Settings::default()
+        }
+    }
+
+    fn notes_0_3_41() -> Vec<super::Note> {
+        super::release_notes::parse(super::release_notes::RELEASE_0_3_41)
+    }
+
+    /// The ready screen as it was drawn before releases had notes, built
+    /// the way it was built then.
+    fn ready_before_notes() -> kobo_sdk::Screen {
+        kobo_sdk::ScreenBuilder::new("settings-update")
+            .top_bar("Software update")
+            .owns_back(true)
+            .banner(BannerLevel::Info, "Cobalt 9.9.9 is available.")
+            .facts([("Installed", VERSION), ("Available", "9.9.9")])
+            .text("The download is checked before it is installed. The version you have now is kept in case the update has to be undone.")
+            .primary_button(super::INSTALL, "Install update")
+            .build()
+    }
+
+    /// The changes a screen sets, in order, as their text.
+    fn changes_on(screen: &kobo_sdk::Screen) -> Vec<String> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::RichText { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Whether every change on the screen is drawn to its last letter.
+    /// Letters, not lines: a line the renderer set is trimmed of the space
+    /// it broke at, and the bold lead is a run of its own.
+    fn changes_drawn_whole(screen: &kobo_sdk::Screen, metrics: &kobo_sdk::DisplayMetrics) -> bool {
+        let layout = screen.layout_with(metrics, &Chrome::measuring(true));
+        let letters = |text: &str| {
+            text.chars()
+                .filter(|letter| !letter.is_whitespace())
+                .count()
+        };
+        screen.nodes.iter().all(|node| match node {
+            Node::RichText { id, text, .. } => {
+                let drawn: usize = layout
+                    .nodes
+                    .iter()
+                    .filter(|placed| placed.id == *id)
+                    .flat_map(|placed| &placed.text_lines)
+                    .map(|line| letters(line))
+                    .sum();
+                drawn == letters(text)
+            }
+            _ => true,
+        })
+    }
+
+    #[test]
+    fn an_update_with_notes_lists_them_under_one_heading_above_the_install_button() {
+        let notes = notes_0_3_41();
+        let screen = ready_with(notes.clone()).update();
+        let changes = changes_on(&screen);
+        assert!(
+            !changes.is_empty(),
+            "the default size has room for a change"
+        );
+        // The first ones, in the order the release lists them.
+        for (change, note) in changes.iter().zip(&notes) {
+            assert_eq!(*change, note.set().0);
+        }
+        // One heading, naming the version, after the facts and the sentence
+        // about the download, and the button last.
+        let sections: Vec<&str> = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Section { title, .. } => Some(title.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sections, ["What's new in 9.9.9"]);
+        let heading = screen
+            .nodes
+            .iter()
+            .position(|node| matches!(node, Node::Section { .. }))
+            .expect("a heading");
+        assert!(matches!(screen.nodes[heading - 1], Node::Text { .. }));
+        assert!(matches!(screen.nodes[heading - 2], Node::Facts { .. }));
+        assert!(matches!(
+            screen.nodes.last(),
+            Some(Node::Button {
+                action,
+                emphasis: Emphasis::Primary,
+                ..
+            }) if *action == action_id(super::INSTALL)
+        ));
+        // Each lead is bold, full stop included, and nothing else is.
+        for node in &screen.nodes {
+            if let Node::RichText { text, spans, .. } = node {
+                assert_eq!(spans.len(), 1, "{text}");
+                assert!(spans[0].presentation.strong);
+                assert_eq!(spans[0].start, 0);
+                assert!(text[..spans[0].end].ends_with('.'), "{text}");
+                assert!(!text[..spans[0].end - 1].contains('.'), "{text}");
+            }
+        }
+        assert!(changes_drawn_whole(&screen, &CLARA_BW_METRICS));
+    }
+
+    #[test]
+    fn an_update_whose_release_lists_no_changes_is_drawn_exactly_as_before_notes_existed() {
+        let mut every = every_size_and_pose();
+        every.push(kobo_sdk::DisplayMetrics {
+            width: 758,
+            height: 1024,
+            pixels_per_inch: 212,
+            ..CLARA_BW_METRICS
+        });
+        for metrics in every {
+            let runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+            assert_eq!(
+                ready_with(Vec::new()).update_for(&runner.context()),
+                ready_before_notes(),
+                "{metrics:?}"
+            );
+        }
+    }
+
+    /// Five changes short enough that a six inch panel at the largest text
+    /// has room for some of them and not all.
+    fn short_notes() -> Vec<super::Note> {
+        super::release_notes::parse(
+            "- **Light in Settings.** Set the front light from the Light row under Battery.
+- **A calmer top bar.** The bar is paper on every reader.
+- **Larger readers.** Everything is a little bigger on 7 inch and 10 inch readers.
+- **What's new.** Cobalt shows these changes once after an update.
+- **Tailscale traffic.** The Tailscale screen says how much data was sent.
+",
+        )
+    }
+
+    /// Lays out the ready screen for a release listing `notes`, checks what
+    /// every size and panel must hold to, and says how many changes it kept.
+    ///
+    /// Install is drawn. The changes kept are the first ones, in order, and
+    /// each is drawn to its last letter. A screen that kept any fits the
+    /// panel; one that kept none is the screen from before notes, node for
+    /// node, which on a Nia at the two largest sizes already lost the end
+    /// of its sentence about the download before this change.
+    fn ready_page_holds(notes: &[super::Note], metrics: kobo_sdk::DisplayMetrics) -> usize {
+        let runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+        let screen = ready_with(notes.to_vec()).update_for(&runner.context());
+        let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+        assert!(
+            layout.rect_of_action(action_id(super::INSTALL)).is_some(),
+            "Install is drawn on {metrics:?}"
+        );
+        let changes = changes_on(&screen);
+        let first: Vec<String> = notes
+            .iter()
+            .take(changes.len())
+            .map(|note| note.set().0)
+            .collect();
+        assert_eq!(changes, first, "the first ones are kept on {metrics:?}");
+        if changes.is_empty() {
+            assert_eq!(screen, ready_before_notes(), "{metrics:?}");
+        } else {
+            fits(&screen, metrics, "ready with notes");
+            assert!(changes_drawn_whole(&screen, &metrics), "{metrics:?}");
+        }
+        changes.len()
+    }
+
+    #[test]
+    fn at_the_largest_text_on_the_smallest_panels_install_stays_and_changes_go_from_the_last() {
+        let mut largest = CLARA_BW_METRICS;
+        while let Some(larger) = largest.text_scale.larger() {
+            largest.text_scale = larger;
+        }
+        let nia = kobo_sdk::DisplayMetrics {
+            width: 758,
+            height: 1024,
+            pixels_per_inch: 212,
+            ..largest
+        };
+        let (written, short) = (notes_0_3_41(), short_notes());
+        assert_eq!(short.len(), 5);
+        let mut kept_some_of_the_short_ones = false;
+        for upright in [largest, nia] {
+            let turned = kobo_sdk::DisplayMetrics {
+                width: upright.height,
+                height: upright.width,
+                ..upright
+            };
+            for metrics in [upright, turned] {
+                assert!(
+                    ready_page_holds(&written, metrics) < written.len(),
+                    "the largest text gives changes up on {metrics:?}"
+                );
+                let kept = ready_page_holds(&short, metrics);
+                assert!(kept < short.len(), "{metrics:?}");
+                kept_some_of_the_short_ones |= kept > 0;
+            }
+        }
+        // Giving up is from the end and stops where the panel has room, so
+        // somewhere among these the screen holds a change and a button.
+        assert!(kept_some_of_the_short_ones);
+    }
+
+    #[test]
+    fn at_every_size_on_every_panel_install_is_drawn_and_every_change_shown_is_whole() {
+        let (written, short) = (notes_0_3_41(), short_notes());
+        let mut smallest = CLARA_BW_METRICS.text_scale;
+        while let Some(smaller) = smallest.smaller() {
+            smallest = smaller;
+        }
+        let panels = [(1072, 1448, 300), (758, 1024, 212), (1404, 1872, 227)];
+        for text_scale in std::iter::successors(Some(smallest), |scale| scale.larger()) {
+            for (width, height, pixels_per_inch) in panels {
+                for (width, height) in [(width, height), (height, width)] {
+                    let metrics = kobo_sdk::DisplayMetrics {
+                        width,
+                        height,
+                        pixels_per_inch,
+                        text_scale,
+                    };
+                    ready_page_holds(&written, metrics);
+                    ready_page_holds(&short, metrics);
+                }
+            }
+        }
+    }
+
+    /// A feed entry for a beta whose description lists one change.
+    fn beta_entry(version: &str, change: &str) -> String {
+        format!(
+            r#"{{"tag_name":"beta-v{version}","draft":false,"prerelease":true,
+              "body":"- **{change}.** It changed in {version}.\n\nBuilt from `beta`.",
+              "assets":[
+                {{"name":"cobalt-{version}-KoboRoot.tgz","browser_download_url":"https://example.test/{version}.tgz"}},
+                {{"name":"cobalt-host-manifest.txt","browser_download_url":"https://example.test/{version}.manifest"}},
+                {{"name":"cobalt-host-manifest.txt.sig","browser_download_url":"https://example.test/{version}.sig"}}]}}"#
+        )
+    }
+
+    #[test]
+    fn a_reader_several_betas_behind_is_shown_what_is_new_in_the_one_it_would_install() {
+        let feed = format!(
+            "[{},{},{}]",
+            beta_entry("9.8.0", "Older"),
+            beta_entry("9.9.0", "Newest"),
+            beta_entry("9.7.0", "Oldest"),
+        );
+        let release = super::latest_release(&feed, UpdateChannel::Beta).expect("a beta");
+        assert_eq!(release.version, "9.9.0");
+        assert_eq!(
+            release.notes,
+            [super::Note {
+                lead: "Newest".to_owned(),
+                detail: "It changed in 9.9.0.".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_stable_release_carries_its_changes_and_boilerplate_carries_none() {
+        let with_body = |body: &str| {
+            let release = release_json("9.9.9", true);
+            let described = format!(r#"{{"body":{body},{}"#, &release[1..]);
+            super::latest_release(&described, UpdateChannel::Stable)
+                .expect("a release")
+                .notes
+        };
+        assert_eq!(
+            with_body(r#""- **Light.** It is brighter.""#),
+            [super::Note {
+                lead: "Light".to_owned(),
+                detail: "It is brighter.".to_owned(),
+            }]
+        );
+        assert_eq!(
+            with_body(r#""Promoted verified artifacts from tested beta-v9.9.9.""#),
+            []
+        );
+        assert_eq!(with_body("null"), []);
+        assert!(
+            super::latest_release(&release_json("9.9.9", true), UpdateChannel::Stable)
+                .expect("a release with no body at all")
+                .notes
+                .is_empty()
+        );
     }
 
     #[test]
@@ -4842,6 +5266,121 @@ mod tests {
                 ]
             })
             .collect()
+    }
+
+    /// Names the panel a test process was started to check.
+    const PANEL: &str = "KOBO_SETTINGS_TEST_PANEL";
+
+    /// The panels Cobalt supports, by the geometry that decides what fits:
+    /// the Claras, the 7 inch Libras, the Elipsa 2E and the Nia.
+    const PANELS: [(&str, i32, i32, i32); 4] = [
+        ("clara", 1072, 1448, 300),
+        ("libra", 1264, 1680, 300),
+        ("elipsa", 1404, 1872, 227),
+        ("nia", 758, 1024, 212),
+    ];
+
+    /// Runs the ignored test `test` once for every panel in `PANELS`, each
+    /// in a process of its own.
+    ///
+    /// Type is sized once for a whole process, for the first panel a runner
+    /// is made for, so a loop over panels in one process measures all of
+    /// them in a Clara's type. On a Nia that is two fifths too large, and the
+    /// question here is whether words fit.
+    fn on_every_panel_in_a_process_of_its_own(test: &str) {
+        let tests = std::env::current_exe().expect("the test binary has a path");
+        for (panel, ..) in PANELS {
+            let output = std::process::Command::new(&tests)
+                .args([&format!("tests::{test}"), "--exact", "--ignored"])
+                .env(PANEL, panel)
+                .output()
+                .expect("the test binary runs");
+            let said = String::from_utf8_lossy(&output.stdout);
+            // A name that matches nothing runs nothing and succeeds.
+            assert!(
+                output.status.success() && said.contains("1 passed"),
+                "{panel}:\n{said}"
+            );
+        }
+    }
+
+    /// The panel this process was started for, upright and sideways, at
+    /// every text size: the Clara when it was started for none.
+    fn this_panel_at_every_size() -> Vec<kobo_sdk::DisplayMetrics> {
+        let wanted = std::env::var(PANEL).unwrap_or_else(|_| "clara".to_owned());
+        let (_, width, height, density) = PANELS
+            .into_iter()
+            .find(|(name, ..)| *name == wanted)
+            .expect("the panel is one of PANELS");
+        let mut scale = CLARA_BW_METRICS.text_scale;
+        while let Some(smaller) = scale.smaller() {
+            scale = smaller;
+        }
+        let mut every = Vec::new();
+        loop {
+            let upright = kobo_sdk::DisplayMetrics::for_panel(width, height, density, scale);
+            every.push(upright);
+            every.push(upright.oriented(kobo_sdk::Orientation::Landscape));
+            match scale.larger() {
+                Some(larger) => scale = larger,
+                None => return every,
+            }
+        }
+    }
+
+    #[test]
+    fn every_update_screen_fits_every_panel_at_every_text_size() {
+        on_every_panel_in_a_process_of_its_own(
+            "every_update_screen_fits_this_panel_at_every_text_size",
+        );
+    }
+
+    #[test]
+    #[ignore = "run once for each panel, in a process of its own, by the test above"]
+    fn every_update_screen_fits_this_panel_at_every_text_size() {
+        let notes = super::release_notes::parse(super::release_notes::RELEASE_0_3_41);
+        let flows = [
+            super::UpdateFlow::Idle,
+            super::UpdateFlow::UpToDate {
+                latest: "0.3.41".to_owned(),
+            },
+            super::UpdateFlow::Ahead {
+                latest: "0.3.40".to_owned(),
+            },
+            super::UpdateFlow::Ready {
+                version: "0.3.42".to_owned(),
+                url: "https://example.test/KoboRoot.tgz".to_owned(),
+                sha256: "a".repeat(64),
+                notes: Vec::new(),
+            },
+            super::UpdateFlow::Ready {
+                version: "0.3.42".to_owned(),
+                url: "https://example.test/KoboRoot.tgz".to_owned(),
+                sha256: "a".repeat(64),
+                notes,
+            },
+            super::UpdateFlow::Installing {
+                version: "0.3.42".to_owned(),
+            },
+            super::UpdateFlow::Installed {
+                version: "0.3.42".to_owned(),
+            },
+            super::UpdateFlow::Offline,
+            super::UpdateFlow::Failed("The download did not match its digest.".to_owned()),
+        ];
+        for metrics in this_panel_at_every_size() {
+            let context = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics).context();
+            for update in flows.clone() {
+                let what = format!("{update:?}");
+                let settings = Settings {
+                    update,
+                    auto_update: Some((true, true)),
+                    update_channel: Some(UpdateChannel::Stable),
+                    ..Settings::default()
+                };
+                fits(&settings.update_for(&context), metrics, &what);
+            }
+        }
     }
 
     fn fits(screen: &kobo_sdk::Screen, metrics: kobo_sdk::DisplayMetrics, what: &str) {

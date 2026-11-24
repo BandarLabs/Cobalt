@@ -48,8 +48,9 @@ and where `kobo setup` looks, so a reader picks it up with the install.
 `kobo sidekick init` installs it on a reader set up earlier. On a computer
 that is on a Tailscale tailnet it also passes the computer's tailnet name and
 address as `--host`, so the certificate serves a reader that reaches it over
-the tailnet, and `kobo sidekick init --tailnet` writes the tailnet name onto
-the reader as the address to dial.
+the tailnet, and writes the tailnet name onto the reader after the local
+address, so Sidekick, Deck and Books reach the helper at either.
+`kobo sidekick init --tailnet` writes the tailnet name alone.
 
 ### Choosing an integration
 

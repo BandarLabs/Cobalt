@@ -266,39 +266,42 @@ fn is_host_name(name: &str) -> bool {
         })
 }
 
-/// The hosts one pairing mints a certificate for, and the one it writes onto
+/// The hosts one pairing mints a certificate for, and the ones it writes onto
 /// the reader.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Plan {
     /// Every host the certificate names, in the order given to the mint.
     pub certificate: Vec<String>,
-    /// The single host the reader is told to dial, when one is known.
-    pub written: Option<String>,
+    /// The hosts the reader is told to dial, the one to try first first.
+    /// Empty when no host is known; never more than two.
+    pub written: Vec<String>,
     /// What the tailnet added to the certificate, to say when it is minted.
     pub named: Option<String>,
-    /// Where the written host works, to say once the reader holds it. Only
+    /// Where the written hosts work, to say once the reader holds them. Only
     /// a caller that has delivered the pairing may say it.
     pub reach: Option<String>,
 }
 
 /// Decides both, from what the owner asked for and what this computer has.
 ///
-/// `explicit` is every `--host` given, `local` this computer's address on the
-/// network it is on, and `command` the command being run, for the sentence
-/// that names the other choice.
+/// `explicit` is every `--host` given, and `local` this computer's address on
+/// the network it is on.
 ///
-/// The reader keeps one host per pairing and has no second to fall back on,
-/// so which one is written decides where the pairing works:
+/// Neither host works everywhere. The local address works while the reader
+/// is on the same network as this computer, with nothing else switched on.
+/// The tailnet name works on any network, but only while Tailscale is on at
+/// both ends. So a computer on a tailnet writes both, and each app tries the
+/// one that last answered first and the other when that one is not there:
 ///
-/// * By default it is the first `--host`, or else the local address. That
-///   works whenever the reader is on the same network as this computer, with
-///   nothing else switched on. The tailnet hosts are still named in the
-///   certificate, so choosing the other way later needs no new certificate.
-/// * With `--tailnet` it is the tailnet name. That works on any network,
-///   the home one included, but only while Tailscale is on at both ends.
+/// * By default the reader is given the local address, then the tailnet
+///   name when this computer is on a tailnet. Without a tailnet it is the
+///   local address alone, as it always was.
+/// * With `--tailnet` it is the tailnet name alone, for an owner who wants
+///   the reader to reach this computer only that way.
 ///
 /// `--host` given without `--tailnet` is the owner naming the hosts
-/// themselves: nothing is added to what they named and the tool is not asked.
+/// themselves: the reader is given the first, nothing is added to what they
+/// named, and the tool is not asked.
 ///
 /// # Errors
 /// Fails when `--tailnet` is asked for on a computer that is not on one.
@@ -306,13 +309,12 @@ pub fn plan(
     explicit: &[String],
     local: Option<&str>,
     prefer_tailnet: bool,
-    command: &str,
     source: &dyn StatusSource,
 ) -> Result<Plan, String> {
     if !explicit.is_empty() && !prefer_tailnet {
         return Ok(Plan {
             certificate: explicit.to_vec(),
-            written: explicit.first().cloned(),
+            written: explicit.iter().take(1).cloned().collect(),
             named: None,
             reach: None,
         });
@@ -331,7 +333,7 @@ pub fn plan(
             );
         }
         return Ok(Plan {
-            written: certificate.first().cloned(),
+            written: certificate.iter().take(1).cloned().collect(),
             certificate,
             named: None,
             reach: None,
@@ -356,32 +358,37 @@ pub fn plan(
             listed(&added)
         )
     });
+    let away = tailnet.preferred_host().to_owned();
     // With no address of its own to write, the tailnet host is the only one
     // there is. And when traffic leaves this computer through its tailnet,
-    // the address it finds for itself is already the tailnet one.
+    // the address it finds for itself is already a tailnet one, which a
+    // second tailnet host would add nothing to.
     let written = match usual {
-        Some(usual) if !prefer_tailnet => usual,
-        _ => tailnet.preferred_host().to_owned(),
+        Some(usual) if !prefer_tailnet && !tailnet_hosts.contains(&usual) => vec![usual, away],
+        Some(usual) if !prefer_tailnet => vec![usual],
+        _ => vec![away],
     };
-    let reach = if tailnet_hosts.contains(&written) {
-        let kind = if kobo_stream::is_tailnet_address(&written) {
-            "address"
-        } else {
-            "name"
-        };
-        format!(
-            "The reader reaches this computer at its tailnet {kind}, {written}: from any \
-             network, and only while Tailscale is on here and on the reader."
-        )
-    } else {
-        format!(
-            "The reader reaches this computer at {written}, on this network only. To use it \
-             from any network, pair with the tailnet name: {command} --tailnet"
-        )
+    let reach = match written.as_slice() {
+        [home, away] => format!(
+            "The reader reaches this computer at home on the same Wi-Fi ({home}), and \
+             anywhere while Tailscale is on here and on the reader ({away})."
+        ),
+        [only, ..] => {
+            let kind = if kobo_stream::is_tailnet_address(only) {
+                "address"
+            } else {
+                "name"
+            };
+            format!(
+                "The reader reaches this computer at its tailnet {kind}, {only}: from any \
+                 network, and only while Tailscale is on here and on the reader."
+            )
+        }
+        [] => unreachable!("a tailnet always gives a host"),
     };
     Ok(Plan {
         certificate,
-        written: Some(written),
+        written,
         named,
         reach: Some(reach),
     })
@@ -527,33 +534,18 @@ mod tests {
 
     #[test]
     fn without_a_tailnet_pairing_is_exactly_what_it_was() {
-        let found = plan(
-            &[],
-            Some("192.168.1.20"),
-            false,
-            "kobo stream init",
-            &Says(None),
-        )
-        .expect("plans");
+        let found = plan(&[], Some("192.168.1.20"), false, &Says(None)).expect("plans");
         assert_eq!(found.certificate, ["192.168.1.20"]);
-        assert_eq!(found.written.as_deref(), Some("192.168.1.20"));
+        assert_eq!(found.written, ["192.168.1.20"]);
         assert_eq!((found.named, found.reach), (None, None));
-        let nothing = plan(&[], None, false, "kobo stream init", &Says(None)).expect("plans");
+        let nothing = plan(&[], None, false, &Says(None)).expect("plans");
         assert!(nothing.certificate.is_empty());
-        assert_eq!(nothing.written, None);
+        assert!(nothing.written.is_empty());
     }
 
     #[test]
-    fn on_a_tailnet_the_certificate_gains_the_tailnet_hosts_and_the_reader_keeps_the_local_address()
-    {
-        let found = plan(
-            &[],
-            Some("192.168.1.20"),
-            false,
-            "kobo stream init",
-            &says(CONNECTED),
-        )
-        .expect("plans");
+    fn on_a_tailnet_the_reader_is_given_the_local_address_and_then_the_tailnet_name() {
+        let found = plan(&[], Some("192.168.1.20"), false, &says(CONNECTED)).expect("plans");
         assert_eq!(
             found.certificate,
             [
@@ -563,7 +555,7 @@ mod tests {
                 "100.101.102.103"
             ]
         );
-        assert_eq!(found.written.as_deref(), Some("192.168.1.20"));
+        assert_eq!(found.written, ["192.168.1.20", "studio.example.ts.net"]);
         assert_eq!(
             found.named.as_deref(),
             Some(
@@ -574,25 +566,18 @@ mod tests {
         assert_eq!(
             found.reach.as_deref(),
             Some(
-                "The reader reaches this computer at 192.168.1.20, on this network only. To \
-                 use it from any network, pair with the tailnet name: kobo stream init --tailnet"
+                "The reader reaches this computer at home on the same Wi-Fi (192.168.1.20), and \
+                 anywhere while Tailscale is on here and on the reader (studio.example.ts.net)."
             )
         );
     }
 
     #[test]
-    fn asking_for_the_tailnet_writes_the_tailnet_name_onto_the_reader() {
-        let found = plan(
-            &[],
-            Some("192.168.1.20"),
-            true,
-            "kobo sidekick init",
-            &says(CONNECTED),
-        )
-        .expect("plans");
+    fn asking_for_the_tailnet_writes_the_tailnet_name_alone_onto_the_reader() {
+        let found = plan(&[], Some("192.168.1.20"), true, &says(CONNECTED)).expect("plans");
         assert_eq!(found.certificate[0], "192.168.1.20");
         assert!(found.certificate.contains(&"100.101.102.103".to_owned()));
-        assert_eq!(found.written.as_deref(), Some("studio.example.ts.net"));
+        assert_eq!(found.written, ["studio.example.ts.net"]);
         assert_eq!(
             found.reach.as_deref(),
             Some(
@@ -605,7 +590,7 @@ mod tests {
     #[test]
     fn asking_for_the_tailnet_on_a_computer_without_one_is_refused() {
         for source in [Says(None), says(r#"{"BackendState":"Stopped"}"#)] {
-            let error = plan(&[], Some("192.168.1.20"), true, "kobo stream init", &source)
+            let error = plan(&[], Some("192.168.1.20"), true, &source)
                 .expect_err("there is no tailnet name to write");
             assert!(error.contains("not on a tailnet"), "{error}");
             assert!(error.contains("Turn Tailscale on"), "{error}");
@@ -622,16 +607,13 @@ mod tests {
             }
         }
         let named = words(&["studio.local", "10.0.0.4"]);
-        let found = plan(
-            &named,
-            Some("192.168.1.20"),
-            false,
-            "kobo stream init",
-            &NeverAsked,
-        )
-        .expect("plans");
+        let found = plan(&named, Some("192.168.1.20"), false, &NeverAsked).expect("plans");
         assert_eq!(found.certificate, named);
-        assert_eq!(found.written.as_deref(), Some("studio.local"));
+        assert_eq!(
+            found.written,
+            ["studio.local"],
+            "the first, as before, and nothing more"
+        );
         assert_eq!((found.named, found.reach), (None, None));
     }
 
@@ -641,7 +623,6 @@ mod tests {
             &words(&["studio.local"]),
             Some("192.168.1.20"),
             true,
-            "kobo stream init",
             &says(CONNECTED),
         )
         .expect("plans");
@@ -654,7 +635,7 @@ mod tests {
                 "100.101.102.103"
             ]
         );
-        assert_eq!(found.written.as_deref(), Some("studio.example.ts.net"));
+        assert_eq!(found.written, ["studio.example.ts.net"]);
     }
 
     #[test]
@@ -662,19 +643,16 @@ mod tests {
         // With traffic leaving through the tailnet, the address this computer
         // finds for itself is the tailnet one. It is written as it always
         // was, and described as what it is.
-        let found = plan(
-            &[],
-            Some("100.101.102.103"),
-            false,
-            "kobo stream init",
-            &says(CONNECTED),
-        )
-        .expect("plans");
+        let found = plan(&[], Some("100.101.102.103"), false, &says(CONNECTED)).expect("plans");
         assert_eq!(
             found.certificate,
             ["100.101.102.103", "studio.example.ts.net", "studio"]
         );
-        assert_eq!(found.written.as_deref(), Some("100.101.102.103"));
+        assert_eq!(
+            found.written,
+            ["100.101.102.103"],
+            "a second tailnet host would need Tailscale just the same"
+        );
         let reach = found.reach.expect("says where it works");
         assert!(
             reach.contains("its tailnet address, 100.101.102.103"),
@@ -685,11 +663,18 @@ mod tests {
 
     #[test]
     fn with_no_address_of_its_own_the_reader_is_given_the_tailnet_name() {
-        let found = plan(&[], None, false, "kobo stream init", &says(CONNECTED)).expect("plans");
+        let found = plan(&[], None, false, &says(CONNECTED)).expect("plans");
         assert_eq!(
             found.certificate,
             ["studio.example.ts.net", "studio", "100.101.102.103"]
         );
-        assert_eq!(found.written.as_deref(), Some("studio.example.ts.net"));
+        assert_eq!(found.written, ["studio.example.ts.net"]);
+    }
+
+    #[test]
+    fn a_tailnet_without_a_name_is_written_second_by_its_address() {
+        let status = CONNECTED.replace("studio.example.ts.net.", "");
+        let found = plan(&[], Some("192.168.1.20"), false, &says(&status)).expect("plans");
+        assert_eq!(found.written, ["192.168.1.20", "100.101.102.103"]);
     }
 }

@@ -55,6 +55,10 @@ pub fn part_of(key: &str) -> Option<usize> {
 /// Store key the computer writes the pairing under: `address|code`.
 pub const PAIRING: &str = "computer";
 
+/// Store key the computer writes every host it answers at under, beside
+/// [`PAIRING`], so a Books older than this one reads that as it always did.
+pub const HOSTS: &str = kobo_dial::HOSTS_KEY;
+
 /// Whether a library identifier names a delivered article: an EPUB directly
 /// in the folder, which is all the computer ever writes there.
 #[must_use]
@@ -80,6 +84,11 @@ pub struct State {
     pub parts_stored: usize,
     /// The computer Sync asks: its address and pairing code.
     pub computer: Option<(String, String)>,
+    /// Every host that computer answers at, the one to ask now first.
+    pub hosts: kobo_dial::Hosts,
+    /// The hosts record as the store last gave it, kept until the pairing it
+    /// belongs beside has been read.
+    pub hosts_record: Option<Vec<u8>>,
     /// The request Sync has out, and whether it is the quiet one.
     pub syncing: Option<(kobo_sdk::TaskId, bool)>,
     /// When the computer was last asked, in milliseconds since 1970.
@@ -199,30 +208,67 @@ pub fn order(kept: &Kept, title: &str) -> (bool, std::cmp::Reverse<u64>, String)
     )
 }
 
+impl State {
+    /// Keeps the hosts record until the pairing it belongs beside is read.
+    pub fn hosts_loaded(&mut self, result: kobo_sdk::StoreResult) {
+        if let kobo_sdk::StoreResult::Loaded { value, .. } = result {
+            self.hosts_record = value;
+        }
+    }
+
+    /// Reads the hosts of the computer just paired, from its pairing and
+    /// the hosts record beside it.
+    ///
+    /// Both are read again each time Books comes back. The same hosts keep
+    /// the order and the round they already have, so a check out at the
+    /// second host is not sent back to it.
+    pub fn know_hosts(&mut self) {
+        let hosts = self
+            .computer
+            .as_ref()
+            .map_or_else(kobo_dial::Hosts::default, |(paired, _)| {
+                kobo_dial::Hosts::paired(paired, self.hosts_record.as_deref(), address)
+            });
+        let current = self.hosts.all();
+        if hosts.all().len() != current.len()
+            || hosts.all().iter().any(|host| !current.contains(host))
+        {
+            self.hosts = hosts;
+        }
+    }
+}
+
 /// The computer this reader is paired with, from the record the computer
 /// wrote: its address with the helper's port, and the code.
 #[must_use]
 pub fn pairing(raw: &[u8]) -> Option<(String, String)> {
     let text = std::str::from_utf8(raw).ok()?;
     let (address, code) = text.trim().split_once('|')?;
-    let address = address.trim().trim_start_matches("https://");
-    let address = address.trim_end_matches('/');
     let code = code.trim();
+    if code.is_empty() || !code.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some((self::address(address)?, code.to_owned()))
+}
+
+/// One host the computer wrote, with the helper's port when it has none.
+/// The pairing's own host and each line of the hosts record are read alike.
+#[must_use]
+pub fn address(text: &str) -> Option<String> {
+    let address = text.trim().trim_start_matches("https://");
+    let address = address.trim_end_matches('/');
     let sound = !address.is_empty()
-        && !code.is_empty()
         && address.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b':' | b'[' | b']')
-        })
-        && code.bytes().all(|byte| byte.is_ascii_alphanumeric());
+        });
     if !sound {
         return None;
     }
-    let address = if address.contains(':') && !address.ends_with(']') {
+    Some(if address.contains(':') && !address.ends_with(']') {
         address.to_owned()
     } else {
         format!("{address}:9331")
-    };
-    Some((address, code.to_owned()))
+    })
 }
 
 /// What the computer said a sync did.
@@ -480,6 +526,30 @@ mod tests {
         assert_eq!(pairing(b"192.168.1.10:9331"), None);
         assert_eq!(pairing(b"evil.host/x?|abc"), None);
         assert_eq!(pairing(b"host|code with space"), None);
+    }
+
+    #[test]
+    fn the_pairing_an_older_books_reads_is_unchanged_when_there_are_two_hosts() {
+        // The hosts live under their own key, so the pairing an older Books
+        // reads is one host and the code, as it was.
+        assert_eq!(
+            pairing(b"192.168.1.10:9331|abc234"),
+            Some(("192.168.1.10:9331".to_owned(), "abc234".to_owned()))
+        );
+        let hosts = kobo_dial::Hosts::paired(
+            "192.168.1.10:9331",
+            Some(b"192.168.1.10:9331\nstudio.example.ts.net:9331"),
+            address,
+        );
+        assert_eq!(
+            hosts.all(),
+            ["192.168.1.10:9331", "studio.example.ts.net:9331"]
+        );
+        assert_eq!(
+            address("studio.example.ts.net").as_deref(),
+            Some("studio.example.ts.net:9331")
+        );
+        assert_eq!(address("evil.host/x?"), None);
     }
 
     #[test]

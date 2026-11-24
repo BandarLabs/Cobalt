@@ -158,17 +158,17 @@ app already trusts, so nothing is installed on the reader.
 
 Apps that pair with your computer need no certificate from you: Paperterm,
 Sidekick, Deck and the Articles shelf in Books use the one the computer made
-when it was paired. To have them reach the computer over your tailnet, pair
-with its tailnet name. On the computer, with Tailscale on:
+when it was paired. Pair with Tailscale on the computer, and they are given
+both its address on your own network and its tailnet name:
 
 ```sh
-kobo stream init --tailnet     # Paperterm
-kobo sidekick init --tailnet   # Sidekick, Deck, Books and Paperterm
+kobo stream init     # Paperterm
+kobo sidekick init   # Sidekick, Deck, Books and Paperterm
 ```
 
-They then work from any network while Tailscale is on at both ends, and not
-without it. The same commands without `--tailnet` go back to the computer's
-address on your own network.
+They then reach the computer at home on the same Wi-Fi, and anywhere while
+Tailscale is on at both ends. Each tries the one that answered it last first.
+With `--tailnet` they are given the tailnet name alone.
 
 This reaches the computers on your tailnet and nothing behind them. The
 reader does not use a network another device shares, and does not send its

@@ -23,6 +23,9 @@ use model::PAD_COLUMNS;
 use model::{decode, decode_result, pad_cells, Deck, RunResult};
 use std::process::ExitCode;
 const PAIRED: &str = "paired";
+/// Every host the paired computer answers at, saved beside [`PAIRED`] so a
+/// Deck older than this one reads that record as it always did.
+const HOSTS: &str = kobo_dial::HOSTS_KEY;
 const CACHE: &str = "deck-cache";
 
 /// The port `kobo sidekick run` listens on for the reader. Filled in when an
@@ -121,7 +124,14 @@ const STILL_TALKING: &str = "Deck is still waiting on your computer. Tap again i
 const BETWEEN_LOOKS: u32 = 5;
 struct App {
     view: View,
+    /// The helper's address this deck was paired with: the one typed, or the
+    /// first one the computer wrote.
     address: String,
+    /// Every host the paired computer answers at, the one to dial now first.
+    hosts: kobo_dial::Hosts,
+    /// The hosts record as the store last gave it, kept until the pairing it
+    /// belongs beside has been read.
+    hosts_record: Option<Vec<u8>>,
     code: String,
     entry: TextEntry,
     deck: Deck,
@@ -159,6 +169,8 @@ impl Default for App {
         Self {
             view: View::Opening,
             address: String::new(),
+            hosts: kobo_dial::Hosts::default(),
+            hosts_record: None,
             code: String::new(),
             entry: TextEntry::new(),
             deck: Deck::fallback(),
@@ -470,6 +482,38 @@ impl App {
         self.pending = Some(Pending::Wait);
     }
 
+    /// Takes an answer from the host, which is the one to try first from
+    /// now on. The pause between looks is not an answer.
+    fn host_answered(&mut self, cx: &mut Context) {
+        if let Some(record) = self.hosts.answered() {
+            cx.store().save(HOSTS, record);
+        }
+    }
+
+    /// Sends a look that found no computer at this host to the other one,
+    /// straight away, and says whether it did. Only a look: a press is never
+    /// sent twice.
+    fn looked_elsewhere(
+        &mut self,
+        cx: &mut Context,
+        pending: Option<&Pending>,
+        error: TaskError,
+    ) -> bool {
+        if matches!(pending, Some(Pending::Poll)) && self.hosts.failed(error) {
+            self.poll(cx);
+            return true;
+        }
+        false
+    }
+
+    /// The host every request goes to now.
+    fn host(&self) -> &str {
+        match self.hosts.current() {
+            "" => &self.address,
+            host => host,
+        }
+    }
+
     fn poll(&mut self, cx: &mut Context) {
         if self.address == "local" {
             return;
@@ -478,7 +522,9 @@ impl App {
             self.task = cx.spawn(Task::Fetch {
                 url: format!(
                     "https://{}/deck?version={}&token={}",
-                    self.address, self.deck.version, self.code
+                    self.host(),
+                    self.deck.version,
+                    self.code
                 ),
                 offset: 0,
                 max_bytes: 64 * 1024,
@@ -513,7 +559,7 @@ impl App {
         }
         self.drop_outstanding(cx);
         let task = cx.spawn(Task::Post {
-            url: format!("https://{}/deck/press?token={}", self.address, self.code),
+            url: format!("https://{}/deck/press?token={}", self.host(), self.code),
             body: format!("{{\"key\":\"{id}\",\"confirmed\":{confirmed}}}"),
             content_type: "application/json".into(),
             credential: None,
@@ -545,7 +591,8 @@ impl App {
         let task = cx.spawn(Task::Fetch {
             url: format!(
                 "https://{}/deck/result?key={id}&token={}",
-                self.address, self.code
+                self.host(),
+                self.code
             ),
             offset: 0,
             max_bytes: 4096,
@@ -679,6 +726,9 @@ impl App {
             return;
         };
         self.code = code;
+        // A pairing typed here names one host, whatever the computer wrote
+        // before.
+        self.hosts = kobo_dial::Hosts::one(self.address.clone());
         self.entry_error = None;
         self.previous = None;
         self.trouble = None;
@@ -715,7 +765,8 @@ impl App {
                 self.task = cx.spawn(Task::Fetch {
                     url: format!(
                         "https://{}/deck/result?key={watched}&token={}",
-                        self.address, self.code
+                        self.host(),
+                        self.code
                     ),
                     offset: 0,
                     max_bytes: 4096,
@@ -746,12 +797,19 @@ impl App {
 }
 impl KoboApp for App {
     fn on_start(&mut self, cx: &mut Context) {
+        // The hosts first, so they are in hand when the pairing arrives and
+        // its first look goes out.
+        cx.store().load(HOSTS);
         cx.store().load(PAIRED);
         cx.store().load_cached(CACHE);
         self.show(cx);
     }
     fn on_store(&mut self, cx: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
+            if key == HOSTS {
+                self.hosts_record = value;
+                return;
+            }
             if key == PAIRED {
                 // Both halves are trimmed and a bare address gets the port,
                 // so a pairing saved by an older Deck, or written by the
@@ -768,6 +826,11 @@ impl KoboApp for App {
                     })
                     .filter(|(_, code)| !code.is_empty());
                 if let Some((address, code)) = remembered {
+                    self.hosts = kobo_dial::Hosts::paired(
+                        &address,
+                        self.hosts_record.as_deref(),
+                        Self::accept_address,
+                    );
                     self.address = address;
                     self.code = code;
                     self.view = View::Grid;
@@ -795,6 +858,7 @@ impl KoboApp for App {
             // pads come with it: without them a preview opened on an empty
             // grid until Deck was restarted.
             View::Address if self.previous.is_none() && !self.entry.is_open() => {
+                cx.store().load(HOSTS);
                 cx.store().load(PAIRED);
                 cx.store().load_cached(CACHE);
             }
@@ -809,6 +873,9 @@ impl KoboApp for App {
         let pending = self.pending.take();
         match outcome {
             TaskOutcome::Completed(bytes) => {
+                if !matches!(pending, Some(Pending::Wait) | None) {
+                    self.host_answered(cx);
+                }
                 if self.trouble.take().is_some() {
                     self.notice = None;
                 }
@@ -875,6 +942,7 @@ impl KoboApp for App {
                     None => {}
                 }
             }
+            TaskOutcome::Failed(error) if self.looked_elsewhere(cx, pending.as_ref(), error) => {}
             TaskOutcome::Failed(error) => {
                 let trouble = Trouble::of(error);
                 self.trouble = Some(trouble);
@@ -1008,7 +1076,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{summarise, App, Pending, View, BETWEEN_LOOKS, PAIRED};
+    use super::{summarise, App, Pending, View, BETWEEN_LOOKS, HOSTS, PAIRED};
     use crate::model::{decode, RunResult};
     use kobo_sdk::{
         action_id, ActionId, AppRunner, Command, StoreResult, Task, TaskError, TaskId, TaskOutcome,
@@ -1270,6 +1338,128 @@ mod tests {
         assert_eq!(App::accept_address("not an/address"), None);
         assert_eq!(App::accept_code(" ABC234 ").as_deref(), Some("abc234"));
         assert_eq!(App::accept_code("abc"), None);
+    }
+
+    const AT_HOME: &str = "192.168.1.5:9331";
+    const ANYWHERE: &str = "studio.example.ts.net:9331";
+
+    /// Deck opened on what `kobo sidekick init` writes for a computer on a
+    /// tailnet, with `hosts` as the hosts record.
+    fn paired_at_both(hosts: &str) -> AppRunner<App> {
+        let mut runner = AppRunner::new(App::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: HOSTS.into(),
+            value: Some(hosts.as_bytes().to_vec()),
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: PAIRED.into(),
+            value: Some(format!("{AT_HOME}|abc234").into_bytes()),
+        });
+        runner
+    }
+
+    fn looked_at(commands: &[Command]) -> Option<String> {
+        match started(commands) {
+            Some(Task::Fetch { url, .. }) => Some(url),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_computer_not_at_its_first_host_is_looked_for_at_the_other_at_once() {
+        let mut runner = paired_at_both(&format!("{AT_HOME}\n{ANYWHERE}"));
+        assert_eq!(runner.app().host(), AT_HOME);
+        let look = in_flight(&runner).expect("a look");
+        let commands = runner.task_outcome(look, TaskOutcome::Failed(TaskError::Unreachable));
+        let url = looked_at(&commands).expect("the other host is asked, without a pause");
+        assert!(
+            url.starts_with(&format!("https://{ANYWHERE}/deck?")),
+            "{url}"
+        );
+        assert_eq!(runner.app().trouble, None, "nothing is said yet");
+        let look = in_flight(&runner).expect("a look at the other host");
+        let commands =
+            runner.task_outcome(look, TaskOutcome::Completed(LAYOUT.as_bytes().to_vec()));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Save { key, value })
+                if key == HOSTS && value == format!("{ANYWHERE}\n{AT_HOME}").as_bytes()
+        )));
+        // A press goes where the deck was last answered.
+        let commands = runner.action(action_id("press-test"));
+        match started(&commands) {
+            Some(Task::Post { url, .. }) => {
+                assert!(
+                    url.starts_with(&format!("https://{ANYWHERE}/deck/press?")),
+                    "{url}"
+                );
+            }
+            other => panic!("expected the press, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_press_the_computer_did_not_answer_is_never_sent_to_the_other_host() {
+        let mut runner = paired_at_both(&format!("{AT_HOME}\n{ANYWHERE}"));
+        let look = in_flight(&runner).expect("a look");
+        runner.task_outcome(look, TaskOutcome::Completed(LAYOUT.as_bytes().to_vec()));
+        runner.action(action_id("press-test"));
+        let post = in_flight(&runner).expect("the press went out");
+        let commands = runner.task_outcome(post, TaskOutcome::Failed(TaskError::Unreachable));
+        assert_eq!(
+            started(&commands),
+            Some(Task::Sleep {
+                seconds: BETWEEN_LOOKS
+            })
+        );
+    }
+
+    #[test]
+    fn a_refused_code_or_a_slow_computer_is_said_rather_than_taken_elsewhere() {
+        for error in [
+            TaskError::Unauthorized,
+            TaskError::TimedOut,
+            TaskError::Offline,
+        ] {
+            let mut runner = paired_at_both(&format!("{AT_HOME}\n{ANYWHERE}"));
+            let look = in_flight(&runner).expect("a look");
+            let commands = runner.task_outcome(look, TaskOutcome::Failed(error));
+            assert_eq!(
+                started(&commands),
+                Some(Task::Sleep {
+                    seconds: BETWEEN_LOOKS
+                }),
+                "{error:?}"
+            );
+            assert!(runner.app().trouble.is_some(), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn a_pairing_without_a_hosts_record_or_with_another_computers_looks_at_one_host() {
+        for hosts in ["", "10.0.0.4:9331\nother.example.ts.net:9331"] {
+            let mut runner = paired_at_both(hosts);
+            let look = in_flight(&runner).expect("a look");
+            let commands = runner.task_outcome(look, TaskOutcome::Failed(TaskError::Unreachable));
+            assert_eq!(
+                started(&commands),
+                Some(Task::Sleep {
+                    seconds: BETWEEN_LOOKS
+                }),
+                "{hosts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_pairing_an_older_deck_reads_is_unchanged_when_there_are_two_hosts() {
+        // An older Deck reads `address|code` alone and never asks for the
+        // hosts, which live under their own key.
+        let record = format!("{AT_HOME}|abc234");
+        let (address, code) = record.split_once('|').expect("one bar");
+        assert_eq!(App::accept_address(address).as_deref(), Some(AT_HOME));
+        assert_eq!(code.trim(), "abc234");
     }
 
     #[test]

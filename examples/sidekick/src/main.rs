@@ -29,6 +29,10 @@ const TITLE: &str = "Sidekick";
 /// Where the address and code are remembered between sessions.
 const PAIRED: &str = "paired";
 
+/// Every host the paired computer answers at, saved beside [`PAIRED`] so a
+/// Sidekick older than this one reads that record as it always did.
+const HOSTS: &str = kobo_dial::HOSTS_KEY;
+
 const ALLOW: &str = "allow";
 const DENY: &str = "deny";
 const IGNORE: &str = "pass";
@@ -144,8 +148,15 @@ struct Sidekick {
     /// The address as last typed, kept on the pairing screen after a
     /// refusal so it can be corrected rather than typed again.
     draft: String,
-    /// The daemon, as `host:port`.
+    /// The daemon, as `host:port`: the one typed, or the first one the
+    /// computer wrote.
     address: String,
+    /// Every host the daemon's computer answers at, the one to dial now
+    /// first.
+    hosts: kobo_dial::Hosts,
+    /// The hosts record as the store last gave it, kept until the pairing
+    /// it belongs beside has been read.
+    hosts_record: Option<Vec<u8>>,
     /// The pairing code, sent as the token on every request.
     code: String,
     /// The question on the panel, while there is one.
@@ -537,6 +548,14 @@ impl Sidekick {
         line
     }
 
+    /// The host every request goes to now.
+    fn host(&self) -> &str {
+        match self.hosts.current() {
+            "" => &self.address,
+            host => host,
+        }
+    }
+
     /// Starts the next long poll. One in flight at a time, always.
     fn poll(&mut self, context: &mut Context) {
         if self.poll.is_some() {
@@ -544,7 +563,8 @@ impl Sidekick {
         }
         let url = format!(
             "https://{}/pending?token={}&all=true&wait={POLL_WAIT}",
-            self.address, self.code
+            self.host(),
+            self.code
         );
         self.poll = context.spawn(Task::Fetch {
             url,
@@ -614,7 +634,7 @@ impl Sidekick {
             .build()
             .to_json();
         let work = Task::Post {
-            url: format!("https://{}/answer", self.address),
+            url: format!("https://{}/answer", self.host()),
             body,
             content_type: "application/json".to_owned(),
             credential: None,
@@ -648,6 +668,9 @@ impl Sidekick {
         }
         match outcome {
             TaskOutcome::Completed(bytes) => {
+                if let Some(record) = self.hosts.answered() {
+                    context.store().save(HOSTS, record.into_bytes());
+                }
                 let repaint =
                     self.trouble.take().is_some() | (self.connected.replace(true) != Some(true));
                 let asks = read_asks(&bytes);
@@ -687,7 +710,15 @@ impl Sidekick {
                 });
             }
             TaskOutcome::Failed(error) => {
-                let trouble = Some(poll_trouble(error, &self.address));
+                // A daemon that is not at this host may be at the other one,
+                // which is asked straight away and without a word. Only an
+                // answer that was not there at all moves it: see
+                // `kobo_dial::not_there`.
+                if self.hosts.failed(error) {
+                    self.poll(context);
+                    return;
+                }
+                let trouble = Some(poll_trouble(error, self.host()));
                 // Repainted when something changed, not every ten seconds
                 // while the computer stays away.
                 let changed =
@@ -745,15 +776,7 @@ impl Sidekick {
         if typed.is_empty() {
             return None;
         }
-        let address = if typed.contains(':') {
-            typed
-        } else {
-            format!("{typed}:{DEFAULT_PORT}")
-        };
-        let plausible = address
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'));
-        if plausible {
+        if let Some(address) = read_address(&typed) {
             self.trouble = None;
             Some(address)
         } else {
@@ -799,6 +822,9 @@ impl Sidekick {
             }
             Typing::Submitted(code) => {
                 self.code = code;
+                // A pairing typed here names one host, whatever the computer
+                // wrote before.
+                self.hosts = kobo_dial::Hosts::one(self.address.clone());
                 let record = format!("{}\n{}", self.address, self.code);
                 context.store().save(PAIRED, record.into_bytes());
                 self.view = View::Watching;
@@ -874,6 +900,24 @@ fn fitting_prefix(text: &str, mut fits: impl FnMut(&str) -> bool) -> usize {
 /// The generic advice said "The service did not answer. Try again." for a
 /// helper that was not started, a code that was wrong and a reader that had
 /// lost its network alike, and only one of those is fixed by trying again.
+/// An address as the reader would accept it typed, with the daemon's port
+/// when it has none. Also how each host in the hosts record is read.
+fn read_address(typed: &str) -> Option<String> {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        return None;
+    }
+    let address = if typed.contains(':') {
+        typed.to_owned()
+    } else {
+        format!("{typed}:{DEFAULT_PORT}")
+    };
+    address
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'))
+        .then_some(address)
+}
+
 fn poll_trouble(error: TaskError, address: &str) -> String {
     match error {
         TaskError::Unauthorized => "Your computer did not accept this pairing code. Run kobo sidekick init on it, or choose Change pairing.".to_owned(),
@@ -1018,6 +1062,9 @@ fn chosen_action(index: usize) -> String {
 
 impl KoboApp for Sidekick {
     fn on_start(&mut self, context: &mut Context) {
+        // The hosts first, so they are in hand when the pairing arrives and
+        // its first poll goes out.
+        context.store().load(HOSTS);
         context.store().load(PAIRED);
         self.show(context);
     }
@@ -1026,6 +1073,10 @@ impl KoboApp for Sidekick {
         let StoreResult::Loaded { key, value } = result else {
             return;
         };
+        if key == HOSTS {
+            self.hosts_record = value;
+            return;
+        }
         // A first-run pairing screen with nothing typed yet also takes a
         // pairing, because `kobo sidekick init` writes one while it is up.
         let waiting_for_one = self.waiting_for_a_pairing();
@@ -1047,6 +1098,8 @@ impl KoboApp for Sidekick {
             })
             .filter(|(address, code)| !address.is_empty() && !code.is_empty());
         if let Some((address, code)) = remembered {
+            self.hosts =
+                kobo_dial::Hosts::paired(&address, self.hosts_record.as_deref(), read_address);
             self.address = address;
             self.code = code;
             self.view = View::Watching;
@@ -1185,6 +1238,7 @@ impl KoboApp for Sidekick {
             self.poll(context);
         }
         if self.waiting_for_a_pairing() {
+            context.store().load(HOSTS);
             context.store().load(PAIRED);
         }
     }
@@ -1202,7 +1256,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Sidekick, View, ALLOW, DENY, IGNORE, PAIRED, REPAIR, SEND};
+    use super::{Sidekick, View, ALLOW, DENY, HOSTS, IGNORE, PAIRED, REPAIR, SEND};
     use kobo_sdk::keyboard::testing::type_text;
     use kobo_sdk::{
         action_id, ActionId, Command, Context, KoboApp, Screen, StoreRequest, StoreResult, Task,
@@ -1682,6 +1736,127 @@ mod tests {
         assert_eq!(
             url,
             "https://192.168.1.5:9331/pending?token=abc123&all=true&wait=25"
+        );
+    }
+
+    const AT_HOME: &str = "192.168.1.5:9331";
+    const ANYWHERE: &str = "studio.example.ts.net:9331";
+
+    /// Sidekick opened on what `kobo sidekick init` writes for a computer
+    /// on a tailnet: the pairing, and the hosts record beside it.
+    fn paired_at_both(hosts: &str) -> (Sidekick, TaskId, String) {
+        let mut app = Sidekick::default();
+        let mut context = Context::default();
+        app.on_start(&mut context);
+        let _ = context.take_commands();
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: HOSTS.to_owned(),
+                value: Some(hosts.as_bytes().to_vec()),
+            },
+        );
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: PAIRED.to_owned(),
+                value: Some(format!("{AT_HOME}\nabc123").into_bytes()),
+            },
+        );
+        let (poll, url) = fetched(&context.take_commands()).expect("a poll starts");
+        (app, poll, url)
+    }
+
+    #[test]
+    fn the_hosts_record_is_asked_for_before_the_pairing() {
+        let mut app = Sidekick::default();
+        let mut context = Context::default();
+        app.on_start(&mut context);
+        let loads: Vec<String> = context
+            .take_commands()
+            .into_iter()
+            .filter_map(|command| match command {
+                Command::Store(StoreRequest::Load { key }) => Some(key),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(loads, [HOSTS, PAIRED]);
+    }
+
+    #[test]
+    fn a_daemon_not_at_its_first_host_is_polled_at_the_other_without_a_word() {
+        let (mut app, poll, url) = paired_at_both(&format!("{AT_HOME}\n{ANYWHERE}"));
+        assert!(
+            url.starts_with(&format!("https://{AT_HOME}/pending?")),
+            "{url}"
+        );
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            poll,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        let commands = context.take_commands();
+        assert!(painted(&commands).is_none(), "nothing is said yet");
+        assert!(slept(&commands).is_none(), "no nap before the other host");
+        let (poll, url) = fetched(&commands).expect("the other host is polled");
+        assert!(
+            url.starts_with(&format!("https://{ANYWHERE}/pending?")),
+            "{url}"
+        );
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, TaskOutcome::Completed(b"{}".to_vec()));
+        assert!(context.take_commands().iter().any(|command| matches!(
+            command,
+            Command::Store(StoreRequest::Save { key, value })
+                if key == HOSTS && value == format!("{ANYWHERE}\n{AT_HOME}").as_bytes()
+        )));
+        assert_eq!(app.host(), ANYWHERE);
+    }
+
+    #[test]
+    fn a_refused_code_is_said_and_never_taken_to_the_other_host() {
+        let (mut app, poll, _) = paired_at_both(&format!("{AT_HOME}\n{ANYWHERE}"));
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            poll,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unauthorized),
+        );
+        let commands = context.take_commands();
+        assert!(fetched(&commands).is_none());
+        assert!(slept(&commands).is_some());
+        assert!(app
+            .trouble
+            .as_deref()
+            .is_some_and(|trouble| trouble.contains("did not accept")));
+    }
+
+    #[test]
+    fn a_hosts_record_left_by_another_pairing_is_not_polled() {
+        let (mut app, poll, _) = paired_at_both("10.0.0.4:9331\nother.example.ts.net:9331");
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            poll,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        let commands = context.take_commands();
+        assert!(fetched(&commands).is_none());
+        assert!(
+            slept(&commands).is_some(),
+            "the usual nap, as with one host"
+        );
+    }
+
+    #[test]
+    fn the_pairing_an_older_sidekick_reads_is_unchanged_when_there_are_two_hosts() {
+        // An older Sidekick reads the pairing alone, as the line before the
+        // code and the code. The hosts live under their own key.
+        let (_, _, url) = paired_at_both(&format!("{AT_HOME}\n{ANYWHERE}"));
+        assert_eq!(
+            url,
+            format!("https://{AT_HOME}/pending?token=abc123&all=true&wait=25")
         );
     }
 

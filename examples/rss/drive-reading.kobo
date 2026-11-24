@@ -7,13 +7,16 @@ expect NASA Science
 tap NASA Science
 wait-for unread of 10 articles
 expect Search articles
-expect 1 of 2
+# The feed is live, so how many pages its ten titles fill depends on how
+# long they are today. The route asks only that there is a second page and
+# that the turns reach it and come back.
+expect 1 of
 tap-id list-next
-wait-for 2 of 2
+wait-for 2 of
 clean
 shot feed-page-2
 tap-id list-back
-wait-for 1 of 2
+wait-for 1 of
 tap-id item-0
 # The article is live, and one with a picture on every screen takes most of a
 # minute to finish fetching them.

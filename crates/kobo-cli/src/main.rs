@@ -1577,9 +1577,8 @@ fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
 /// reader happens to answer.
 ///
 /// A computer on a tailnet is reachable there too, so its tailnet name and
-/// address go into the certificate without being asked for. Which host the
-/// reader is given is still a choice, because the reader keeps one: see
-/// [`tailnet::plan`].
+/// address go into the certificate without being asked for, and the reader is
+/// given the tailnet name after the local address: see [`tailnet::plan`].
 fn stream_init(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: kobo stream init [--sim | --device IP | --reader NAME] \
                          [--host ADDRESS ...] [--tailnet]";
@@ -1643,7 +1642,6 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
         &hosts,
         local.as_deref(),
         prefer_tailnet,
-        "kobo stream init",
         &tailnet::Installed,
     )?;
     let search = match device {
@@ -1696,7 +1694,7 @@ fn stream_pair_reader(
     plan: &tailnet::Plan,
     nickname: Option<&str>,
 ) -> Result<(), String> {
-    let computer = plan.written.as_deref();
+    let computers = &plan.written;
     let authority = stream_authority()?;
     let root = fs::read_to_string(&authority)
         .map_err(|error| format!("read {}: {error}", authority.display()))?;
@@ -1704,18 +1702,21 @@ fn stream_pair_reader(
     // root, so Paperterm opens connected instead of asking for an address and
     // a code the owner has to copy across the room. Without an address for
     // this computer there is nothing to write, and the details are printed.
-    let apps = match computer {
-        Some(computer) => {
-            let address = if computer.parse::<std::net::Ipv6Addr>().is_ok() {
+    let addresses: Vec<String> = computers
+        .iter()
+        .map(|computer| {
+            if computer.parse::<std::net::Ipv6Addr>().is_ok() {
                 format!("[{computer}]:{}", kobo_stream::DEFAULT_PORT)
             } else {
                 format!("{computer}:{}", kobo_stream::DEFAULT_PORT)
-            };
-            vec![sidekick::AppPairing::paperterm(
-                &address,
-                &kobo_stream::saved_code()?,
-            )]
-        }
+            }
+        })
+        .collect();
+    let apps = match addresses.first() {
+        Some(address) => vec![
+            sidekick::AppPairing::paperterm(address, &kobo_stream::saved_code()?),
+            sidekick::AppPairing::hosts("paperterm", &addresses),
+        ],
         None => Vec::new(),
     };
     println!("Pairing Paperterm on {reader}.");
@@ -1744,9 +1745,7 @@ fn stream_pair_reader(
         }
         // Only sharpens what a later session says if this computer moves, so
         // a record that cannot be written does not undo a pairing that was.
-        if let Some(computer) = computer {
-            let _ignored = kobo_stream::record_paired_host(computer);
-        }
+        let _ignored = kobo_stream::record_paired_hosts(computers);
     }
     if restart {
         println!("Close Cobalt on the reader and open it again, once, so it trusts this computer.");
@@ -1777,6 +1776,8 @@ fn stream_init_simulator(hosts: &[String]) -> Result<(), String> {
     );
     fs::write(state.join("pairing"), pairing)
         .map_err(|error| format!("write {}: {error}", state.join("pairing").display()))?;
+    // The simulator reaches this computer at loopback alone.
+    sidekick::forget_simulated("paperterm", kobo_dial::HOSTS_KEY)?;
     println!("Paired Paperterm in the simulator. Next: kobo stream terminal, then open Paperterm.");
     Ok(())
 }
@@ -2101,7 +2102,7 @@ const STREAM_START: &str = "Paperterm shares a terminal on this computer with yo
 1. Pair once: kobo stream init
    It pairs Paperterm on your saved reader, so there is nothing to type there.
    kobo sidekick init does the same and pairs Sidekick and Deck too.
-   To use Paperterm away from home over Tailscale, add --tailnet to either.
+   With Tailscale on here, the reader can reach this computer away from home too.
 2. Share a terminal: kobo stream terminal
 3. Open Paperterm on the reader.
 
@@ -2121,12 +2122,14 @@ fn stream_command(arguments: &[String]) -> Result<(), String> {
                          [--read-only] [--port PORT] -- COMMAND [ARG ...]\n\
                          Host-only. The reader never opens a shell; it paints rows this command serves.\n\
                          \n\
-                         init gives the reader one address for this computer:\n\
-                         \x20 (neither)       This computer's address on the network it is on. Works while the\n\
-                         \x20                 reader is on the same network.\n\
-                         \x20 --tailnet       This computer's Tailscale name. Works from any network, and only\n\
-                         \x20                 while Tailscale is on here and on the reader.\n\
-                         \x20 --host ADDRESS  The address or name you give. Repeat it to name more in the\n\
+                         init gives the reader where to reach this computer:\n\
+                         \x20 (neither)       This computer's address on the network it is on, which works while\n\
+                         \x20                 the reader is on the same network. When this computer is on a\n\
+                         \x20                 tailnet, its Tailscale name as well, which works from any network\n\
+                         \x20                 while Tailscale is on here and on the reader. Paperterm tries the\n\
+                         \x20                 one that last answered first, then the other.\n\
+                         \x20 --tailnet       This computer's Tailscale name only.\n\
+                         \x20 --host ADDRESS  The address or name you give, only. Repeat it to name more in the\n\
                          \x20                 certificate; the reader is given the first, or the Tailscale\n\
                          \x20                 name when --tailnet is given too.\n\
                          When this computer is on a tailnet, the certificate names its tailnet name and\n\

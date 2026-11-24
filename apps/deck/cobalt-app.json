@@ -4,8 +4,8 @@
   "short_label": "Deck",
   "summary": "Turn your Kobo into a remote control for your computer. Needs your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
-  "version": "0.2.15",
-  "release_notes": "Pads sent from your computer while Deck shows the pairing steps now appear straight away, and a pad in the preview no longer offers to run on a computer that is not paired. Deck also keeps checking after a press your computer missed.",
+  "version": "0.2.16",
+  "release_notes": "Deck can be paired with your computer's home address and its tailnet name at once. It asks the one that answered last, and the other when that one is not there.",
   "glyph": "remote",
   "capabilities": [
     "network"

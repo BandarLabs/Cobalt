@@ -1335,11 +1335,15 @@ impl Books {
             }
             return;
         }
-        let Some((address, code)) = self.articles.computer.clone() else {
+        let Some((paired, code)) = self.articles.computer.clone() else {
             if !quiet {
                 self.articles.said = Some(Said::NotPaired);
             }
             return;
+        };
+        let address = match self.articles.hosts.current() {
+            "" => paired,
+            host => host.to_owned(),
         };
         let body = kobo_json::ObjectBuilder::new()
             .set("token", code.as_str())
@@ -2526,6 +2530,9 @@ impl KoboApp for Books {
         context.store().load(DESCRIBED);
         context.store().load(RECENT);
         context.store().load(articles::RECORD);
+        // The hosts before the pairing, so they are in hand when it arrives
+        // and the quiet check goes out.
+        context.store().load(articles::HOSTS);
         context.store().load(articles::PAIRING);
         context.store().load(ORDER);
         if self.documents.is_empty() {
@@ -2623,6 +2630,7 @@ impl KoboApp for Books {
                     self.show(context);
                 }
             }
+            articles::HOSTS => self.articles.hosts_loaded(result),
             articles::PAIRING => {
                 if let StoreResult::Loaded {
                     value: Some(bytes), ..
@@ -2630,6 +2638,7 @@ impl KoboApp for Books {
                 {
                     self.articles.computer = articles::pairing(&bytes);
                 }
+                self.articles.know_hosts();
                 // Opening Books asks the computer, without a word unless
                 // something arrives.
                 if self.articles.checked_at.is_none() {
@@ -2686,6 +2695,7 @@ impl KoboApp for Books {
         }
         // The pairing may have been written while Books was away, and the
         // computer may have something by now.
+        context.store().load(articles::HOSTS);
         context.store().load(articles::PAIRING);
         let due = match (self.articles.checked_at, now_millis()) {
             (Some(then), Some(now)) => now.saturating_sub(then) >= QUIET_CHECK_EVERY_MS,
@@ -2825,6 +2835,21 @@ impl KoboApp for Books {
         if let Some((syncing, quiet)) = self.articles.syncing {
             if syncing == task {
                 self.articles.syncing = None;
+                match &outcome {
+                    // A computer not at this host may be at the other one,
+                    // asked at once in the same voice.
+                    TaskOutcome::Failed(error) if self.articles.hosts.failed(*error) => {
+                        self.sync(context, quiet);
+                        return;
+                    }
+                    TaskOutcome::Completed(_) => {
+                        if let Some(record) = self.articles.hosts.answered() {
+                            self.articles.hosts_record = Some(record.clone().into_bytes());
+                            context.store().save(articles::HOSTS, record);
+                        }
+                    }
+                    _ => {}
+                }
                 self.synced(context, quiet, outcome);
                 return;
             }
@@ -3182,6 +3207,7 @@ mod tests {
             (DESCRIBED, described),
             (RECENT, recent),
             (articles::RECORD, None),
+            (articles::HOSTS, None),
             (articles::PAIRING, None),
             (super::ORDER, None),
         ] {
@@ -4700,6 +4726,7 @@ mod tests {
             (DESCRIBED.to_owned(), parts.next()),
             (RECENT.to_owned(), None),
             (articles::RECORD.to_owned(), None),
+            (articles::HOSTS.to_owned(), None),
             (articles::PAIRING.to_owned(), None),
             (super::ORDER.to_owned(), None),
         ] {
@@ -4769,6 +4796,7 @@ mod tests {
             (DESCRIBED, record),
             (RECENT, None),
             (articles::RECORD, None),
+            (articles::HOSTS, None),
             (articles::PAIRING, None),
             (super::ORDER, order.map(<[u8]>::to_vec)),
         ] {
@@ -5207,6 +5235,7 @@ mod tests {
             asked(&commands, &articles::part_key(1)),
             "the next part is read"
         );
+        answer(articles::HOSTS.to_owned(), None);
         answer(articles::PAIRING.to_owned(), None);
         answer(super::ORDER.to_owned(), None);
         let commands = answer(articles::part_key(1), Some(part("read", true)));
@@ -5365,6 +5394,7 @@ mod tests {
             (DESCRIBED, None),
             (RECENT, None),
             (articles::RECORD, None),
+            (articles::HOSTS, None),
             (
                 articles::PAIRING,
                 Some(b"192.168.1.10:9331|abc234".to_vec()),
@@ -5396,6 +5426,78 @@ mod tests {
             None,
             "a computer that is off is not news on opening"
         );
+    }
+
+    /// Books opened on what `kobo sidekick init` writes for a computer on a
+    /// tailnet: the pairing, and the hosts record beside it.
+    fn paired_at_both() -> (AppRunner<Books>, Vec<Command>) {
+        let mut runner = AppRunner::new(with_articles());
+        runner.start();
+        let mut commands = Vec::new();
+        for (key, value) in [
+            (READING, None),
+            (DESCRIBED, None),
+            (RECENT, None),
+            (articles::RECORD, None),
+            (
+                articles::HOSTS,
+                Some(b"192.168.1.10:9331\nstudio.example.ts.net:9331".to_vec()),
+            ),
+            (
+                articles::PAIRING,
+                Some(b"192.168.1.10:9331|abc234".to_vec()),
+            ),
+            (super::ORDER, None),
+        ] {
+            commands.extend(runner.store_result(StoreResult::Loaded {
+                key: key.into(),
+                value,
+            }));
+        }
+        (runner, commands)
+    }
+
+    #[test]
+    fn a_computer_not_at_its_first_host_is_asked_at_the_other_and_first_from_then_on() {
+        let (mut runner, commands) = paired_at_both();
+        let (task, url, _) = post_of(&commands).expect("the computer is asked");
+        assert_eq!(url, "https://192.168.1.10:9331/articles/sync");
+        let commands =
+            runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable));
+        let (task, url, body) = post_of(&commands).expect("the other host is asked at once");
+        assert_eq!(url, "https://studio.example.ts.net:9331/articles/sync");
+        assert!(body.contains("abc234"));
+        let commands = runner.task_outcome(
+            task,
+            TaskOutcome::Completed(br#"{"delivered":0,"waiting":0}"#.to_vec()),
+        );
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Save { key, value })
+                if key == articles::HOSTS
+                    && value == b"studio.example.ts.net:9331\n192.168.1.10:9331"
+        )));
+        runner.action(action_id("shelf-articles"));
+        let asked = runner.action(action_id("sync"));
+        let (_, url, _) = post_of(&asked).expect("asked again");
+        assert_eq!(url, "https://studio.example.ts.net:9331/articles/sync");
+    }
+
+    #[test]
+    fn a_refused_pairing_is_said_and_not_taken_to_the_other_host() {
+        let (mut runner, commands) = paired_at_both();
+        runner.action(action_id("shelf-articles"));
+        let (quiet, _, _) = post_of(&commands).expect("the quiet check");
+        runner.task_outcome(
+            quiet,
+            TaskOutcome::Completed(br#"{"delivered":0,"waiting":0}"#.to_vec()),
+        );
+        let asked = runner.action(action_id("sync"));
+        let (task, _, _) = post_of(&asked).expect("asked");
+        let commands =
+            runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::Unauthorized));
+        assert!(post_of(&commands).is_none());
+        assert_eq!(runner.app().articles.said, Some(articles::Said::Refused));
     }
 
     #[test]
