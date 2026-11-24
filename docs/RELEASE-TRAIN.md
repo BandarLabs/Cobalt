@@ -134,6 +134,21 @@ In the commit that bumps the workspace version:
    for this version or the next patch. That last check is the one that fails
    when a bump leaves the file behind.
 
+### Release notes
+
+After a beta is published, write its notes onto the GitHub release in place
+of the line the workflow leaves there. Settings reads them on readers that
+are offered this version, before the owner installs it, so they are written
+for that page as much as for the browser:
+
+- Each change is one list item, `- **Lead.** First sentence. More.` The lead
+  is bold and ends in a full stop.
+- The reader shows the lead and the first sentence only, and at most five
+  changes, so the first sentence must say what changed on its own, in under
+  about twenty words. Anything after it stays on the release page.
+- Paragraphs that are not list items, such as what has not been seen on a
+  reader and the commit it was built from, are not shown on the reader.
+
 Direct stable publication from `main` is intentionally disabled for Store
 applications. A successful build is necessary but does not replace physical
 acceptance or artifact promotion. Stable `vX.Y.Z` tags and releases are created
