@@ -6,6 +6,8 @@ wait-for Preprints
 tap Computer Science
 wait-idle
 tap Artificial Intelligence
+# The live API can take far longer than the default wait to answer.
+wait-idle 60000
 wait-for 1 of
 expect Follow this subject
 expect Any time
@@ -20,20 +22,20 @@ tap-id list-back
 wait-for 1 of
 # One button holds the window and says which one is in force.
 tap Any time
-wait-idle 20000
+wait-idle 60000
 wait-for This week
 tap This week
-wait-idle 20000
+wait-idle 60000
 wait-for Last 30 days
 clean
 shot listing-month
 tap Last 30 days
-wait-idle 20000
+wait-idle 60000
 wait-for Any time
 # Older papers shows only on the last page, and fetches the next 25.
 expect-missing Older papers
 tap-paged Older papers
-wait-idle 20000
+wait-idle 60000
 wait-for 1 of
 expect-missing Older papers
 clean
@@ -55,6 +57,8 @@ restart
 wait-for Preprints
 expect cs.AI
 tap Artificial Intelligence
+# The live API can take far longer than the default wait to answer.
+wait-idle 60000
 wait-for 1 of
 expect Stop following
 tap Back
