@@ -274,6 +274,10 @@ def app_directory(app):
 
 ANSWERED = {}
 
+# What the simulator writes when a site answers a fetch with "too many
+# requests" (see kobo-sim's task log line).
+RATE_LIMITED = re.compile(r'^task \d+ failed: RateLimited\(', re.MULTILINE)
+
 
 def answering(address, patience=15):
     """Whether a site a route reads live is there to be read.
@@ -430,6 +434,16 @@ def run_app(app, kobo, out, environment, timeout, bare=False, route_override=Non
             driven = subprocess.run(command, cwd=ROOT, env=env, stdout=log, stderr=log, timeout=timeout)
             result['exit_code'] = driven.returncode
             result['status'] = 'pass' if driven.returncode == 0 else 'fail'
+            # A live site that answered "too many requests" during the route
+            # turned it away for a reason nothing here can mend, as a site
+            # that is down does (see `answering`). Such a run checked nothing,
+            # so it is reported by name as not run rather than as a failure
+            # that every pull request and the release waiting on this sweep
+            # would inherit. Only a run that failed: a route that passed in
+            # spite of a refusal still passed.
+            if driven.returncode != 0 and RATE_LIMITED.search(log_path.read_text(errors='replace')):
+                result['status'] = 'skipped'
+                result['reason'] = 'a site it reads was refusing requests as too many'
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             result['error'] = str(error)
         finally:
