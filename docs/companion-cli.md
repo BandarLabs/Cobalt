@@ -146,42 +146,54 @@ and keeps looking for a minute.
 
 Paperterm, Sidekick, Deck and the Articles shelf in Books call this computer
 from the reader. `kobo stream init` pairs Paperterm and `kobo sidekick init`
-pairs all four, and each writes one address for this computer onto the
-reader. Which one decides where those apps work:
+pairs all four, and each writes where to reach this computer onto the
+reader. Which hosts it writes decides where those apps work:
 
-- With neither flag, it is this computer's address on the network it is on.
-  The apps work while the reader is on the same network, and nothing else
-  has to be switched on.
-- With `--tailnet`, it is this computer's Tailscale name. The apps work from
-  any network, the home one included, and only while Tailscale is running on
-  this computer and switched on in the reader's Tailscale app. On a computer that
-  is not on a tailnet the command stops and says so.
-- With `--host ADDRESS`, it is the address or name you give. Repeat `--host`
-  to put more in the certificate; the reader is given the first, or the
-  Tailscale name when `--tailnet` is given too.
+- With neither flag, it is this computer's address on the network it is on,
+  which works while the reader is on the same network with nothing else
+  switched on. When this computer is on a tailnet, its Tailscale name goes
+  second, which works from any network while Tailscale is running on this
+  computer and switched on in the reader's Tailscale app. The command says
+  where the reader will reach it in one line.
+- With `--tailnet`, it is this computer's Tailscale name alone, for an owner
+  who wants the apps to reach it only that way. On a computer that is not on
+  a tailnet the command stops and says so.
+- With `--host ADDRESS`, it is the address or name you give, alone. Repeat
+  `--host` to put more in the certificate; the reader is given the first, or
+  the Tailscale name when `--tailnet` is given too.
+
+With two hosts, each app tries the one that answered it last first. When
+that one is not there at all (its name does not resolve, or nothing answers
+there), the app asks the other one straight away, and from then on asks that
+one first. A computer that answers and refuses the pairing code, or that is
+slow to answer, is never asked at the other host. A first host that does not
+answer at all can take up to 30 seconds to give up on before the other is
+asked.
+
+The second host is kept beside each app's pairing, under a name of its own,
+so an app from before this reads its pairing as it always did and uses the
+first host. A pairing typed on the reader names one host.
 
 When this computer is on a tailnet, its tailnet name and address go into the
-certificate in the first two cases, and the command says so in one line. That
-is what lets you change between them later without the reader having to trust
-anything new. With `--host` the certificate names what you gave and nothing
-else. The companion learns about the tailnet by asking the Tailscale
-command-line tool; where that is missing or does not answer within two
-seconds, the computer is treated as not being on one.
+certificate in the first two cases, and the command says so in one line.
+With `--host` the certificate names what you gave and nothing else. The
+companion learns about the tailnet by asking the Tailscale command-line tool;
+where that is missing or does not answer within two seconds, the computer is
+treated as not being on one, and the reader is given the one address it
+always was.
 
-The reader keeps one address, so it is one or the other: run the command
-again to change it. To use these apps away from home, save the reader's
-tailnet address first so the computer can find it there, then pair:
+To pair while the reader is away from home, save the reader's tailnet address
+first so the computer can find it there, then pair:
 
 ```sh
 kobo pair kobo --device 100.64.0.7
-kobo stream init --tailnet
+kobo stream init
 ```
 
 When this computer's address on the local network changes, the next
 `kobo stream` session renews Paperterm's certificate for the new address and
-keeps every name and tailnet address in it. It speaks up only when the
-address the reader was given, or may have been given, is one this computer no
-longer has.
+keeps every name and tailnet address in it. It speaks up only when no host
+the reader was given, or may have been given, is one this computer still has.
 
 ## Sending a file
 

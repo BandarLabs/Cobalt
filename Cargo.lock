@@ -1029,6 +1029,7 @@ name = "kobo-books"
 version = "0.3.41"
 dependencies = [
  "kobo-bookview",
+ "kobo-dial",
  "kobo-doc",
  "kobo-image",
  "kobo-json",
@@ -1107,6 +1108,7 @@ dependencies = [
  "kobo-article",
  "kobo-catalog",
  "kobo-comic",
+ "kobo-dial",
  "kobo-dict",
  "kobo-doc",
  "kobo-frame-host",
@@ -1158,10 +1160,18 @@ dependencies = [
 name = "kobo-deck"
 version = "0.3.41"
 dependencies = [
+ "kobo-dial",
  "kobo-image",
  "kobo-json",
  "kobo-sdk",
  "kobo-ui",
+]
+
+[[package]]
+name = "kobo-dial"
+version = "0.3.41"
+dependencies = [
+ "kobo-protocol",
 ]
 
 [[package]]
@@ -1538,6 +1548,7 @@ dependencies = [
 name = "kobo-paperterm"
 version = "0.3.41"
 dependencies = [
+ "kobo-dial",
  "kobo-json",
  "kobo-profile",
  "kobo-sdk",
@@ -1720,6 +1731,7 @@ dependencies = [
 name = "kobo-sidekick"
 version = "0.3.41"
 dependencies = [
+ "kobo-dial",
  "kobo-json",
  "kobo-sdk",
  "kobo-ui",

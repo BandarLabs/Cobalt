@@ -78,10 +78,13 @@ and what to run, rather than that a connection was lost.
 
 ## From anywhere
 
-Paired as above, the reader reaches the computer at its address on your own
-network, so the two have to be on the same Wi-Fi. With
-[Tailscale](../tailscale/) on both, Paperterm also works with the computer at
-home and the reader on another network.
+With [Tailscale](../tailscale/) on the computer and on the reader, one
+pairing works at home and away. When the computer is on a tailnet, `kobo
+stream init` gives the reader two hosts: the computer's address on your own
+network, which works on the same Wi-Fi with nothing else switched on, and its
+tailnet name, which works from any network while Tailscale is on at both
+ends: on the computer, and the switch in the reader's Tailscale app. It says
+where the reader will reach it in one line.
 
 1. Put the reader on your tailnet with the Tailscale app, then save the
    tailnet address its screen shows, so the computer finds the reader on any
@@ -91,10 +94,10 @@ home and the reader on another network.
    kobo pair kobo --device 100.64.0.7
    ```
 
-2. Pair again, giving the reader the computer's tailnet name:
+2. Pair, with Tailscale on here:
 
    ```sh
-   kobo stream init --tailnet
+   kobo stream init
    ```
 
 3. Share a terminal and leave it open, then open Paperterm on the reader.
@@ -103,12 +106,16 @@ home and the reader on another network.
    kobo stream terminal
    ```
 
-The reader keeps one address for the computer. Paired with the tailnet name,
-Paperterm works from any network, your own included, and only while Tailscale
-is on at both ends: on the computer, and the switch in the reader's Tailscale
-app. `kobo stream init` without `--tailnet` goes back to the address on your
-own network, which needs no Tailscale and works on that network only.
-`kobo sidekick init --tailnet` pairs Sidekick, Deck and Books the same way.
+Paperterm asks the host that answered it last first. When that host is not
+there at all, it asks the other one straight away and asks that one first
+from then on. A computer that refuses the code, or is slow, is not asked at
+the other host. A first host that never answers can take up to 30 seconds
+before the other is asked. Paperterm 0.1.20 and earlier read the first host
+only.
+
+`kobo stream init --tailnet` gives the reader the tailnet name alone, and
+`--host ADDRESS` the address you give alone. `kobo sidekick init` pairs
+Sidekick, Deck and Books the same way.
 
 A computer on a tailnet has its tailnet name and address in its certificate
 whichever way the reader is paired, and they stay there when the computer

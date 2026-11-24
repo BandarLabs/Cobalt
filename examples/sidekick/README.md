@@ -78,20 +78,18 @@ If `init` cannot reach the reader, it prints an address and a six-character
 code. Enter them in Sidekick; they are remembered. **Change pairing** on the
 watching screen starts again.
 
-The reader is given the computer's address on your own network, so the two
-have to be on the same Wi-Fi. To answer from another network, put the reader
-on your tailnet with the [Tailscale](../../apps/tailscale/) app and pair with
-the computer's tailnet name instead:
+The reader is given the computer's address on your own network, which works
+on the same Wi-Fi. When the computer is on a tailnet, `init` also gives it the
+computer's tailnet name, which works from any network while Tailscale is on at
+both ends: on the computer, and the switch in the reader's
+[Tailscale](../../apps/tailscale/) app. It says where the reader will reach the
+computer in one line. Sidekick, Deck, Books and Paperterm each ask the host
+that answered them last first, and the other one straight away when that one
+is not there at all. A computer that refuses the code, or is slow, is not asked
+at the other host.
 
-```sh
-kobo sidekick init --tailnet
-```
-
-Sidekick, Deck, Books and Paperterm then reach the computer from any network,
-your own included, and only while Tailscale is on at both ends: on the
-computer, and the switch in the reader's Tailscale app. `kobo sidekick init`
-without `--tailnet` goes back to the address on your own network. No reader
-has run this from another network yet.
+`kobo sidekick init --tailnet` gives the reader the tailnet name alone. No
+reader has run this from another network yet.
 
 The top of the screen says **Watching** only while the computer answers. When
 it does not, Sidekick says **Not connected** and why, and your agents ask at

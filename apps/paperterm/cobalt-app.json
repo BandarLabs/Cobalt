@@ -3,12 +3,12 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink. Needs your computer.",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "glyph": "keyboard",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The first screen now says the computer can be on your tailnet as well as on the same Wi-Fi.",
+  "release_notes": "Paperterm can be paired with your computer's home address and its tailnet name at once. It asks the one that answered last, and the other when that one is not there.",
   "setup": {
     "steps": [
       {

@@ -58,14 +58,16 @@ const USAGE: &str = "usage: kobo sidekick init [--sim | --device HOST | --reader
 const INIT_HELP: &str = "usage: kobo sidekick init [--sim | --device HOST | --reader NAME] [--host ADDRESS ...] [--tailnet]
 
 Pairs Sidekick, Deck, Books and Paperterm on the reader with this computer.
-Each is given one address for this computer:
-  (neither)       This computer's address on the network it is on. Works while the
-                  reader is on the same network.
-  --tailnet       This computer's Tailscale name. Works from any network, and only
-                  while Tailscale is on here and on the reader.
-  --host ADDRESS  The address or name you give. Repeat it to name more in the
-                  certificates; the reader is given the first, or the Tailscale
-                  name when --tailnet is given too.
+Each is given where to reach this computer:
+  (neither)       This computer's address on the network it is on, which works
+                  while the reader is on the same network. When this computer is
+                  on a tailnet, its Tailscale name as well, which works from any
+                  network while Tailscale is on here and on the reader. Each app
+                  tries the one that last answered first, then the other.
+  --tailnet       This computer's Tailscale name only.
+  --host ADDRESS  The address or name you give, only. Repeat it to name more in
+                  the certificates; the reader is given the first, or the
+                  Tailscale name when --tailnet is given too.
 When this computer is on a tailnet, the certificates name its tailnet name and
 address either way, unless you name the hosts yourself with --host.";
 
@@ -114,10 +116,10 @@ fn init(arguments: &[String]) -> Result<(), String> {
     }
     let Minted {
         plan,
-        computer,
+        computers,
         helper_is_stale,
     } = mint(&helper, &hosts, prefer_tailnet, simulator)?;
-    let pairing = Pairing::gather(&computer)?;
+    let pairing = Pairing::gather(&computers)?;
     let Some(destination) = destination else {
         println!(
             "No reader is saved on this computer, so nothing was written to one.\n\
@@ -147,15 +149,16 @@ fn init(arguments: &[String]) -> Result<(), String> {
                 )
             })?;
             println!(
-                "Paired Sidekick, Deck, Books and Paperterm on {host} with this computer at {computer}.\n\
-                 There is nothing to type on the reader."
+                "Paired Sidekick, Deck, Books and Paperterm on {host} with this computer at {}.\n\
+                 There is nothing to type on the reader.",
+                computers.join(" and ")
             );
             if let Some(reach) = &plan.reach {
                 println!("{reach}");
             }
             // Only sharpens what a later Paperterm session says if this
             // computer moves, so failing to write it undoes nothing.
-            let _ignored = kobo_stream::record_paired_host(&computer);
+            let _ignored = kobo_stream::record_paired_hosts(&computers);
             changed
         }
     };
@@ -179,8 +182,9 @@ fn init(arguments: &[String]) -> Result<(), String> {
 struct Minted {
     /// The hosts the certificates name, and what there is to say about them.
     plan: super::tailnet::Plan,
-    /// The one host the reader is given for this computer.
-    computer: String,
+    /// The hosts the reader is given for this computer, the one to try first
+    /// first.
+    computers: Vec<String>,
     /// Whether a helper is running with a certificate older than the one
     /// just minted.
     helper_is_stale: bool,
@@ -207,13 +211,7 @@ fn mint(
     } else {
         &super::tailnet::Installed
     };
-    let plan = super::tailnet::plan(
-        hosts,
-        local.as_deref(),
-        prefer_tailnet,
-        "kobo sidekick init",
-        source,
-    )?;
+    let plan = super::tailnet::plan(hosts, local.as_deref(), prefer_tailnet, source)?;
     if let Some(named) = &plan.named {
         println!("{named}");
     }
@@ -245,23 +243,26 @@ fn mint(
     // does not name a host added just now, and a reader paired with that
     // host would be refused by a helper that looks perfectly healthy.
     let helper_is_stale = fs::read(&leaf).ok() != leaf_before && listening();
-    let computer = plan
-        .written
-        .clone()
-        .or_else(|| simulator.then(|| "127.0.0.1".to_owned()))
-        .ok_or(
-            "This computer has no network address a reader could reach. Join the reader's \
-             Wi-Fi and run kobo sidekick init again.",
-        )?;
+    let computers = if !plan.written.is_empty() {
+        plan.written.clone()
+    } else if simulator {
+        vec!["127.0.0.1".to_owned()]
+    } else {
+        return Err(
+            "This computer has no network address a reader could reach. Join the \
+                    reader's Wi-Fi and run kobo sidekick init again."
+                .to_owned(),
+        );
+    };
     let stream_hosts = if plan.certificate.is_empty() {
-        vec![computer.clone()]
+        computers.clone()
     } else {
         plan.certificate.clone()
     };
     kobo_stream::init(&super::host_flags(&stream_hosts))?;
     Ok(Minted {
         plan,
-        computer,
+        computers,
         helper_is_stale,
     })
 }
@@ -339,13 +340,18 @@ fn destination(target: &super::targets::TargetArgs) -> Result<Option<Destination
 
 /// One app's pairing, as the app itself saves it.
 ///
-/// The three apps grew three formats, and each is kept as it is so that a
-/// reader already paired by hand reads the same file it always wrote.
+/// The apps grew three formats, and each is kept as it is so that a reader
+/// already paired by hand reads the same file it always wrote. Every one of
+/// them reads the code as everything after the address, so a second host
+/// cannot go in the same file without becoming part of the code on a reader
+/// that has not been updated. It goes under a key of its own beside it,
+/// which only an app that knows about it asks for.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AppPairing {
     app: &'static str,
     key: &'static str,
-    value: String,
+    /// What is written under the key, or `None` to remove the key.
+    value: Option<String>,
 }
 
 impl AppPairing {
@@ -353,7 +359,7 @@ impl AppPairing {
         Self {
             app: "sidekick",
             key: "paired",
-            value: format!("{address}\n{code}"),
+            value: Some(format!("{address}\n{code}")),
         }
     }
 
@@ -361,7 +367,7 @@ impl AppPairing {
         Self {
             app: "deck",
             key: "paired",
-            value: format!("{address}|{code}"),
+            value: Some(format!("{address}|{code}")),
         }
     }
 
@@ -371,7 +377,7 @@ impl AppPairing {
         Self {
             app: "books",
             key: "computer",
-            value: format!("{address}|{code}"),
+            value: Some(format!("{address}|{code}")),
         }
     }
 
@@ -379,7 +385,20 @@ impl AppPairing {
         Self {
             app: "paperterm",
             key: "pairing",
-            value: format!("{address}\n{code}"),
+            value: Some(format!("{address}\n{code}")),
+        }
+    }
+
+    /// Every host `app` reaches this computer at, beside its pairing.
+    ///
+    /// With one host the record is removed rather than written: one left by
+    /// an earlier pairing would otherwise send the app to a host the owner
+    /// has just chosen not to use.
+    pub(crate) fn hosts(app: &'static str, addresses: &[String]) -> Self {
+        Self {
+            app,
+            key: kobo_dial::HOSTS_KEY,
+            value: (addresses.len() > 1).then(|| kobo_dial::record(addresses)),
         }
     }
 }
@@ -395,8 +414,9 @@ struct Pairing {
 }
 
 impl Pairing {
-    /// Reads back what the two `init`s just made.
-    fn gather(computer: &str) -> Result<Self, String> {
+    /// Reads back what the two `init`s just made, for a computer the reader
+    /// reaches at `computers`, the one to try first first.
+    fn gather(computers: &[String]) -> Result<Self, String> {
         let directory = config()?;
         let read = |name: &str| {
             fs::read_to_string(directory.join(name))
@@ -409,14 +429,26 @@ impl Pairing {
         let stream_path = kobo_stream::authority_path()?;
         let stream_root = fs::read_to_string(&stream_path)
             .map_err(|error| format!("read {}: {error}", stream_path.display()))?;
-        let sidekick_address = host_port(computer, READER_PORT);
-        let paperterm_address = host_port(computer, kobo_stream::DEFAULT_PORT);
+        let at = |port| {
+            computers
+                .iter()
+                .map(|computer| host_port(computer, port))
+                .collect::<Vec<_>>()
+        };
+        let sidekick_addresses = at(READER_PORT);
+        let paperterm_addresses = at(kobo_stream::DEFAULT_PORT);
+        let sidekick_address = sidekick_addresses.first().cloned().unwrap_or_default();
+        let paperterm_address = paperterm_addresses.first().cloned().unwrap_or_default();
         Ok(Self {
             apps: vec![
                 AppPairing::sidekick(&sidekick_address, &sidekick_code),
+                AppPairing::hosts("sidekick", &sidekick_addresses),
                 AppPairing::deck(&sidekick_address, &sidekick_code),
+                AppPairing::hosts("deck", &sidekick_addresses),
                 AppPairing::books(&sidekick_address, &sidekick_code),
+                AppPairing::hosts("books", &sidekick_addresses),
                 AppPairing::paperterm(&paperterm_address, &paperterm_code),
+                AppPairing::hosts("paperterm", &paperterm_addresses),
             ],
             roots: vec![("sidekick", sidekick_root), ("stream", stream_root)],
             sidekick_address,
@@ -452,10 +484,26 @@ impl Pairing {
             fs::create_dir_all(&directory)
                 .map_err(|error| format!("create {}: {error}", directory.display()))?;
             let path = directory.join(pairing.key);
-            fs::write(&path, pairing.value.as_bytes())
-                .map_err(|error| format!("write {}: {error}", path.display()))?;
+            if let Some(value) = &pairing.value {
+                fs::write(&path, value.as_bytes())
+                    .map_err(|error| format!("write {}: {error}", path.display()))?;
+            }
+            // The simulator reaches this computer at loopback alone, so a
+            // hosts record from a reader's pairing has no place here.
+            forget_simulated(pairing.app, kobo_dial::HOSTS_KEY)?;
         }
         Ok(())
+    }
+}
+
+/// Removes one key from an app's simulated state, if it is there.
+pub(crate) fn forget_simulated(app: &str, key: &str) -> Result<(), String> {
+    let path = kobo_sim::simulated_state_root(app).join(key);
+    match fs::remove_file(&path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            Err(format!("remove {}: {error}", path.display()))
+        }
+        _ => Ok(()),
     }
 }
 
@@ -528,6 +576,9 @@ fn delivery_script(roots: &[(&str, String)], apps: &[AppPairing]) -> String {
            base64 -d > \"$partial\"\n\
            chmod 600 \"$partial\"\n\
            mv -f \"$partial\" \"$state/$1/$2\"\n\
+         }}\n\
+         drop_state() {{\n\
+           rm -f \"$state/$1/$2\"\n\
          }}\n"
     );
     for (name, pem) in roots {
@@ -537,12 +588,15 @@ fn delivery_script(roots: &[(&str, String)], apps: &[AppPairing]) -> String {
         ));
     }
     for pairing in apps {
-        script.push_str(&format!(
-            "put_state '{}' '{}' <<'KOBO_PAIRING'\n{}\nKOBO_PAIRING\n",
-            pairing.app,
-            pairing.key,
-            super::base64_encode(pairing.value.as_bytes())
-        ));
+        match &pairing.value {
+            Some(value) => script.push_str(&format!(
+                "put_state '{}' '{}' <<'KOBO_PAIRING'\n{}\nKOBO_PAIRING\n",
+                pairing.app,
+                pairing.key,
+                super::base64_encode(value.as_bytes())
+            )),
+            None => script.push_str(&format!("drop_state '{}' '{}'\n", pairing.app, pairing.key)),
+        }
     }
     script.push_str("sync\nprintf 'trust-changed=%s\\n' \"$changed\"\n");
     script
@@ -1001,17 +1055,90 @@ mod tests {
     fn each_app_gets_its_pairing_in_the_format_it_already_reads() {
         let sidekick = super::AppPairing::sidekick("192.168.1.10:9331", "abc234");
         assert_eq!((sidekick.app, sidekick.key), ("sidekick", "paired"));
-        assert_eq!(sidekick.value, "192.168.1.10:9331\nabc234");
+        assert_eq!(sidekick.value.as_deref(), Some("192.168.1.10:9331\nabc234"));
         let deck = super::AppPairing::deck("192.168.1.10:9331", "abc234");
         assert_eq!((deck.app, deck.key), ("deck", "paired"));
-        assert_eq!(deck.value, "192.168.1.10:9331|abc234");
+        assert_eq!(deck.value.as_deref(), Some("192.168.1.10:9331|abc234"));
         let paperterm = super::AppPairing::paperterm("192.168.1.10:9332", "xyz789");
         assert_eq!((paperterm.app, paperterm.key), ("paperterm", "pairing"));
-        assert_eq!(paperterm.value, "192.168.1.10:9332\nxyz789");
+        assert_eq!(
+            paperterm.value.as_deref(),
+            Some("192.168.1.10:9332\nxyz789")
+        );
         let books = super::AppPairing::books("192.168.1.10:9331", "abc234");
         assert_eq!((books.app, books.key), ("books", "computer"));
-        assert_eq!(books.value, "192.168.1.10:9331|abc234");
+        assert_eq!(books.value.as_deref(), Some("192.168.1.10:9331|abc234"));
         assert_eq!(super::host_port("fe80::1", 9331), "[fe80::1]:9331");
+    }
+
+    #[test]
+    fn a_second_host_goes_beside_each_pairing_where_older_apps_never_look() {
+        let both = words(&["192.168.1.10:9331", "studio.example.ts.net:9331"]);
+        for app in ["sidekick", "deck", "books", "paperterm"] {
+            let hosts = super::AppPairing::hosts(app, &both);
+            assert_eq!((hosts.app, hosts.key), (app, "hosts"));
+            assert_eq!(
+                hosts.value.as_deref(),
+                Some("192.168.1.10:9331\nstudio.example.ts.net:9331")
+            );
+            // One host removes a record an earlier pairing left.
+            let one = super::AppPairing::hosts(app, &both[..1]);
+            assert_eq!(one.value, None);
+        }
+        // Each older app's own reading of its pairing, which reads the code as
+        // everything after the address. The pairing is the same with one host
+        // or two, so each still reads the first host and the right code.
+        let sidekick = super::AppPairing::sidekick(&both[0], "abc234")
+            .value
+            .expect("set");
+        let (address, code) = sidekick.split_once('\n').expect("two lines");
+        assert_eq!(
+            (address.trim(), code.trim()),
+            ("192.168.1.10:9331", "abc234")
+        );
+        let deck = super::AppPairing::deck(&both[0], "abc234")
+            .value
+            .expect("set");
+        let (address, code) = deck.split_once('|').expect("one bar");
+        assert_eq!(
+            (address.trim(), code.trim()),
+            ("192.168.1.10:9331", "abc234")
+        );
+        let books = super::AppPairing::books(&both[0], "abc234")
+            .value
+            .expect("set");
+        let (address, code) = books.trim().split_once('|').expect("one bar");
+        assert_eq!((address, code), ("192.168.1.10:9331", "abc234"));
+        let paperterm = super::AppPairing::paperterm("192.168.1.10:9332", "xyz789")
+            .value
+            .expect("set");
+        let (address, code) = paperterm.split_once('\n').expect("two lines");
+        assert_eq!((address, code.trim()), ("192.168.1.10:9332", "xyz789"));
+    }
+
+    #[test]
+    fn a_pairing_with_one_host_removes_the_hosts_record_on_the_reader() {
+        let script = super::delivery_script(
+            &[],
+            &[
+                super::AppPairing::deck("192.168.1.10:9331", "abc234"),
+                super::AppPairing::hosts("deck", &words(&["192.168.1.10:9331"])),
+            ],
+        );
+        assert!(script.contains("put_state 'deck' 'paired'"), "{script}");
+        assert!(script.contains("\ndrop_state 'deck' 'hosts'\n"), "{script}");
+        let both = super::delivery_script(
+            &[],
+            &[super::AppPairing::hosts(
+                "deck",
+                &words(&["192.168.1.10:9331", "studio.example.ts.net:9331"]),
+            )],
+        );
+        assert!(
+            both.contains("put_state 'deck' 'hosts' <<'KOBO_PAIRING'"),
+            "{both}"
+        );
+        assert!(!both.contains("ts.net"), "the hosts travel encoded");
     }
 
     #[test]
@@ -1038,6 +1165,58 @@ mod tests {
         assert!(!script.contains("abc234"), "the code travelled unencoded");
         assert!(script.contains("/mnt/onboard/.adds/cobalt/state"));
         assert!(script.trim_end().ends_with("\"$changed\""), "{script}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_reader_visit_writes_both_hosts_and_a_later_one_host_pairing_takes_them_away() {
+        let root = std::env::temp_dir().join(format!(
+            "kobo-pairing-hosts-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_nanos())
+        ));
+        let run = |apps: &[super::AppPairing]| {
+            let script = super::delivery_script(&[], apps)
+                .replace(
+                    super::DEVICE_STATE,
+                    &root.join("state").display().to_string(),
+                )
+                .replace(
+                    super::DEVICE_TRUST,
+                    &root.join("trust").display().to_string(),
+                );
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&script)
+                .output()
+                .expect("sh runs");
+            assert!(output.status.success(), "{output:?}");
+        };
+        let both = words(&["192.168.1.10:9332", "studio.example.ts.net:9332"]);
+        run(&[
+            super::AppPairing::paperterm(&both[0], "xyz789"),
+            super::AppPairing::hosts("paperterm", &both),
+        ]);
+        let state = root.join("state/paperterm");
+        assert_eq!(
+            std::fs::read_to_string(state.join("pairing")).expect("pairing"),
+            "192.168.1.10:9332\nxyz789"
+        );
+        assert_eq!(
+            std::fs::read_to_string(state.join("hosts")).expect("hosts"),
+            "192.168.1.10:9332\nstudio.example.ts.net:9332"
+        );
+        run(&[
+            super::AppPairing::paperterm(&both[1], "xyz789"),
+            super::AppPairing::hosts("paperterm", &both[1..]),
+        ]);
+        assert!(
+            !state.join("hosts").exists(),
+            "an earlier record was left behind"
+        );
+        std::fs::remove_dir_all(&root).expect("clean up");
     }
 
     #[test]
