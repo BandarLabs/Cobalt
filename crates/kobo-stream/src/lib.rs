@@ -468,11 +468,10 @@ pub fn run_with_title(options: Options, title: &str) -> Result<i32, String> {
     if options.command.is_empty() {
         return Err("kobo stream needs a command after --".to_owned());
     }
-    if let Some(address) = refresh_for_current_address()? {
-        eprintln!(
-            "This computer is now at {address}, so Paperterm's certificate was renewed to name it.\r\n\
-             If the reader was paired at an older address, run kobo stream init to update it.\r"
-        );
+    if let Some(notice) = check_pairing_is_still_served()? {
+        // The terminal is about to go raw, where a bare line feed does not
+        // return the carriage.
+        eprintln!("{}\r", notice.replace('\n', "\r\n"));
     }
     let identity = Identity::load()?;
     let tls = kobo_net::serve::TlsServer::from_pem(&identity.certificate, &identity.key)?;
@@ -941,13 +940,10 @@ fn mint_leaf(directory: &std::path::Path, hosts: &[String]) -> Result<(), String
 ///
 /// The certificate used to be minted only by `init`, so the day the router
 /// handed the computer a new address every session failed its handshake and
-/// nothing said why. Each session now checks first. The new leaf keeps any
-/// name the owner gave with `--host` and drops numeric addresses this
-/// computer no longer has, so the pairing details stop listing dead ones.
-/// Only a session renews: reading the pairing details leaves the identity
-/// exactly as it was. Returns the new address when it renewed, `None` when
-/// nothing changed.
-pub fn refresh_for_current_address() -> Result<Option<String>, String> {
+/// nothing said why. Each session now checks first. Only a session renews:
+/// reading the pairing details leaves the identity exactly as it was. Returns
+/// what changed when it renewed, `None` when nothing did.
+fn refresh_for_current_address() -> Result<Option<Renewal>, String> {
     let directory = identity_dir()?;
     if !directory.join("ca-cert.pem").exists() || !directory.join("ca-key.pem").exists() {
         return Ok(None);
@@ -956,18 +952,41 @@ pub fn refresh_for_current_address() -> Result<Option<String>, String> {
         return Ok(None);
     };
     let saved = std::fs::read_to_string(directory.join("hosts")).unwrap_or_default();
-    let Some(hosts) = hosts_after_move(&saved, &current) else {
+    let Some(renewal) = hosts_after_move(&saved, &current) else {
         return Ok(None);
     };
-    mint_leaf(&directory, &hosts)?;
-    std::fs::write(directory.join("hosts"), hosts.join("\n"))
+    mint_leaf(&directory, &renewal.hosts)?;
+    std::fs::write(directory.join("hosts"), renewal.hosts.join("\n"))
         .map_err(|error| format!("save computer addresses: {error}"))?;
-    Ok(Some(current))
+    Ok(Some(renewal))
 }
 
-/// The addresses a renewed leaf should name, or `None` when `current` is
-/// already among the saved ones.
-fn hosts_after_move(saved: &str, current: &str) -> Option<Vec<String>> {
+/// What a renewed leaf names, and what it stopped naming.
+#[derive(Debug, Eq, PartialEq)]
+struct Renewal {
+    /// The address this computer has now.
+    current: String,
+    /// Every host the new leaf names, the current address first.
+    hosts: Vec<String>,
+    /// The addresses the old leaf named that this computer no longer has.
+    dropped: Vec<String>,
+}
+
+/// The hosts a renewed leaf should name, or `None` when `current` is already
+/// among the saved ones.
+///
+/// An address the home router handed out is worth nothing once the computer
+/// has another, so those are dropped and the pairing details stop listing
+/// dead ones. Everything else outlives the move. A name was given by the
+/// owner and still points here. A tailnet address belongs to this computer
+/// for as long as it is on the tailnet, whichever Wi-Fi it is on: dropping it
+/// used to leave a reader paired by tailnet address failing its handshake
+/// from the next session on, although nothing about that pairing had changed.
+///
+/// When `current` is itself a tailnet address, the computer's traffic is
+/// leaving through its tailnet and the address the router gave it is unknown
+/// rather than gone, so nothing is dropped.
+fn hosts_after_move(saved: &str, current: &str) -> Option<Renewal> {
     let saved: Vec<&str> = saved
         .lines()
         .map(str::trim)
@@ -976,14 +995,117 @@ fn hosts_after_move(saved: &str, current: &str) -> Option<Vec<String>> {
     if saved.contains(&current) {
         return None;
     }
+    let keep_all = is_tailnet_address(current);
+    // Loopback is in every leaf whether or not it is listed, so it is neither
+    // carried forward nor counted as an address the computer lost. Pairing
+    // the simulator saves it, and the next real session used to report that
+    // the computer had moved from 127.0.0.1.
+    let (kept, dropped): (Vec<&str>, Vec<&str>) = saved
+        .into_iter()
+        .filter(|host| !is_loopback(host))
+        .partition(|host| keep_all || outlives_a_move(host));
     let mut hosts = vec![current.to_owned()];
-    hosts.extend(
-        saved
-            .into_iter()
-            .filter(|host| host.parse::<std::net::IpAddr>().is_err())
-            .map(str::to_owned),
-    );
-    Some(hosts)
+    hosts.extend(kept.into_iter().map(str::to_owned));
+    Some(Renewal {
+        current: current.to_owned(),
+        hosts,
+        dropped: dropped.into_iter().map(str::to_owned).collect(),
+    })
+}
+
+/// Whether a saved host still reaches this computer after its address on the
+/// local network has changed: any name, and any tailnet address.
+fn outlives_a_move(host: &str) -> bool {
+    host.parse::<std::net::IpAddr>().is_err() || is_tailnet_address(host)
+}
+
+fn is_loopback(host: &str) -> bool {
+    host.parse::<std::net::IpAddr>()
+        .is_ok_and(|address| address.is_loopback())
+}
+
+/// Whether `host` is a numeric address inside a Tailscale tailnet.
+///
+/// Tailscale gives every device one IPv4 address from `100.64.0.0/10` and one
+/// IPv6 address from `fd7a:115c:a1e0::/48`, and a device keeps them on every
+/// network it joins. A name is never one of these, whatever it resolves to.
+#[must_use]
+pub fn is_tailnet_address(host: &str) -> bool {
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(address)) => {
+            let [first, second, ..] = address.octets();
+            first == 100 && (second & 0xc0) == 64
+        }
+        Ok(std::net::IpAddr::V6(address)) => address.segments()[..3] == [0xfd7a, 0x115c, 0xa1e0],
+        Err(_) => false,
+    }
+}
+
+/// Remembers which of this computer's hosts the reader was given.
+///
+/// The certificate can name several hosts and the reader dials one. Without
+/// knowing which, a session that renewed the certificate could only guess
+/// whether the reader was affected, and it guessed aloud every time: a reader
+/// paired by name was told to pair again after a move that had not touched
+/// it. The caller records the host once the pairing is on the reader.
+///
+/// # Errors
+/// Fails when the record cannot be written.
+pub fn record_paired_host(host: &str) -> Result<(), String> {
+    let directory = identity_dir()?;
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("create {}: {error}", directory.display()))?;
+    std::fs::write(directory.join(PAIRED_HOST), host.trim())
+        .map_err(|error| format!("save the paired address: {error}"))
+}
+
+/// The file holding the host the reader was last given, without a port.
+const PAIRED_HOST: &str = "paired";
+
+/// Renews the certificate if this computer moved, and returns what the owner
+/// needs to hear about the reader's pairing, if anything.
+fn check_pairing_is_still_served() -> Result<Option<String>, String> {
+    let renewal = refresh_for_current_address()?;
+    let directory = identity_dir()?;
+    let paired = std::fs::read_to_string(directory.join(PAIRED_HOST)).unwrap_or_default();
+    let served = std::fs::read_to_string(directory.join("hosts")).unwrap_or_default();
+    Ok(pairing_notice(
+        Some(paired.trim()).filter(|host| !host.is_empty()),
+        &served,
+        renewal.as_ref(),
+    ))
+}
+
+/// What a session says when the reader's pairing no longer reaches it.
+///
+/// It speaks only about a pairing that has stopped working. A renewal that
+/// leaves the reader's host named is said nothing about, because there is
+/// nothing for the owner to do. When the reader's host is on record and the
+/// certificate no longer names it, that is said at every session until the
+/// reader is paired again, not only at the one that renewed. An identity
+/// older than the record, or a pairing typed on the reader, leaves no record:
+/// then the only evidence is an address the renewal dropped, and the notice
+/// says "if".
+fn pairing_notice(paired: Option<&str>, served: &str, renewal: Option<&Renewal>) -> Option<String> {
+    if let Some(paired) = paired {
+        if served
+            .lines()
+            .any(|host| host.trim().eq_ignore_ascii_case(paired))
+        {
+            return None;
+        }
+        return Some(format!(
+            "The reader was paired with this computer at {paired}, and this computer no longer answers there.\n\
+             Run kobo stream init to pair the reader again."
+        ));
+    }
+    let renewal = renewal?;
+    let old = renewal.dropped.first()?;
+    Some(format!(
+        "This computer moved from {old} to {}.\n\
+         If the reader was paired with {old}, run kobo stream init to pair it again.",
+        renewal.current
+    ))
 }
 
 /// The address the reader will dial: whichever interface routes outward.
@@ -1021,7 +1143,7 @@ pub fn pairing_instructions(port: u16) -> Result<String, String> {
 /// What to do with a freshly minted identity, for a caller that has not
 /// already done it. Named so a test can hold it to saying so without a
 /// filesystem identity to load.
-const FIRST_TIME_HELP: &str = "First time: run kobo stream init. It pairs Paperterm on your reader, so there is nothing to type there.\nKeep both devices on the same network and the computer awake.";
+const FIRST_TIME_HELP: &str = "First time: run kobo stream init. It pairs Paperterm on your reader, so there is nothing to type there.\nKeep the computer awake and where the reader can reach it: on the same Wi-Fi, or on the same tailnet with the reader's Tailscale switch on.";
 
 /// The address and code alone, with no advice about what to do with them.
 ///
@@ -1416,24 +1538,160 @@ mod tests {
 
     #[test]
     fn a_computer_that_moved_gets_a_certificate_for_its_new_address_and_keeps_its_names() {
-        let hosts = super::hosts_after_move("192.168.1.20\nstudio.local\n", "192.168.1.31")
+        let renewal = super::hosts_after_move("192.168.1.20\nstudio.local\n", "192.168.1.31")
             .expect("the new address is not named yet");
-        assert_eq!(hosts, ["192.168.1.31", "studio.local"]);
+        assert_eq!(renewal.hosts, ["192.168.1.31", "studio.local"]);
+        assert_eq!(renewal.dropped, ["192.168.1.20"]);
         assert_eq!(
             super::hosts_after_move("192.168.1.31\nstudio.local", "192.168.1.31"),
             None,
             "an unchanged address re-minted the certificate"
         );
+        let first = super::hosts_after_move("", "10.0.0.4").expect("first address");
+        assert_eq!(first.hosts, ["10.0.0.4"]);
+        assert!(first.dropped.is_empty());
+    }
+
+    #[test]
+    fn a_computer_that_moved_keeps_its_tailnet_addresses_and_names_in_the_certificate() {
+        // The pairing an owner makes to use Paperterm away from home names
+        // the computer by its tailnet address or name. Moving between Wi-Fi
+        // networks used to drop the address and break that pairing.
+        let saved =
+            "192.168.1.20\nstudio.example.ts.net\nstudio\n100.101.102.103\nfd7a:115c:a1e0::1234\n";
+        let renewal = super::hosts_after_move(saved, "10.0.0.4").expect("a new address");
         assert_eq!(
-            super::hosts_after_move("", "10.0.0.4").expect("first address"),
-            ["10.0.0.4"]
+            renewal.hosts,
+            [
+                "10.0.0.4",
+                "studio.example.ts.net",
+                "studio",
+                "100.101.102.103",
+                "fd7a:115c:a1e0::1234",
+            ]
         );
+        assert_eq!(renewal.dropped, ["192.168.1.20"]);
+    }
+
+    #[test]
+    fn traffic_leaving_through_the_tailnet_is_not_read_as_the_local_address_going_away() {
+        let renewal = super::hosts_after_move("192.168.1.20\nstudio.local", "100.101.102.103")
+            .expect("the tailnet address is not named yet");
+        assert_eq!(
+            renewal.hosts,
+            ["100.101.102.103", "192.168.1.20", "studio.local"]
+        );
+        assert!(renewal.dropped.is_empty());
+    }
+
+    #[test]
+    fn an_identity_last_paired_with_the_simulator_has_not_moved_from_loopback() {
+        let renewal = super::hosts_after_move("127.0.0.1", "192.168.1.31").expect("a new address");
+        assert_eq!(renewal.hosts, ["192.168.1.31"]);
+        assert!(renewal.dropped.is_empty());
+        assert_eq!(
+            super::pairing_notice(None, "192.168.1.31", Some(&renewal)),
+            None
+        );
+    }
+
+    #[test]
+    fn only_addresses_inside_the_two_tailnet_ranges_count_as_tailnet_addresses() {
+        for inside in [
+            "100.64.0.0",
+            "100.101.102.103",
+            "100.127.255.255",
+            "fd7a:115c:a1e0::1",
+            "fd7a:115c:a1e0:ab12:4843:cd96:6265:6667",
+        ] {
+            assert!(super::is_tailnet_address(inside), "{inside}");
+        }
+        for outside in [
+            "100.63.255.255",
+            "100.128.0.0",
+            "192.168.1.20",
+            "10.0.0.4",
+            "fd7a:115c:a1e1::1",
+            "fd12:3456::1",
+            "studio.example.ts.net",
+            "studio",
+            "",
+        ] {
+            assert!(!super::is_tailnet_address(outside), "{outside}");
+        }
+    }
+
+    #[test]
+    fn a_renewal_says_nothing_while_the_reader_is_paired_with_a_host_still_named() {
+        let renewal = super::hosts_after_move(
+            "192.168.1.20\nstudio.example.ts.net\n100.101.102.103",
+            "192.168.1.31",
+        )
+        .expect("a new address");
+        let served = renewal.hosts.join("\n");
+        for paired in [
+            "studio.example.ts.net",
+            "Studio.Example.ts.net",
+            "100.101.102.103",
+        ] {
+            assert_eq!(
+                super::pairing_notice(Some(paired), &served, Some(&renewal)),
+                None,
+                "{paired} is still named, and the owner was told to pair again"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reader_paired_with_an_address_this_computer_lost_is_told_so_at_every_session() {
+        let renewal =
+            super::hosts_after_move("192.168.1.20\nstudio.example.ts.net", "192.168.1.31")
+                .expect("a new address");
+        let served = renewal.hosts.join("\n");
+        let at_renewal = super::pairing_notice(Some("192.168.1.20"), &served, Some(&renewal))
+            .expect("the paired address is gone");
+        assert!(at_renewal.contains("192.168.1.20"), "{at_renewal}");
+        assert!(at_renewal.contains("kobo stream init"), "{at_renewal}");
+        assert!(!at_renewal.contains("If "), "{at_renewal}");
+        // The next session renews nothing, and the reader is still stranded.
+        assert_eq!(
+            super::pairing_notice(Some("192.168.1.20"), &served, None),
+            Some(at_renewal)
+        );
+    }
+
+    #[test]
+    fn without_a_record_of_the_pairing_only_a_dropped_address_is_worth_mentioning() {
+        let moved = super::hosts_after_move("192.168.1.20\nstudio.local", "192.168.1.31")
+            .expect("a new address");
+        let notice = super::pairing_notice(None, &moved.hosts.join("\n"), Some(&moved))
+            .expect("an address was dropped");
+        assert!(
+            notice.contains("moved from 192.168.1.20 to 192.168.1.31"),
+            "{notice}"
+        );
+        assert!(
+            notice.contains("If the reader was paired with 192.168.1.20"),
+            "{notice}"
+        );
+        // Nothing the reader could have been paired with went away.
+        let gained = super::hosts_after_move("studio.example.ts.net\n100.101.102.103", "10.0.0.4")
+            .expect("a new address");
+        assert_eq!(
+            super::pairing_notice(None, &gained.hosts.join("\n"), Some(&gained)),
+            None
+        );
+        assert_eq!(super::pairing_notice(None, "192.168.1.31", None), None);
     }
 
     #[test]
     fn first_time_help_sends_the_owner_to_the_one_pairing_command() {
         assert!(super::FIRST_TIME_HELP.contains("kobo stream init"));
         assert!(!super::FIRST_TIME_HELP.contains("trust set"));
+        // A reader on the owner's tailnet reaches the computer from another
+        // network, so the help may not ask for the same one.
+        assert!(!super::FIRST_TIME_HELP.contains("same network"));
+        assert!(super::FIRST_TIME_HELP.contains("tailnet"));
     }
 
     #[test]

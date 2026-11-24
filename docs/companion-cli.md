@@ -142,6 +142,47 @@ says so and names `kobo setup`. When the saved reader does not answer, the
 command asks you to wake it (press power) and check Wi-Fi in Cobalt Settings,
 and keeps looking for a minute.
 
+## Which address the reader has for this computer
+
+Paperterm, Sidekick, Deck and the Articles shelf in Books call this computer
+from the reader. `kobo stream init` pairs Paperterm and `kobo sidekick init`
+pairs all four, and each writes one address for this computer onto the
+reader. Which one decides where those apps work:
+
+- With neither flag, it is this computer's address on the network it is on.
+  The apps work while the reader is on the same network, and nothing else
+  has to be switched on.
+- With `--tailnet`, it is this computer's Tailscale name. The apps work from
+  any network, the home one included, and only while Tailscale is running on
+  this computer and switched on in the reader's Tailscale app. On a computer that
+  is not on a tailnet the command stops and says so.
+- With `--host ADDRESS`, it is the address or name you give. Repeat `--host`
+  to put more in the certificate; the reader is given the first, or the
+  Tailscale name when `--tailnet` is given too.
+
+When this computer is on a tailnet, its tailnet name and address go into the
+certificate in the first two cases, and the command says so in one line. That
+is what lets you change between them later without the reader having to trust
+anything new. With `--host` the certificate names what you gave and nothing
+else. The companion learns about the tailnet by asking the Tailscale
+command-line tool; where that is missing or does not answer within two
+seconds, the computer is treated as not being on one.
+
+The reader keeps one address, so it is one or the other: run the command
+again to change it. To use these apps away from home, save the reader's
+tailnet address first so the computer can find it there, then pair:
+
+```sh
+kobo pair kobo --device 100.64.0.7
+kobo stream init --tailnet
+```
+
+When this computer's address on the local network changes, the next
+`kobo stream` session renews Paperterm's certificate for the new address and
+keeps every name and tailnet address in it. It speaks up only when the
+address the reader was given, or may have been given, is one this computer no
+longer has.
+
 ## Sending a file
 
 `kobo send FILE` sends a file or folder to the app that opens it and says

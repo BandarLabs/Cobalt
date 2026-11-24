@@ -156,6 +156,20 @@ Type that address where the app asks for your server. The reader knows your
 tailnet's names while Tailscale is running, and the certificate is one every
 app already trusts, so nothing is installed on the reader.
 
+Apps that pair with your computer need no certificate from you: Paperterm,
+Sidekick, Deck and the Articles shelf in Books use the one the computer made
+when it was paired. To have them reach the computer over your tailnet, pair
+with its tailnet name. On the computer, with Tailscale on:
+
+```sh
+kobo stream init --tailnet     # Paperterm
+kobo sidekick init --tailnet   # Sidekick, Deck, Books and Paperterm
+```
+
+They then work from any network while Tailscale is on at both ends, and not
+without it. The same commands without `--tailnet` go back to the computer's
+address on your own network.
+
 This reaches the computers on your tailnet and nothing behind them. The
 reader does not use a network another device shares, and does not send its
 own traffic through an exit node.
@@ -381,8 +395,9 @@ approved from a phone and been reached over its tailnet. What that showed:
 - A program left listening on a port was refused by name, once.
 
 Nobody has yet seen, on a reader: staying connected outside Cobalt, the
-shared network, the reader reached from outside its own Wi-Fi, or the key
-outliving a restart (the folder it is kept in did). So a run that gets
+shared network, the reader reached from outside its own Wi-Fi, an app
+reaching a paired computer over the tailnet, or the key outliving a restart
+(the folder it is kept in did). So a run that gets
 further is evidence as well as a test. With the reader at `READER` on your Wi-Fi,
 capture these before switching Tailscale on, once it says **Connected**, and
 after leaving Cobalt:

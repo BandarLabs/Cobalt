@@ -67,6 +67,7 @@ mod sidekick;
 mod stardict;
 mod steps;
 mod sync;
+mod tailnet;
 mod targets;
 mod ui;
 
@@ -1574,18 +1575,28 @@ fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
 /// the address the certificate is minted for. Once a reader is saved with
 /// `kobo pair` it is that reader, found by its serial, and never whichever
 /// reader happens to answer.
+///
+/// A computer on a tailnet is reachable there too, so its tailnet name and
+/// address go into the certificate without being asked for. Which host the
+/// reader is given is still a choice, because the reader keeps one: see
+/// [`tailnet::plan`].
 fn stream_init(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str =
-        "usage: kobo stream init [--sim | --device IP | --reader NAME] [--host ADDRESS ...]";
+    const USAGE: &str = "usage: kobo stream init [--sim | --device IP | --reader NAME] \
+                         [--host ADDRESS ...] [--tailnet]";
     let mut device = None;
     let mut nickname = None;
     let mut simulator = false;
+    let mut prefer_tailnet = false;
     let mut hosts = Vec::new();
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
             "--sim" => {
                 simulator = true;
+                index += 1;
+            }
+            "--tailnet" => {
+                prefer_tailnet = true;
                 index += 1;
             }
             "--device" | "-s" => {
@@ -1597,7 +1608,6 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
                 index += 2;
             }
             "--host" => {
-                hosts.push("--host".to_owned());
                 hosts.push(arguments.get(index + 1).ok_or(USAGE)?.clone());
                 index += 2;
             }
@@ -1605,32 +1615,48 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
         }
     }
     if simulator {
-        if device.is_some() || nickname.is_some() {
+        // The simulator is on this computer and reaches it over loopback,
+        // where a tailnet has no part to play.
+        if device.is_some() || nickname.is_some() || prefer_tailnet {
             return Err(USAGE.to_owned());
         }
         return stream_init_simulator(&hosts);
     }
     // A reader named on the command line is checked before anything is minted
     // or printed, so a typo does not leave a half-done pairing behind.
-    let search = match device {
-        Some(host) => {
-            if !valid_device_host(&host) {
-                return Err(format!("{host:?} is not an address this can reach"));
-            }
-            ReaderSearch::Found(host)
-        }
-        None => saved_reader_search(nickname.as_deref())?,
-    };
-    // The certificate has to name an address the reader can reach. Without
-    // --host that is this computer's own address, which it can find.
-    if hosts.is_empty() {
-        if let Some(address) = connect::local_address() {
-            println!("Minting the certificate for this computer at {address}.");
-            hosts.push("--host".to_owned());
-            hosts.push(address);
+    if let Some(host) = &device {
+        if !valid_device_host(host) {
+            return Err(format!("{host:?} is not an address this can reach"));
         }
     }
-    kobo_stream::init(&hosts)?;
+    // The certificate has to name an address the reader can reach. Without
+    // --host that is this computer's own address, which it can find, and its
+    // tailnet name and address when it has them. Decided before the reader
+    // is looked for, so --tailnet on a computer with no tailnet is refused
+    // at once and not after a minute spent waiting for a reader to wake.
+    let local = if hosts.is_empty() {
+        connect::local_address()
+    } else {
+        None
+    };
+    let plan = tailnet::plan(
+        &hosts,
+        local.as_deref(),
+        prefer_tailnet,
+        "kobo stream init",
+        &tailnet::Installed,
+    )?;
+    let search = match device {
+        Some(host) => ReaderSearch::Found(host),
+        None => saved_reader_search(nickname.as_deref())?,
+    };
+    if let Some(address) = &local {
+        println!("Minting the certificate for this computer at {address}.");
+    }
+    if let Some(named) = &plan.named {
+        println!("{named}");
+    }
+    kobo_stream::init(&host_flags(&plan.certificate))?;
     // Minting is not pairing, and this used to read as though it were: the
     // identity was minted, "Paperterm is ready to pair" was printed with a
     // code, and only then did the last line admit the trust root was never
@@ -1652,20 +1678,25 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
             kobo_stream::pairing_details(kobo_stream::DEFAULT_PORT)?
         ));
     };
-    stream_pair_reader(
-        &reader,
-        hosts.get(1).map(String::as_str),
-        nickname.as_deref(),
-    )
+    stream_pair_reader(&reader, &plan, nickname.as_deref())
+}
+
+/// `hosts` as the `--host` flags both mints take.
+fn host_flags(hosts: &[String]) -> Vec<String> {
+    hosts
+        .iter()
+        .flat_map(|host| ["--host".to_owned(), host.clone()])
+        .collect()
 }
 
 /// Installs Paperterm's trust root on a found reader and writes its pairing
 /// there, then says what the owner has left to do.
 fn stream_pair_reader(
     reader: &str,
-    computer: Option<&str>,
+    plan: &tailnet::Plan,
     nickname: Option<&str>,
 ) -> Result<(), String> {
+    let computer = plan.written.as_deref();
     let authority = stream_authority()?;
     let root = fs::read_to_string(&authority)
         .map_err(|error| format!("read {}: {error}", authority.display()))?;
@@ -1708,6 +1739,14 @@ fn stream_pair_reader(
         println!(
             "Paperterm on {reader} is paired with this computer. There is nothing to type on the reader."
         );
+        if let Some(reach) = &plan.reach {
+            println!("{reach}");
+        }
+        // Only sharpens what a later session says if this computer moves, so
+        // a record that cannot be written does not undo a pairing that was.
+        if let Some(computer) = computer {
+            let _ignored = kobo_stream::record_paired_host(computer);
+        }
     }
     if restart {
         println!("Close Cobalt on the reader and open it again, once, so it trusts this computer.");
@@ -1726,9 +1765,9 @@ fn stream_pair_reader(
 fn stream_init_simulator(hosts: &[String]) -> Result<(), String> {
     let mut hosts = hosts.to_vec();
     if hosts.is_empty() {
-        hosts = vec!["--host".to_owned(), "127.0.0.1".to_owned()];
+        hosts = vec!["127.0.0.1".to_owned()];
     }
-    kobo_stream::init(&hosts)?;
+    kobo_stream::init(&host_flags(&hosts))?;
     let state = kobo_sim::simulated_state_root("paperterm");
     fs::create_dir_all(&state).map_err(|error| format!("create {}: {error}", state.display()))?;
     let pairing = format!(
@@ -2062,6 +2101,7 @@ const STREAM_START: &str = "Paperterm shares a terminal on this computer with yo
 1. Pair once: kobo stream init
    It pairs Paperterm on your saved reader, so there is nothing to type there.
    kobo sidekick init does the same and pairs Sidekick and Deck too.
+   To use Paperterm away from home over Tailscale, add --tailnet to either.
 2. Share a terminal: kobo stream terminal
 3. Open Paperterm on the reader.
 
@@ -2073,13 +2113,24 @@ Keep the computer awake. Press Ctrl+] on the computer to stop sharing.
 For custom commands and other advanced options: kobo stream --help";
 
 fn stream_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo stream init [--device IP] [--reader NAME] [--host ADDRESS ...]\n\
+    const USAGE: &str = "usage: kobo stream init [--device IP] [--reader NAME] [--host ADDRESS ...] [--tailnet]\n\
                          \x20      kobo stream demo [--port PORT]\n\
                          \x20      kobo stream terminal|monitor [--port PORT]\n\
                          \x20      kobo stream pairing [--port PORT]\n\
                          \x20      kobo stream [--grid COLSxROWS] [--controls | --interactive] \
                          [--read-only] [--port PORT] -- COMMAND [ARG ...]\n\
-                         Host-only. The reader never opens a shell; it paints rows this command serves.";
+                         Host-only. The reader never opens a shell; it paints rows this command serves.\n\
+                         \n\
+                         init gives the reader one address for this computer:\n\
+                         \x20 (neither)       This computer's address on the network it is on. Works while the\n\
+                         \x20                 reader is on the same network.\n\
+                         \x20 --tailnet       This computer's Tailscale name. Works from any network, and only\n\
+                         \x20                 while Tailscale is on here and on the reader.\n\
+                         \x20 --host ADDRESS  The address or name you give. Repeat it to name more in the\n\
+                         \x20                 certificate; the reader is given the first, or the Tailscale\n\
+                         \x20                 name when --tailnet is given too.\n\
+                         When this computer is on a tailnet, the certificate names its tailnet name and\n\
+                         address either way, unless you name the hosts yourself with --host.";
     if arguments.is_empty() {
         println!("{STREAM_START}");
         return Ok(());

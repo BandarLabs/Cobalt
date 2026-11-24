@@ -59,6 +59,31 @@ fn stream_init_names_its_arguments_and_nothing_else() {
 }
 
 #[test]
+fn stream_init_refuses_the_tailnet_name_before_looking_for_a_reader_when_there_is_no_tailnet() {
+    // Under test the Tailscale tool is never started, so this computer has
+    // no tailnet. The refusal has to come before the reader is looked for:
+    // the address here is one nothing answers at, and reaching for it would
+    // take the whole of an SSH timeout.
+    let started = std::time::Instant::now();
+    let error = super::stream_init(&[
+        "--tailnet".to_owned(),
+        "--device".to_owned(),
+        "192.0.2.1".to_owned(),
+    ])
+    .expect_err("refused");
+    assert!(error.contains("not on a tailnet"), "{error}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}
+
+#[test]
+fn stream_init_refuses_the_tailnet_name_for_the_simulator() {
+    // The simulator reaches this computer over loopback.
+    let error =
+        super::stream_init(&["--sim".to_owned(), "--tailnet".to_owned()]).expect_err("refused");
+    assert!(error.starts_with("usage: kobo stream init"), "{error}");
+}
+
+#[test]
 fn the_stream_authority_says_which_file_is_missing() {
     // Under an empty root this names the file rather than failing later
     // inside an install with nothing to point at.
