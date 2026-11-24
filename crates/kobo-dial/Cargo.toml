@@ -1,0 +1,17 @@
+[package]
+name = "kobo-dial"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+description = "Which of a paired computer's hosts an app dials, and when it tries the other"
+
+# Only the protocol, for the failure an app is told about. Nothing here may
+# reach kobo-sdk: a change to the SDK rebuilds every Store app, and this is
+# used by four.
+[dependencies]
+kobo-protocol = { path = "../kobo-protocol" }
+
+[lints]
+workspace = true

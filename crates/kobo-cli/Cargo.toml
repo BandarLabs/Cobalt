@@ -27,6 +27,9 @@ kobo-net = { path = "../kobo-net" }
 kobo-stream = { path = "../kobo-stream" }
 kobo-doc = { path = "../kobo-doc" }
 kobo-dict = { path = "../kobo-dict" }
+# The hosts record each paired app reads beside its pairing, written here in
+# the form the apps read it.
+kobo-dial = { path = "../kobo-dial" }
 kobo-frame-host = { path = "../kobo-frame-host" }
 kobo-music-host = { path = "../kobo-music-host" }
 kobo-vault-host = { path = "../kobo-vault-host" }

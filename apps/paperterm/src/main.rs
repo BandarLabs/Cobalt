@@ -19,6 +19,9 @@ const FAILURE_SLEEP_SECONDS: u32 = 5;
 const MAX_REPLY_BYTES: u32 = 64 * 1024;
 const MAX_KEY_BYTES: usize = 64;
 const PAIRING: &str = "pairing";
+/// Every host the paired computer answers at, saved beside [`PAIRING`] so a
+/// Paperterm older than this one reads that record as it always did.
+const HOSTS: &str = kobo_dial::HOSTS_KEY;
 const REPAIR: &str = "repair";
 const PAIRING_MENU: &str = "pairing-menu";
 const RETRY_PAIRING: &str = "retry-pairing";
@@ -110,6 +113,16 @@ enum Reached {
     Before,
 }
 
+/// How a lease request was handed to the runtime.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LeaseSent {
+    /// With the runtime's own second attempt, as every request is when
+    /// there is nowhere else to go.
+    WithRetry,
+    /// Once, because another host was waiting behind this one.
+    Once,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PairingRead {
     Pending,
@@ -121,7 +134,16 @@ enum PairingRead {
 struct Paperterm {
     view: View,
     keyboard: Keyboard,
+    /// The host this pairing was made with: the one the owner typed, or the
+    /// first one the computer wrote.
     address: String,
+    /// Every host the paired computer answers at, the one to dial now first.
+    hosts: kobo_dial::Hosts,
+    /// The hosts record as the store last gave it, kept until the pairing it
+    /// belongs beside has been read.
+    hosts_record: Option<Vec<u8>>,
+    /// How the lease in flight was handed to the runtime.
+    lease_sent: LeaseSent,
     code: String,
     rows: Vec<String>,
     cursor: Option<Caret>,
@@ -170,6 +192,9 @@ impl Default for Paperterm {
             view: View::Opening,
             keyboard: Keyboard::new(),
             address: String::new(),
+            hosts: kobo_dial::Hosts::default(),
+            hosts_record: None,
+            lease_sent: LeaseSent::WithRetry,
             code: String::new(),
             rows: Vec::new(),
             cursor: None,
@@ -451,17 +476,44 @@ impl Paperterm {
         self.rows.resize(usize::from(grid.1), String::new());
         self.viewport = grid;
     }
+    /// The host every request goes to now.
+    fn host(&self) -> &str {
+        match self.hosts.current() {
+            "" => &self.address,
+            host => host,
+        }
+    }
+    /// Asks for a lease, which is where each connection starts and so where
+    /// Paperterm finds out which of the computer's hosts is there.
     fn acquire_lease(&mut self, context: &mut Context) {
+        self.request_lease(context, false);
+    }
+    /// `again` is the second attempt at a host that was sent once and found
+    /// the reader without a network, which gets the runtime's own retry.
+    fn request_lease(&mut self, context: &mut Context, again: bool) {
         if self.lease.is_some() || self.lease_task.is_some() {
             return;
         }
-        self.lease_task = context.spawn_retrying(Task::Fetch {
-            url: format!("https://{}/lease?token={}", self.address, self.code),
+        let work = Task::Fetch {
+            url: format!("https://{}/lease?token={}", self.host(), self.code),
             offset: 0,
             max_bytes: MAX_REPLY_BYTES,
             credential: None,
             headers: Vec::new(),
-        });
+        };
+        // With another host behind this one, it is asked once. The runtime's
+        // own second attempt at a host that is not there would wait out a
+        // second connection timeout, thirty seconds, before the other host
+        // was tried at all.
+        self.lease_sent = if self.hosts.other_left() && !again {
+            LeaseSent::Once
+        } else {
+            LeaseSent::WithRetry
+        };
+        self.lease_task = match self.lease_sent {
+            LeaseSent::Once => context.spawn(work),
+            LeaseSent::WithRetry => context.spawn_retrying(work),
+        };
         if self.lease_task.is_some() {
             self.lease_pairing_generation = self.pairing_generation;
         }
@@ -478,7 +530,11 @@ impl Paperterm {
         self.retain_grid((columns, rows));
         let url = format!(
             "https://{}/hello?token={}&grid={}x{}&lease={lease}&generation={}",
-            self.address, self.code, columns, rows, self.grid_generation
+            self.host(),
+            self.code,
+            columns,
+            rows,
+            self.grid_generation
         );
         self.hello = context.spawn_retrying(Task::Fetch {
             url,
@@ -516,7 +572,7 @@ impl Paperterm {
         let lease = self.lease.unwrap_or(0);
         let url = format!(
             "https://{}/screen?token={}&session={}&seq={}&wait={LONGEST_POLL_SECONDS}&lease={lease}&generation={}",
-            self.address,
+            self.host(),
             self.code,
             self.session.unwrap_or(0),
             self.sequence,
@@ -613,7 +669,7 @@ impl Paperterm {
                 )
                 .banner_action(RETRY_PAIRING, "Retry saving");
         }
-        screen = screen.heading("Computer connection").text(&self.address);
+        screen = screen.heading("Computer connection").text(self.host());
         if let Some(message) = message {
             screen = screen.text(message);
         }
@@ -732,7 +788,8 @@ impl Paperterm {
         self.send = context.spawn(Task::Post {
             url: format!(
                 "https://{}/keys?token={}&lease={lease}",
-                self.address, self.code
+                self.host(),
+                self.code
             ),
             body,
             content_type: "application/json".to_owned(),
@@ -776,6 +833,9 @@ impl Paperterm {
                 }
             } else if let Some(code) = pairing::code(text) {
                 self.code = code;
+                // A pairing typed here names one host, whatever the computer
+                // wrote before.
+                self.hosts = kobo_dial::Hosts::one(self.address.clone());
                 self.keyboard = Keyboard::new();
                 self.pairing_to_verify = true;
                 self.view = View::Watching;
@@ -913,20 +973,36 @@ impl Paperterm {
         if !current {
             return;
         }
+        let once = std::mem::replace(&mut self.lease_sent, LeaseSent::WithRetry) == LeaseSent::Once;
         match outcome {
             TaskOutcome::Completed(bytes) => {
                 if let Some(lease) = Self::parse_lease(&bytes) {
+                    if let Some(record) = self.hosts.answered() {
+                        context.store().save(HOSTS, record);
+                    }
                     self.lease = Some(lease);
                     self.grid_generation = 0;
                     self.hello(context);
                 } else {
+                    // Something answered, so the host is there, and it is
+                    // not this computer's Paperterm host. That is the answer
+                    // for this round.
+                    self.hosts.end_round();
                     if self.set_failure(PAIRING_REFUSED) {
                         self.show(context);
                     }
                     self.retry(context);
                 }
             }
+            // Sent once and the reader had no network: the radio is often
+            // still waking. This is the second attempt the runtime would have
+            // made, at the same host, since no host is any nearer.
+            TaskOutcome::Failed(TaskError::Offline) if once => self.request_lease(context, true),
             TaskOutcome::Failed(error) => {
+                if self.hosts.failed(error) {
+                    self.acquire_lease(context);
+                    return;
+                }
                 if self.set_failure(self.failure_for(error)) {
                     self.show(context);
                 }
@@ -1129,6 +1205,9 @@ fn paperterm_terminal_keys(screen: ScreenBuilder, keys: &TerminalKeys) -> Screen
 impl KoboApp for Paperterm {
     fn on_start(&mut self, context: &mut Context) {
         context.set_orientation(Orientation::Portrait);
+        // The hosts first, so they are in hand when the pairing arrives and
+        // its first request goes out.
+        context.store().load(HOSTS);
         context.store().load(PAIRING);
         self.show(context);
     }
@@ -1139,6 +1218,12 @@ impl KoboApp for Paperterm {
         let StoreResult::Loaded { key, value } = result else {
             return;
         };
+        // The store answers in the order it was asked, so this is in hand
+        // before the pairing is.
+        if key == HOSTS {
+            self.hosts_record = value;
+            return;
+        }
         if key != PAIRING || self.pairing_read != PairingRead::Pending {
             return;
         }
@@ -1153,6 +1238,8 @@ impl KoboApp for Paperterm {
             .and_then(|text| text.split_once('\n'))
             .and_then(|(address, code)| Some((pairing::address(address)?, pairing::code(code)?)))
         {
+            self.hosts =
+                kobo_dial::Hosts::paired(&address, self.hosts_record.as_deref(), pairing::address);
             self.address = address;
             self.code = code;
             // Only a pairing the computer confirmed is ever saved.
@@ -1654,6 +1741,227 @@ mod tests {
         let shown = format!("{:?}", app.screen());
         assert!(!shown.contains("reopen Cobalt"), "{shown}");
     }
+    /// The URLs of every request `context` holds, in the order sent.
+    fn fetched(context: &Context) -> Vec<String> {
+        context
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } => Some(url.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Paperterm opened on what the computer wrote: `pairing`, and `hosts`
+    /// when there is a hosts record.
+    fn opened_on(pairing: &[u8], hosts: Option<&[u8]>) -> (Paperterm, Context) {
+        let mut app = Paperterm::default();
+        let mut context = Context::default();
+        app.on_start(&mut context);
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: HOSTS.into(),
+                value: hosts.map(<[u8]>::to_vec),
+            },
+        );
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: PAIRING.into(),
+                value: Some(pairing.to_vec()),
+            },
+        );
+        (app, context)
+    }
+
+    const AT_HOME: &str = "192.168.1.20:9332";
+    const ANYWHERE: &str = "studio.example.ts.net:9332";
+
+    fn both_hosts() -> String {
+        format!("{AT_HOME}\n{ANYWHERE}")
+    }
+
+    #[test]
+    fn a_pairing_written_before_there_were_two_hosts_dials_its_one_host_as_before() {
+        let (mut app, mut context) = opened_on(b"192.168.1.20:9332\nabc234", None);
+        let lease = app.lease_task.expect("a lease request");
+        assert!(fetched(&context)[0].starts_with("https://192.168.1.20:9332/lease?"));
+        app.on_task(
+            &mut context,
+            lease,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        assert_eq!(app.failure.as_deref(), Some(NOT_ANSWERING));
+        assert_eq!(fetched(&context).len(), 1, "there is no other host to try");
+    }
+
+    #[test]
+    fn the_record_an_older_paperterm_reads_is_the_same_for_a_pairing_with_two_hosts() {
+        // An older Paperterm never asks for the hosts record, so it opens on
+        // the pairing alone, and that is unchanged: one host, then the code.
+        let pairing = format!("{AT_HOME}\nabc234");
+        let (address, code) = pairing.split_once('\n').expect("two lines");
+        assert_eq!(pairing::address(address).as_deref(), Some(AT_HOME));
+        assert_eq!(pairing::code(code).as_deref(), Some("abc234"));
+        let (app, context) = opened_on(pairing.as_bytes(), Some(both_hosts().as_bytes()));
+        assert!(app.lease_task.is_some());
+        assert!(fetched(&context)[0].starts_with(&format!("https://{AT_HOME}/lease?")));
+    }
+
+    #[test]
+    fn a_computer_that_is_not_at_its_first_host_is_asked_at_the_other_at_once() {
+        let pairing = format!("{AT_HOME}\nabc234");
+        let (mut app, mut context) = opened_on(pairing.as_bytes(), Some(both_hosts().as_bytes()));
+        let lease = app.lease_task.expect("a lease request");
+        app.on_task(
+            &mut context,
+            lease,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        assert_eq!(
+            app.failure, None,
+            "nothing is said while the other host is asked"
+        );
+        assert!(app.nap.is_none(), "the other host is asked without a pause");
+        let urls = fetched(&context);
+        assert!(
+            urls[1].starts_with(&format!("https://{ANYWHERE}/lease?")),
+            "{urls:?}"
+        );
+        let lease = app.lease_task.expect("a lease request at the other host");
+        app.on_task(
+            &mut context,
+            lease,
+            TaskOutcome::Completed(br#"{"lease":7}"#.to_vec()),
+        );
+        // The host that answered is first from now on, here and next time.
+        assert!(context.commands().iter().any(|command| matches!(
+            command,
+            Command::Store(StoreRequest::Save { key, value })
+                if key == HOSTS && value == format!("{ANYWHERE}\n{AT_HOME}").as_bytes()
+        )));
+        let urls = fetched(&context);
+        assert!(
+            urls[2].starts_with(&format!("https://{ANYWHERE}/hello?")),
+            "{urls:?}"
+        );
+        let (app, context) = opened_on(
+            pairing.as_bytes(),
+            Some(format!("{ANYWHERE}\n{AT_HOME}").as_bytes()),
+        );
+        assert!(app.lease_task.is_some());
+        assert!(fetched(&context)[0].starts_with(&format!("https://{ANYWHERE}/lease?")));
+    }
+
+    #[test]
+    fn a_refused_code_or_a_slow_computer_is_never_taken_to_the_other_host() {
+        let pairing = format!("{AT_HOME}\nabc234");
+        for (error, said) in [
+            (kobo_sdk::TaskError::Unauthorized, CODE_REFUSED),
+            (kobo_sdk::TaskError::TimedOut, NOT_ANSWERING),
+        ] {
+            let (mut app, mut context) =
+                opened_on(pairing.as_bytes(), Some(both_hosts().as_bytes()));
+            let lease = app.lease_task.expect("a lease request");
+            app.on_task(&mut context, lease, TaskOutcome::Failed(error));
+            assert_eq!(app.failure.as_deref(), Some(said), "{error:?}");
+            assert_eq!(fetched(&context).len(), 1, "{error:?}");
+        }
+    }
+
+    #[test]
+    fn a_reader_still_waking_its_radio_asks_the_same_host_again() {
+        let pairing = format!("{AT_HOME}\nabc234");
+        let (mut app, mut context) = opened_on(pairing.as_bytes(), Some(both_hosts().as_bytes()));
+        let lease = app.lease_task.expect("a lease request");
+        app.on_task(
+            &mut context,
+            lease,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Offline),
+        );
+        assert_eq!(app.failure, None);
+        let urls = fetched(&context);
+        assert!(
+            urls[1].starts_with(&format!("https://{AT_HOME}/lease?")),
+            "{urls:?}"
+        );
+        // That second attempt, if the host is then not there, still moves on.
+        let lease = app.lease_task.expect("a second lease request");
+        app.on_task(
+            &mut context,
+            lease,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        assert!(fetched(&context)[2].starts_with(&format!("https://{ANYWHERE}/lease?")));
+    }
+
+    #[test]
+    fn when_neither_host_answers_it_is_said_once_and_the_next_try_starts_at_the_first() {
+        let pairing = format!("{AT_HOME}\nabc234");
+        let (mut app, mut context) = opened_on(pairing.as_bytes(), Some(both_hosts().as_bytes()));
+        for _ in 0..2 {
+            let lease = app.lease_task.expect("a lease request");
+            app.on_task(
+                &mut context,
+                lease,
+                TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+            );
+        }
+        assert_eq!(app.failure.as_deref(), Some(NOT_ANSWERING));
+        let nap = app.nap.expect("a pause before trying again");
+        app.on_task(&mut context, nap, TaskOutcome::Completed(Vec::new()));
+        let urls = fetched(&context);
+        assert_eq!(urls.len(), 3, "{urls:?}");
+        assert!(
+            urls[2].starts_with(&format!("https://{AT_HOME}/lease?")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn a_hosts_record_from_another_computer_is_not_dialled() {
+        let (mut app, mut context) = opened_on(
+            b"laptop:9332\nabc234",
+            Some(b"10.0.0.4:9332\nother.example.ts.net:9332"),
+        );
+        let lease = app.lease_task.expect("a lease request");
+        app.on_task(
+            &mut context,
+            lease,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        let urls = fetched(&context);
+        assert_eq!(urls.len(), 1, "{urls:?}");
+        assert!(urls[0].starts_with("https://laptop:9332/lease?"));
+    }
+
+    #[test]
+    fn a_pairing_typed_on_the_reader_dials_only_the_host_typed() {
+        let pairing = format!("{AT_HOME}\nabc234");
+        let (mut app, mut context) = opened_on(pairing.as_bytes(), Some(both_hosts().as_bytes()));
+        app.on_action(&mut context, action_id(REPAIR));
+        app.keyboard = Keyboard::with_text(AT_HOME);
+        app.on_action(&mut context, action_id(KB_ENTER));
+        app.keyboard = Keyboard::with_text("xyz789");
+        app.on_action(&mut context, action_id(KB_ENTER));
+        let lease = app.lease_task.expect("a lease request");
+        app.on_task(
+            &mut context,
+            lease,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        let urls = fetched(&context);
+        assert!(urls.last().is_some_and(|url| url.contains("token=xyz789")));
+        assert!(!urls
+            .iter()
+            .any(|url| url.contains(ANYWHERE) && url.contains("xyz789")));
+    }
+
     #[test]
     fn a_first_pairing_menu_does_not_mention_a_saved_connection() {
         let mut app = Paperterm {

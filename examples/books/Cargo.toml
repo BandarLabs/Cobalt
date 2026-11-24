@@ -11,6 +11,7 @@ name = "kobo-books"
 path = "src/main.rs"
 
 [dependencies]
+kobo-dial = { path = "../../crates/kobo-dial" }
 kobo-bookview = { path = "../../crates/kobo-bookview", features = ["raster"] }
 kobo-doc = { path = "../../crates/kobo-doc" }
 kobo-image = { path = "../../crates/kobo-image" }

@@ -11,6 +11,7 @@ members = [
     "crates/kobo-doc",
     "crates/kobo-doctor",
     "crates/kobo-dict",
+    "crates/kobo-dial",
     "crates/kobo-flashcards-format",
     "crates/kobo-frame-host",
     "crates/kobo-frame-plan",
