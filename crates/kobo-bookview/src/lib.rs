@@ -200,8 +200,11 @@ pub struct BookView {
     /// Where the open document was fetched from, when it came off the web.
     ///
     /// Every picture it names is resolved against this, and only pictures that
-    /// resolve to the same host are asked for.
+    /// resolve to the same host are asked for, unless [`Self::picture_hosts`]
+    /// says otherwise.
     origin: Option<String>,
+    /// Where the open document's pictures may come from.
+    picture_hosts: PictureHosts,
     /// Pictures named by the document that have still to be asked for.
     wanted: VecDeque<String>,
     /// The fetch in flight, and what it is for.
@@ -411,6 +414,12 @@ impl BookView {
     ///
     /// Returns whether anything readable came out of the markup. `false` is a
     /// page with no prose in it at all, and the view is left holding nothing.
+    /// Lets pictures of documents opened from now on come from the hosts
+    /// given, rather than only the page's own: see [`PictureHosts`].
+    pub fn set_picture_hosts(&mut self, hosts: PictureHosts) {
+        self.picture_hosts = hosts;
+    }
+
     pub fn open_html(
         &mut self,
         context: &mut Context,
@@ -506,7 +515,7 @@ impl BookView {
             return;
         };
         while let Some(name) = self.wanted.pop_front() {
-            let Some(url) = picture_url(&origin, &name) else {
+            let Some(url) = picture_url_from(&origin, &name, self.picture_hosts) else {
                 continue;
             };
             // Not retried: a picture is worth one attempt. The page is already
@@ -1272,8 +1281,36 @@ fn copy_title(book: &str) -> String {
 /// Explicit HTTPS ports are supported, but an absolute image must use the
 /// document's effective port. Root-relative paths stay on that origin.
 /// Parent traversal, credentials and protocol-relative URLs are refused.
+///
+/// An application that reads only what its owner chose to follow can widen
+/// this with [`picture_url_from`].
 #[must_use]
 pub fn picture_url(origin: &str, name: &str) -> Option<String> {
+    picture_url_from(origin, name, PictureHosts::OwnSite)
+}
+
+/// Where an article's pictures may be fetched from.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PictureHosts {
+    /// The page's own host and its sub-domains, and nowhere else: see
+    /// [`picture_url`].
+    #[default]
+    OwnSite,
+    /// Any public web host as well, on the standard HTTPS port.
+    ///
+    /// For a reader of feeds its owner chose to follow. Publishers keep their
+    /// pictures on a separate image host far more often than not: every
+    /// newsletter on one large platform does, so under [`Self::OwnSite`] its
+    /// articles showed captions with nothing above them. The owner chose this
+    /// knowing a picture can also be a publisher's read receipt. What stays
+    /// refused is the reader's own network: an address written as numbers, a
+    /// name with no dot in it, and the names only a home network answers.
+    Public,
+}
+
+/// [`picture_url`], with the hosts a picture may come from given.
+#[must_use]
+pub fn picture_url_from(origin: &str, name: &str, hosts: PictureHosts) -> Option<String> {
     if name.is_empty() || name.len() > MAX_PICTURE_NAME {
         return None;
     }
@@ -1283,7 +1320,11 @@ pub fn picture_url(origin: &str, name: &str) -> Option<String> {
         let host = target.host.to_ascii_lowercase();
         let home_host = home.host.to_ascii_lowercase();
         let same = host == home_host || host.ends_with(&format!(".{home_host}"));
-        return (same && target.port == home.port).then(|| name.to_owned());
+        if same && target.port == home.port {
+            return Some(name.to_owned());
+        }
+        let public = hosts == PictureHosts::Public && target.port == 443 && is_public_name(&host);
+        return public.then(|| name.to_owned());
     }
     if name.contains("://") || name.starts_with("//") || name.starts_with("data:") {
         return None;
@@ -1309,6 +1350,34 @@ pub fn picture_url(origin: &str, name: &str) -> Option<String> {
     };
     kobo_net::parse(&resolved).ok()?;
     Some(resolved)
+}
+
+/// Whether a host is a name on the public web rather than something on the
+/// reader's own network.
+///
+/// By its shape alone, since nothing is looked up here: an address written
+/// as numbers is refused whatever it is, because a public picture has a
+/// name and a router does not need one, and so are a bare name and the
+/// suffixes home networks hand out.
+fn is_public_name(host: &str) -> bool {
+    const HOME: [&str; 7] = [
+        ".local",
+        ".lan",
+        ".home",
+        ".internal",
+        ".intranet",
+        ".localhost",
+        ".home.arpa",
+    ];
+    let host = host.trim_end_matches('.');
+    let numeric = host.starts_with('[')
+        || host.contains(':')
+        || host.parse::<std::net::Ipv4Addr>().is_ok()
+        || host
+            .rsplit('.')
+            .next()
+            .is_some_and(|last| last.chars().all(|c| c.is_ascii_digit()));
+    !numeric && host.contains('.') && !HOME.iter().any(|suffix| host.ends_with(suffix))
 }
 
 /// The box an illustration is fitted into, in pixels.
@@ -1382,7 +1451,7 @@ mod tests {
         );
     }
 
-    use super::{picture_url, pictures_in, BookView, Step};
+    use super::{picture_url, picture_url_from, pictures_in, BookView, PictureHosts, Step};
     use kobo_doc::{Block, Document};
     use kobo_read::{Memory, Reader};
     use kobo_sdk::{Command, Context, PictureHandle, Task, TaskError, TaskId, TaskOutcome};
@@ -1548,6 +1617,39 @@ mod tests {
     /// A page can name anything at all, and most of it is not a picture this
     /// device is willing to go and get. The rule is the page's own host: what
     /// a document refers to is fetched from where the document came from.
+    #[test]
+    fn a_reader_of_followed_feeds_takes_pictures_from_public_hosts_and_never_the_home_network() {
+        let origin = "https://www.slowboring.com/p/permitting";
+        let cdn = "https://substackcdn.com/image/fetch/$s_!woHD!,w_1456,c_limit,f_auto/https%3A%2F%2Fexample.s3.amazonaws.com%2Fa.jpeg";
+        assert_eq!(picture_url(origin, cdn), None);
+        assert_eq!(
+            picture_url_from(origin, cdn, PictureHosts::Public).as_deref(),
+            Some(cdn)
+        );
+        for refused in [
+            "https://192.168.1.1/a.png",
+            "https://10.0.0.2/a.png",
+            "https://[fe80::1]/a.png",
+            "https://router/a.png",
+            "https://printer.local/a.png",
+            "https://nas.lan/a.png",
+            "https://box.home.arpa/a.png",
+            "https://images.example.com:8443/a.png",
+            "http://images.example.com/a.png",
+            "//images.example.com/a.png",
+        ] {
+            assert_eq!(
+                picture_url_from(origin, refused, PictureHosts::Public),
+                None,
+                "{refused}"
+            );
+        }
+        assert_eq!(
+            picture_url_from(origin, "/img/a.png", PictureHosts::Public).as_deref(),
+            Some("https://www.slowboring.com/img/a.png")
+        );
+    }
+
     #[test]
     fn a_picture_address_that_leaves_the_page_is_refused() {
         let origin = "https://arxiv.org/html/2401.00001v2/";
