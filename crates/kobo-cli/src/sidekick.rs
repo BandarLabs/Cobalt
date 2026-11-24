@@ -50,8 +50,24 @@ const DELIVERY_PATIENCE: Duration = Duration::from_secs(60);
 const DEVICE_TRUST: &str = "/mnt/onboard/.adds/cobalt/trust";
 const DEVICE_STATE: &str = "/mnt/onboard/.adds/cobalt/state";
 
-const USAGE: &str = "usage: kobo sidekick init [--sim | --device HOST | --reader NAME] [--host ADDRESS ...]\n\
+const USAGE: &str = "usage: kobo sidekick init [--sim | --device HOST | --reader NAME] [--host ADDRESS ...] [--tailnet]\n\
                      \x20      kobo sidekick setup [AGENT] | run [--foreground] | status | stop | sample | test";
+
+/// What `kobo sidekick init --help` prints: the usage, and what each way of
+/// choosing this computer's address means for where the pairing works.
+const INIT_HELP: &str = "usage: kobo sidekick init [--sim | --device HOST | --reader NAME] [--host ADDRESS ...] [--tailnet]
+
+Pairs Sidekick, Deck, Books and Paperterm on the reader with this computer.
+Each is given one address for this computer:
+  (neither)       This computer's address on the network it is on. Works while the
+                  reader is on the same network.
+  --tailnet       This computer's Tailscale name. Works from any network, and only
+                  while Tailscale is on here and on the reader.
+  --host ADDRESS  The address or name you give. Repeat it to name more in the
+                  certificates; the reader is given the first, or the Tailscale
+                  name when --tailnet is given too.
+When this computer is on a tailnet, the certificates name its tailnet name and
+address either way, unless you name the hosts yourself with --host.";
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
     match arguments.split_first() {
@@ -79,46 +95,28 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
 /// trust roots and all three pairings are written onto it over SSH. Without
 /// one, the address and codes are printed for the reader's screens instead.
 fn init(arguments: &[String]) -> Result<(), String> {
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+    {
+        println!("{INIT_HELP}");
+        return Ok(());
+    }
     let (target, rest) = super::targets::TargetArgs::parse(arguments)?;
-    let hosts = parse_hosts(&rest)?;
+    let (hosts, prefer_tailnet) = parse_hosts(&rest)?;
     let helper = locate()?;
     // The reader is found before anything is minted, so a name that does not
     // resolve leaves nothing half done behind it.
     let destination = destination(&target)?;
-    let mut flags = Vec::new();
-    for host in &hosts {
-        flags.push("--host".to_owned());
-        flags.push(host.clone());
+    let simulator = matches!(destination, Some(Destination::Simulator));
+    if simulator && prefer_tailnet {
+        return Err(USAGE.to_owned());
     }
-    let output = Command::new(&helper)
-        .arg("init")
-        .args(&flags)
-        .output()
-        .map_err(|error| format!("run {}: {error}", helper.display()))?;
-    if !output.status.success() {
-        return Err(format!(
-            "the Sidekick helper could not prepare this computer: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    // The simulator runs on this computer and reaches it over loopback.
-    let computer = hosts
-        .first()
-        .cloned()
-        .or_else(super::connect::local_address)
-        .or_else(|| {
-            matches!(destination, Some(Destination::Simulator)).then(|| "127.0.0.1".to_owned())
-        })
-        .ok_or(
-            "This computer has no network address a reader could reach. Join the reader's \
-             Wi-Fi and run kobo sidekick init again.",
-        )?;
-    let mut stream_flags = vec!["--host".to_owned(), computer.clone()];
-    for host in hosts.iter().skip(1) {
-        stream_flags.push("--host".to_owned());
-        stream_flags.push(host.clone());
-    }
-    kobo_stream::init(&stream_flags)?;
+    let Minted {
+        plan,
+        computer,
+        helper_is_stale,
+    } = mint(&helper, &hosts, prefer_tailnet, simulator)?;
     let pairing = Pairing::gather(&computer)?;
     let Some(destination) = destination else {
         println!(
@@ -127,6 +125,9 @@ fn init(arguments: &[String]) -> Result<(), String> {
              or enter these on the reader:\n\n{}",
             pairing.by_hand()
         );
+        if helper_is_stale {
+            println!("\n{RESTART_HELPER}");
+        }
         return Ok(());
     };
     let restart = match &destination {
@@ -149,11 +150,20 @@ fn init(arguments: &[String]) -> Result<(), String> {
                 "Paired Sidekick, Deck, Books and Paperterm on {host} with this computer at {computer}.\n\
                  There is nothing to type on the reader."
             );
+            if let Some(reach) = &plan.reach {
+                println!("{reach}");
+            }
+            // Only sharpens what a later Paperterm session says if this
+            // computer moves, so failing to write it undoes nothing.
+            let _ignored = kobo_stream::record_paired_host(&computer);
             changed
         }
     };
     if restart {
         println!("{RESTART_ONCE}");
+    }
+    if helper_is_stale {
+        println!("{RESTART_HELPER}");
     }
     println!(
         "\nNext:\n  \
@@ -165,16 +175,118 @@ fn init(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// What both mints left behind for the pairing to be made from.
+struct Minted {
+    /// The hosts the certificates name, and what there is to say about them.
+    plan: super::tailnet::Plan,
+    /// The one host the reader is given for this computer.
+    computer: String,
+    /// Whether a helper is running with a certificate older than the one
+    /// just minted.
+    helper_is_stale: bool,
+}
+
+/// Decides which hosts this computer answers to and mints both identities
+/// for them: the helper's, and Paperterm's.
+fn mint(
+    helper: &Path,
+    hosts: &[String],
+    prefer_tailnet: bool,
+    simulator: bool,
+) -> Result<Minted, String> {
+    // This computer's own address, and its tailnet name and address when it
+    // has them. The simulator runs on this computer and reaches it over
+    // loopback, so a tailnet is not asked about on its account.
+    let local = if hosts.is_empty() {
+        super::connect::local_address()
+    } else {
+        None
+    };
+    let source: &dyn super::tailnet::StatusSource = if simulator {
+        &super::tailnet::NotAsked
+    } else {
+        &super::tailnet::Installed
+    };
+    let plan = super::tailnet::plan(
+        hosts,
+        local.as_deref(),
+        prefer_tailnet,
+        "kobo sidekick init",
+        source,
+    )?;
+    if let Some(named) = &plan.named {
+        println!("{named}");
+    }
+    // The helper finds the local address itself each time it starts and
+    // keeps what it is given here for good. So it is given every host but
+    // that one: an address the router handed out would otherwise stay in its
+    // certificate after the computer had moved on from it.
+    let extra: Vec<String> = plan
+        .certificate
+        .iter()
+        .filter(|host| Some(host.as_str()) != local.as_deref())
+        .cloned()
+        .collect();
+    let leaf = config()?.join("cert.pem");
+    let leaf_before = fs::read(&leaf).ok();
+    let output = Command::new(helper)
+        .arg("init")
+        .args(super::host_flags(&extra))
+        .output()
+        .map_err(|error| format!("run {}: {error}", helper.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "the Sidekick helper could not prepare this computer: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    // The helper reads its certificate when it starts. One that is already
+    // running goes on presenting the certificate it started with, which
+    // does not name a host added just now, and a reader paired with that
+    // host would be refused by a helper that looks perfectly healthy.
+    let helper_is_stale = fs::read(&leaf).ok() != leaf_before && listening();
+    let computer = plan
+        .written
+        .clone()
+        .or_else(|| simulator.then(|| "127.0.0.1".to_owned()))
+        .ok_or(
+            "This computer has no network address a reader could reach. Join the reader's \
+             Wi-Fi and run kobo sidekick init again.",
+        )?;
+    let stream_hosts = if plan.certificate.is_empty() {
+        vec![computer.clone()]
+    } else {
+        plan.certificate.clone()
+    };
+    kobo_stream::init(&super::host_flags(&stream_hosts))?;
+    Ok(Minted {
+        plan,
+        computer,
+        helper_is_stale,
+    })
+}
+
 /// Said only when a trust root was new or different, because only then does
 /// the reader need it: the runtime reads its roots when Cobalt opens.
 const RESTART_ONCE: &str = "Close Cobalt on the reader and open it again, once, so it trusts \
                             this computer.";
 
-/// The `--host` addresses, the only words `init` takes besides a target.
-fn parse_hosts(rest: &[String]) -> Result<Vec<String>, String> {
+/// Said when the certificate changed under a helper that is running.
+const RESTART_HELPER: &str = "The Sidekick helper is still running with its earlier certificate. \
+                              Run kobo sidekick stop, then kobo sidekick run, so it answers at \
+                              the new address.";
+
+/// The `--host` addresses and whether `--tailnet` was given, the only words
+/// `init` takes besides a target.
+fn parse_hosts(rest: &[String]) -> Result<(Vec<String>, bool), String> {
     let mut hosts = Vec::new();
+    let mut prefer_tailnet = false;
     let mut words = rest.iter();
     while let Some(word) = words.next() {
+        if word == "--tailnet" {
+            prefer_tailnet = true;
+            continue;
+        }
         if word != "--host" {
             return Err(USAGE.to_owned());
         }
@@ -188,7 +300,7 @@ fn parse_hosts(rest: &[String]) -> Result<Vec<String>, String> {
         }
         hosts.push(host.clone());
     }
-    Ok(hosts)
+    Ok((hosts, prefer_tailnet))
 }
 
 /// Where the pairing goes.
@@ -867,7 +979,15 @@ mod tests {
     fn init_accepts_a_target_and_host_addresses_and_nothing_else() {
         assert_eq!(
             super::parse_hosts(&words(&["--host", "studio.local", "--host", "10.0.0.4"])),
-            Ok(words(&["studio.local", "10.0.0.4"]))
+            Ok((words(&["studio.local", "10.0.0.4"]), false))
+        );
+        assert_eq!(
+            super::parse_hosts(&words(&["--tailnet"])),
+            Ok((Vec::new(), true))
+        );
+        assert_eq!(
+            super::parse_hosts(&words(&["--host", "studio.local", "--tailnet"])),
+            Ok((words(&["studio.local"]), true))
         );
         assert_eq!(
             super::parse_hosts(&words(&["--force"])),
