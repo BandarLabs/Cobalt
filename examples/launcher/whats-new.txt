@@ -8,8 +8,7 @@
 # drops changes from the end. Rewrite the whole file when the version is
 # bumped (docs/RELEASE-TRAIN.md). `cargo test -p kobo-launcher` checks it.
 
-0.3.41
-Light: set the front light's brightness from Settings.
-A calmer top bar: screen titles are larger, and an app's colour is a line under the bar.
-Larger readers: everything is drawn a little bigger on 7 inch and 10 inch panels.
-Tailscale: the app shows how much data the reader has received and sent.
+0.3.42
+Warmth: on readers with a warm light, set it warmer or cooler in Settings.
+Home and away: pair once, and Paperterm, Deck and Sidekick find your computer at home or over Tailscale.
+Update notes: Software update shows what a new version changes before you install it.
