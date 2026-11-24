@@ -53,6 +53,73 @@ impl LightLayout {
     }
 }
 
+/// Whether the warmth of a reader's front light can be set, and through
+/// which control.
+///
+/// Warmth is a second setting beside the brightness: how much of the light
+/// comes from the amber lamps and how much from the white ones. Every reader
+/// that has it publishes it as one file named `color`, holding a whole number
+/// from 0 to the number in the file `max_color` beside it, which is 10 on
+/// every reader known. What differs from board to board is where that file
+/// lives and which end of it is the warm one, and neither can be read off the
+/// reader: the file looks the same whichever way it runs. So this is a
+/// profile fact, like the touch transform, and a reader without one is
+/// answered that its warmth cannot be set rather than driven on a guess that
+/// would turn the light the wrong way.
+///
+/// # Readers that have no mapping yet
+///
+/// Each of these needs one check with the reader in hand, both ends of the
+/// scale looked at, before it gets a variant here:
+///
+/// - The Elipsa 2E (389) and one hardware revision of the Libra 2 (388) carry
+///   a different light driver. Their file is
+///   `/sys/class/leds/aw99703-bl_FL1/color`, outside the backlight class
+///   this runtime opens its light from.
+/// - The Clara HD (376), the Libra H2O (384) and the other revision of the
+///   Libra 2 are i.MX boards. Their file is
+///   `/sys/class/backlight/lm3630a_led/color`, the same name the
+///   [`Warmth::Balance`] readers use, with 0 as the warmest. Their brightness
+///   is reported to be on another control, see [`LightLayout::Imx`], and how
+///   the two behave together on those boards is part of what the check has
+///   to establish.
+/// - The Nia (382) and the Tolino Shine 5 have no confirmed warmth control.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Warmth {
+    /// No mapping. The runtime answers that this reader's warmth cannot be
+    /// set in this version, and never writes a warmth control. What every
+    /// provisional profile carries.
+    #[default]
+    Unmapped,
+    /// The `color` file of the `lm3630a_led` aggregate, the same control whose
+    /// `brightness` sets the level under [`LightLayout::Aggregate`].
+    ///
+    /// Writing it is enough on its own: the driver works the level it already
+    /// holds out again across the two lamp banks, so the brightness does not
+    /// need writing a second time. The driver stores whatever number it is
+    /// given without checking it against `max_color`, and once it holds one
+    /// past the end every later brightness write is accepted and does
+    /// nothing, so a value is always clamped before it is written.
+    Balance {
+        /// Whether 0 is the warmest setting and `max_color` the coolest. The
+        /// one fact about direction, kept in one place so that a reader found
+        /// to run the other way is corrected by changing this and nothing
+        /// else.
+        warmest_at_zero: bool,
+    },
+}
+
+/// The warmth of the `MediaTek` readers whose light is the `lm3630a_led`
+/// aggregate: the Clara BW in both hardware revisions, the Clara Colour and
+/// the Libra Colour. Their file is `/sys/class/backlight/lm3630a_led/color`,
+/// and 0 is the warmest setting, 10 the coolest.
+///
+/// One constant for all of them because they share the board design and the
+/// driver, so a correction to the direction is a correction to every one.
+pub const MEDIATEK_BALANCE: Warmth = Warmth::Balance {
+    warmest_at_zero: true,
+};
+
 /// How Cobalt learns that a submitted update has reached the panel.
 ///
 /// A profile fact rather than a controller fact, because the same MXCFB v2
@@ -372,6 +439,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     reap_nickel_supplicant: true,
     colour_panel: false,
     front_light: LightLayout::Aggregate,
+    warmth: MEDIATEK_BALANCE,
 };
 
 /// Tolino Shine 5 T302 running the Kobo Clara BW 391 software stack.
@@ -381,6 +449,9 @@ pub const TOLINO_SHINE_5_T302: DeviceProfile = DeviceProfile {
     model: "Tolino Shine 5",
     serial_prefix: "T302",
     write_ready: false,
+    // Not taken from the Clara BW with the rest: nobody has confirmed a
+    // warmth control on this reader.
+    warmth: Warmth::Unmapped,
     ..CLARA_BW_391
 };
 
@@ -458,6 +529,7 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     reap_nickel_supplicant: true,
     colour_panel: false,
     front_light: LightLayout::Aggregate,
+    warmth: MEDIATEK_BALANCE,
 };
 
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
@@ -529,6 +601,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     reap_nickel_supplicant: false,
     colour_panel: false,
     front_light: LightLayout::Aggregate,
+    warmth: Warmth::Unmapped,
 };
 
 /// Kobo Clara Colour, whose measured framebuffer geometry, HWTCON interface,
@@ -550,6 +623,7 @@ pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
     reap_nickel_supplicant: false,
     colour_panel: true,
     front_light: LightLayout::Aggregate,
+    warmth: MEDIATEK_BALANCE,
     ..CLARA_BW_391
 };
 
@@ -616,6 +690,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     reap_nickel_supplicant: true,
     colour_panel: false,
     front_light: LightLayout::Aggregate,
+    warmth: Warmth::Unmapped,
 };
 
 /// Kobo Libra 2, codename `io`, an i.MX6SLL Mark 7 device driven by
@@ -713,6 +788,7 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     reap_nickel_supplicant: true,
     colour_panel: false,
     front_light: LightLayout::Aggregate,
+    warmth: Warmth::Unmapped,
 };
 
 /// Kobo Libra Colour, a `MediaTek` HWTCON device like the Clara BW, and the
@@ -811,6 +887,7 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     reap_nickel_supplicant: false,
     colour_panel: true,
     front_light: LightLayout::Aggregate,
+    warmth: MEDIATEK_BALANCE,
 };
 
 /// Kobo Libra Colour on firmware 4.46.23836. The doctor report and attended
@@ -945,6 +1022,7 @@ pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
     reap_nickel_supplicant: false,
     colour_panel: false,
     front_light: LightLayout::Aggregate,
+    warmth: Warmth::Unmapped,
 };
 
 /// Kobo Nia, the i.MX6ULL board, ported and measured by its owner in
@@ -1039,6 +1117,7 @@ pub const NIA_382: DeviceProfile = DeviceProfile {
     reap_nickel_supplicant: false,
     colour_panel: false,
     front_light: LightLayout::Aggregate,
+    warmth: Warmth::Unmapped,
 };
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
@@ -1467,6 +1546,9 @@ pub struct DeviceProfile {
     /// Which front light control sets the brightness, and whether the warmth
     /// may be moved. See [`LightLayout`].
     pub front_light: LightLayout,
+    /// Whether the warmth of the light can be set, and through which control
+    /// and in which direction. See [`Warmth`].
+    pub warmth: Warmth,
 }
 
 /// Pose geometry derived by a profile's [`GeometryRule`].
@@ -2267,7 +2349,8 @@ fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actu
 #[cfg(test)]
 mod tests {
     use super::{
-        LightLayout, PanelPose, PoseError, TouchMapping, TouchTransform, SUPPORTED_PROFILES,
+        FramebufferController, LightLayout, PanelPose, PoseError, TouchMapping, TouchTransform,
+        Warmth, MEDIATEK_BALANCE, SUPPORTED_PROFILES,
     };
 
     /// The Libra 2 at the pose it was measured in: page-turn buttons on the
@@ -2926,6 +3009,63 @@ mod tests {
                 profile.id
             );
         }
+    }
+
+    /// Warmth is mapped for the readers whose control and direction are
+    /// known and for no other. Adding one is a hardware claim, made by
+    /// editing that profile after looking at both ends of its scale, and a
+    /// profile built from another with `..` must not pick one up unnoticed.
+    #[test]
+    fn warmth_is_mapped_for_the_five_mediatek_aggregate_profiles_and_no_other() {
+        let mapped: Vec<_> = SUPPORTED_PROFILES
+            .iter()
+            .filter(|profile| profile.warmth != Warmth::Unmapped)
+            .map(|profile| profile.id)
+            .collect();
+        assert_eq!(
+            mapped,
+            [
+                "clara-bw-391",
+                "clara-bw-395",
+                "clara-colour-393",
+                "libra-colour-390",
+                "libra-colour-390-4.46.23836",
+            ]
+        );
+        for profile in SUPPORTED_PROFILES {
+            if profile.warmth == Warmth::Unmapped {
+                continue;
+            }
+            assert_eq!(profile.warmth, MEDIATEK_BALANCE, "{}", profile.id);
+            // The mapping names the aggregate's own file, which is only the
+            // light's control under this layout and on this controller.
+            assert_eq!(
+                profile.front_light,
+                LightLayout::Aggregate,
+                "{}",
+                profile.id
+            );
+            assert_eq!(
+                profile.framebuffer_controller,
+                FramebufferController::Hwtcon,
+                "{}",
+                profile.id
+            );
+        }
+        assert_eq!(Warmth::default(), Warmth::Unmapped);
+    }
+
+    /// The direction is one fact in one place. Zero is the warmest setting
+    /// on these readers, and a reader found to run the other way is put
+    /// right by changing the constant this reads.
+    #[test]
+    fn the_mediatek_readers_are_warmest_at_zero() {
+        assert_eq!(
+            MEDIATEK_BALANCE,
+            Warmth::Balance {
+                warmest_at_zero: true
+            }
+        );
     }
 
     /// A calibration belongs to one owner's unmeasured reader. A measured

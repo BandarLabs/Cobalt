@@ -228,6 +228,25 @@ pub const MAX_TIME_ZONE_LEN: usize = 64;
 /// [`DeviceRequest::ReadLibrary`], as it always has.
 pub const LIBRARY_RANGE_VERSION: u8 = 18;
 
+/// The protocol whose runtime reads and sets the warmth of the front light,
+/// [`DeviceRequest::ReadWarmth`] and [`DeviceRequest::SetWarmth`], answered
+/// with [`DeviceResult::Warmth`].
+///
+/// On tags of their own, as the time zone is, so the version did not move.
+/// The one application that asks is Settings, which ships with the runtime,
+/// so the two only disagree between an update applied mid-session and the
+/// next start.
+pub const WARMTH_VERSION: u8 = 18;
+
+/// The fewest settings a warmth control is reported with: two ends and
+/// nothing between.
+pub const MIN_WARMTH_STEPS: u8 = 2;
+
+/// The most settings a warmth control is reported with: one for every
+/// percentage there is, past which a percentage could no longer name each
+/// of them.
+pub const MAX_WARMTH_STEPS: u8 = 101;
+
 pub const VERSION: u8 = 18;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
@@ -1415,6 +1434,15 @@ pub enum DeviceRequest {
     SetFrontlight { percent: u8 },
     /// Report the current front light percentage.
     ReadFrontlight,
+    /// Report the warmth of the front light, answered with
+    /// [`DeviceResult::Warmth`], or refused as unsupported on a reader whose
+    /// warmth this runtime cannot set. Requires [`WARMTH_VERSION`].
+    ReadWarmth,
+    /// Set the warmth of the front light to the setting nearest `percent`,
+    /// where 0 is the coolest light the reader makes and 100 the warmest.
+    /// Answered as [`DeviceRequest::ReadWarmth`] is, with where the lamp
+    /// then stands. Requires [`WARMTH_VERSION`].
+    SetWarmth { percent: u8 },
     /// Report whether the Bluetooth controller is available and powered.
     ReadBluetooth,
     /// Power the Bluetooth controller on or off.
@@ -1962,6 +1990,15 @@ pub enum DeviceResult {
     },
     /// Front light state.
     Frontlight { percent: u8 },
+    /// The warmth of the front light: where it stands, from 0 at the coolest
+    /// to 100 at the warmest, and how many settings the lamp has between and
+    /// including the two, which is 11 on every reader known.
+    ///
+    /// The count is here because the control is coarse. A caller that moves
+    /// the warmth one setting at a time works out the next percentage from
+    /// it, and each request then moves the lamp exactly once. Requires
+    /// [`WARMTH_VERSION`].
+    Warmth { percent: u8, steps: u8 },
     /// Bluetooth controller state and the bounded set currently known.
     Bluetooth {
         available: bool,
@@ -3407,6 +3444,16 @@ fn encode_device_request(
             fixed_device_request(output, 8, u32::from(*percent));
         }
         DeviceRequest::ReadFrontlight => fixed_device_request(output, 9, 0),
+        DeviceRequest::ReadWarmth | DeviceRequest::SetWarmth { .. } if version < WARMTH_VERSION => {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceRequest::ReadWarmth => output.push(64),
+        DeviceRequest::SetWarmth { percent } if *percent <= 100 => {
+            output.extend_from_slice(&[65, *percent]);
+        }
+        DeviceRequest::SetWarmth { .. } => {
+            return Err(ProtocolError::InvalidValue("warmth percent"));
+        }
         DeviceRequest::ReadBluetooth => output.push(10),
         DeviceRequest::SetBluetooth { enabled } => {
             output.extend_from_slice(&[11, u8::from(*enabled)]);
@@ -4088,6 +4135,14 @@ fn decode_device_request(
             }
             Ok(DeviceRequest::ReadLibraryRange { id, offset, length })
         }
+        64 if version >= WARMTH_VERSION => Ok(DeviceRequest::ReadWarmth),
+        65 if version >= WARMTH_VERSION => {
+            let percent = reader.u8()?;
+            if percent > 100 {
+                return Err(ProtocolError::InvalidValue("warmth percent"));
+            }
+            Ok(DeviceRequest::SetWarmth { percent })
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -4205,6 +4260,15 @@ fn encode_device_result(
         DeviceResult::Frontlight { percent } => {
             output.push(4);
             output.push(*percent);
+        }
+        DeviceResult::Warmth { .. } if version < WARMTH_VERSION => {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceResult::Warmth { percent, steps } => {
+            if !valid_warmth(*percent, *steps) {
+                return Err(ProtocolError::InvalidValue("warmth"));
+            }
+            output.extend_from_slice(&[27, *percent, *steps]);
         }
         DeviceResult::Denied(reason) => {
             output.push(5);
@@ -4705,8 +4769,24 @@ fn decode_device_result(
             })
         }
         26 if version >= LIBRARY_RANGE_VERSION => decode_library_range(reader),
+        27 if version >= WARMTH_VERSION => decode_warmth(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn decode_warmth(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let percent = reader.u8()?;
+    let steps = reader.u8()?;
+    if !valid_warmth(percent, steps) {
+        return Err(ProtocolError::InvalidValue("warmth"));
+    }
+    Ok(DeviceResult::Warmth { percent, steps })
+}
+
+/// A warmth reading both ends of the wire can act on: a percentage, and a
+/// count of settings a percentage can address.
+const fn valid_warmth(percent: u8, steps: u8) -> bool {
+    percent <= 100 && steps >= MIN_WARMTH_STEPS && steps <= MAX_WARMTH_STEPS
 }
 
 /// A standard zone name: `Region/City`, in the letters, digits and few marks

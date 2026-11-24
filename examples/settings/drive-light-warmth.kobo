@@ -1,0 +1,110 @@
+# The Warmth control under Brightness on the Light page moves the lamp one
+# setting a tap, of the eleven it has: plus is warmer, minus is cooler. Each
+# end is named and stops there, the settings between are counted from the
+# cool end, and the home row says the warmth after the level. Brightness and
+# warmth are set apart: a brightness step, to the top of the range included,
+# leaves the warmth where it was. A warmth moved while Settings was away is
+# read when it comes back, and a refused step is said over both controls.
+wait-for Settings
+tap-paged Light
+wait-for Warmth
+expect Brightness
+expect 20%
+expect 5 of 10
+expect Both last until Cobalt closes. The Kobo reader keeps its own brightness and warmth.
+expect-missing Lasts until Cobalt closes. The Kobo reader keeps its own level.
+expect-missing This version of Cobalt cannot set the warmth on this reader.
+expect-state /device#/warmthPercent 50
+expect-state /device#/warmthSteps 11
+expect-state /device#/frontlightPercent 20
+shot settings-light-warmth
+# Brightness does not move the warmth, at the top of its range or on the
+# way back down from it. Before the first brightness step Settings sets the
+# warmth to what it already is, so the runtime keeps it.
+lifecycle background
+device frontlight 95
+lifecycle foreground
+wait-for 95%
+tap-id light-brighter
+wait-for 100%
+expect 5 of 10
+expect-state /device#/frontlightPercent 100
+expect-state /device#/warmthPercent 50
+tap-id light-dimmer
+wait-for 95%
+expect 5 of 10
+expect-state /device#/warmthPercent 50
+lifecycle background
+device frontlight 20
+lifecycle foreground
+wait-for 20%
+# One tap is one setting, and the brightness stays where it was.
+tap-id light-warmer
+wait-for 6 of 10
+expect-state /device#/warmthPercent 60
+expect-state /device#/frontlightPercent 20
+expect 20%
+tap-id light-cooler
+wait-for 5 of 10
+expect-state /device#/warmthPercent 50
+# Up to the warm end, which is named and has nowhere further to go.
+tap-id light-warmer
+wait-for 6 of 10
+tap-id light-warmer
+wait-for 7 of 10
+tap-id light-warmer
+wait-for 8 of 10
+tap-id light-warmer
+wait-for 9 of 10
+expect-state /device#/warmthPercent 90
+tap-id light-warmer
+wait-for Warmest
+expect-missing of 10
+expect-state /device#/warmthPercent 100
+shot settings-light-warmest
+# A brightness step leaves the warmth where it was put.
+tap-id light-brighter
+wait-for 25%
+expect Warmest
+expect-state /device#/warmthPercent 100
+expect-state /device#/frontlightPercent 25
+tap-id light-dimmer
+wait-for 20%
+expect-state /device#/warmthPercent 100
+# A step the runtime refuses leaves the lamp and the reading where they
+# were, with the reason over both controls, and the next step that is taken
+# clears it.
+scenario permission-denied
+tap-id light-cooler
+wait-for Cobalt did not allow Settings to do that.
+expect Warmest
+expect 20%
+expect-missing Read again
+expect-state /device#/warmthPercent 100
+shot settings-light-warmth-refused
+scenario normal
+tap-id light-cooler
+wait-for 9 of 10
+expect-missing Cobalt did not allow Settings to do that.
+expect-state /device#/warmthPercent 90
+# Something else moved the warmth while Settings was in the background, to a
+# place between two settings. The lamp takes the nearer one.
+lifecycle background
+device warmth 12
+lifecycle foreground
+wait-for 1 of 10
+expect-state /device#/warmthPercent 10
+# Down to the cool end, which is named and stops too.
+tap-id light-cooler
+wait-for Coolest
+expect-missing of 10
+expect-state /device#/warmthPercent 0
+shot settings-light-coolest
+tap-id light-warmer
+wait-for 1 of 10
+expect-state /device#/warmthPercent 10
+# The home row says the level and then the warmth.
+tap-id 4294967295
+wait-for Settings
+expect Light
+expect 20% · Warmth 1 of 10

@@ -478,7 +478,7 @@
   },
   {
    "protocol_version": 18,
-   "reason": "Windows host support for the CLI and simulator, reviewed against the beta catalog published from 716edd9d. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix. OS entropy moves behind kobo-abi, whose Unix arm reads /dev/urandom as the SDK did, and kobo-abi gains a home-directory lookup that is HOME and nothing else on Unix. Directory and file flushes share kobo_protocol::durability, which opens and fsyncs on Unix exactly as the call sites did. Every platform difference is a Windows arm, and the policy and network test changes only gate Unix fixtures. The lock gains workspace-internal kobo-abi edges for the CLI, the SDK, the sidekick helper and wifi-trace, and a Windows-only flate2 edge for the CLI; no third-party version moves and nothing resolves differently for the reader. The wire protocol and its version are unchanged by this port, so published Store apps keep working against the runtime they already have. The base is beta with the Kobo Nia port merged, so these blobs differ from it only by this port. Re-pinned for ranged library reads and the shared limit on what Books opens: the protocol file gains a request and a result on tags of their own (63 and 26) that only Books sends, a larger bound on the library listing that only Books receives, and two constants; the SDK gains the helper that asks for a range and re-exports those constants. No existing encoding changes and the version stays 18, so a published Store app reads and writes every frame it did before. The lock gains one workspace-internal edge, kobo-dict for the CLI, and no third-party package moves. The capability fixes change two of these files again, both in code only the runtime runs: kobo-abi opens the terminal's pty master close-on-exec and asks for its name with the reentrant call, and the terminal is a built-in no Store package can be; kobo-policy holds the Library's catalog credential rule to the app's own named secret, which the runtime enforces when it attaches a credential and no published app's bytes carry. The lock gains the workspace crate kobo-dial, which only Paperterm, Deck, Sidekick and Books depend on; no registry dependency changes.",
+   "reason": "Windows host support for the CLI and simulator, reviewed against the beta catalog published from 716edd9d. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix. OS entropy moves behind kobo-abi, whose Unix arm reads /dev/urandom as the SDK did, and kobo-abi gains a home-directory lookup that is HOME and nothing else on Unix. Directory and file flushes share kobo_protocol::durability, which opens and fsyncs on Unix exactly as the call sites did. Every platform difference is a Windows arm, and the policy and network test changes only gate Unix fixtures. The lock gains workspace-internal kobo-abi edges for the CLI, the SDK, the sidekick helper and wifi-trace, and a Windows-only flate2 edge for the CLI; no third-party version moves and nothing resolves differently for the reader. The wire protocol and its version are unchanged by this port, so published Store apps keep working against the runtime they already have. The base is beta with the Kobo Nia port merged, so these blobs differ from it only by this port. Re-pinned for ranged library reads and the shared limit on what Books opens: the protocol file gains a request and a result on tags of their own (63 and 26) that only Books sends, a larger bound on the library listing that only Books receives, and two constants; the SDK gains the helper that asks for a range and re-exports those constants. No existing encoding changes and the version stays 18, so a published Store app reads and writes every frame it did before. The lock gains one workspace-internal edge, kobo-dict for the CLI, and no third-party package moves. The capability fixes change two of these files again, both in code only the runtime runs: kobo-abi opens the terminal's pty master close-on-exec and asks for its name with the reentrant call, and the terminal is a built-in no Store package can be; kobo-policy holds the Library's catalog credential rule to the app's own named secret, which the runtime enforces when it attaches a credential and no published app's bytes carry. The front light's warmth adds two requests and one result only Settings sends and receives, three constants, and the SDK calls for them behind the feature Settings builds with; no existing encoding changes and the version stays 18. The lock gains the workspace crate kobo-dial, which only Paperterm, Deck, Sidekick and Books depend on; no registry dependency changes.",
    "files": [
     {
      "path": "Cargo.lock",
@@ -533,7 +533,7 @@
     {
      "path": "crates/kobo-protocol/src/lib.rs",
      "base_blob": "cfd97b28b87f7e6ba1f62b191dc3e568ceda5e71",
-     "compatible_blob": "18a8b3116e7e0f870ac51216fc788d91236323de"
+     "compatible_blob": "3155f272dda7b5c0701218d96d1bfa4ca4e7ec37"
     },
     {
      "path": "crates/kobo-sdk/Cargo.toml",
@@ -548,7 +548,7 @@
     {
      "path": "crates/kobo-sdk/src/lib.rs",
      "base_blob": "7d672a0dee2407bd5cddb8981f575f4df8d465b1",
-     "compatible_blob": "76050d7d90488da58c77c2c08eca2f58baf40cd6"
+     "compatible_blob": "6e58d08d3c66e24b42b95011b38e25523eddd0d6"
     }
    ]
   },

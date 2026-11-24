@@ -17,6 +17,10 @@ use kobo_protocol::{
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
+/// How many settings the simulated warmth has: 0 to 10, which is what every
+/// reader with a warmth control publishes.
+pub const SIMULATED_WARMTH_STEPS: u8 = 11;
+
 /// Which hardware this build is actually allowed to operate.
 ///
 /// A capability that is not in this set is refused as unsupported, even when
@@ -64,6 +68,10 @@ pub struct DeviceState {
     pub battery_percent: u8,
     pub charging: bool,
     pub frontlight_percent: u8,
+    /// The warmth of the front light, 0 at the coolest and 100 at the
+    /// warmest. Only a model: on a device the runtime answers warmth from
+    /// the lamp itself and this is never consulted.
+    pub warmth_percent: u8,
     /// Whether a magnet is at the hall sensor.
     pub magnet_present: bool,
 }
@@ -74,6 +82,9 @@ impl Default for DeviceState {
             battery_percent: 72,
             charging: false,
             frontlight_percent: 20,
+            // The middle of the scale, so a step either way has somewhere
+            // to go.
+            warmth_percent: 50,
             magnet_present: false,
         }
     }
@@ -138,6 +149,14 @@ pub struct DeviceServices {
     /// The time zone picked in Settings. Kept in memory here, for the
     /// simulator; the runtime keeps it on the card.
     time_zone: Option<&'static crate::zones::Zone>,
+    /// How many settings the modelled warmth has, or `None` where it cannot
+    /// be set.
+    ///
+    /// Apart from the front light backend on purpose. A reader can have a
+    /// light whose brightness the runtime drives and a warmth it has no
+    /// mapping for, and an application must be able to meet that reader in
+    /// the simulator before it meets one in somebody's hands.
+    warmth_steps: Option<u8>,
 }
 
 /// The two standing update switches, held together because they are asked
@@ -162,6 +181,20 @@ impl DeviceServices {
             PowerPolicy::DEFAULT,
             Backends::with(Capability::ALL),
         )
+        .with_warmth_steps(Some(SIMULATED_WARMTH_STEPS))
+    }
+
+    /// Models a warmth with this many settings, or one that cannot be set.
+    ///
+    /// A count the protocol could not carry is no warmth at all, which is
+    /// how the runtime treats a control it cannot make sense of.
+    #[must_use]
+    pub fn with_warmth_steps(mut self, steps: Option<u8>) -> Self {
+        self.warmth_steps = steps.filter(|steps| {
+            (kobo_protocol::MIN_WARMTH_STEPS..=kobo_protocol::MAX_WARMTH_STEPS).contains(steps)
+        });
+        self.state.warmth_percent = self.nearest_warmth(self.state.warmth_percent);
+        self
     }
 
     /// Services for a real device.
@@ -224,6 +257,7 @@ impl DeviceServices {
             },
             update_channel: UpdateChannel::Stable,
             time_zone: None,
+            warmth_steps: None,
         }
     }
 
@@ -263,6 +297,34 @@ impl DeviceServices {
     /// so this is a reading rather than a memory of what was last asked for.
     pub fn observe_frontlight(&mut self, percent: u8) {
         self.state.frontlight_percent = percent.min(100);
+    }
+
+    /// Records where the modelled warmth stands, on the nearest setting the
+    /// modelled lamp has.
+    pub fn observe_warmth(&mut self, percent: u8) {
+        self.state.warmth_percent = self.nearest_warmth(percent);
+    }
+
+    /// How many settings the modelled warmth has, or `None` where it cannot
+    /// be set.
+    #[must_use]
+    pub const fn warmth_steps(&self) -> Option<u8> {
+        self.warmth_steps
+    }
+
+    /// The percentage of the setting nearest `percent`, as a lamp with this
+    /// many settings would report it.
+    fn nearest_warmth(&self, percent: u8) -> u8 {
+        let percent = u32::from(percent.min(100));
+        let Some(last) = self
+            .warmth_steps
+            .map(|steps| u32::from(steps.saturating_sub(1)))
+            .filter(|last| *last > 0)
+        else {
+            return u8::try_from(percent).unwrap_or(100);
+        };
+        let step = (percent * last + 50) / 100;
+        u8::try_from((step * 100 + last / 2) / last).unwrap_or(100)
     }
 
     /// Moves the simulated magnet, and says whether that was a change.
@@ -326,6 +388,8 @@ impl DeviceServices {
             }
             DeviceRequest::SetFrontlight { percent } => self.set_frontlight(percent),
             DeviceRequest::ReadFrontlight => self.read_frontlight(),
+            DeviceRequest::SetWarmth { percent } => self.warmth(Some(percent)),
+            DeviceRequest::ReadWarmth => self.warmth(None),
             DeviceRequest::ReadBluetooth | DeviceRequest::ScanBluetooth => self.bluetooth_state(),
             DeviceRequest::SetBluetooth { enabled } => {
                 if let Some(reason) = self.refusal(Capability::BluetoothControl) {
@@ -879,6 +943,29 @@ impl DeviceServices {
         }
     }
 
+    /// Answers a warmth request from the model: sets it first when a
+    /// percentage came with the request, then says where it stands.
+    ///
+    /// A runtime on a device answers these from the lamp and never reaches
+    /// this. Anything that does reach it without a modelled warmth is told
+    /// the warmth cannot be set, which is the answer for a reader with no
+    /// mapping and the only safe one for a build with no lamp to ask.
+    fn warmth(&mut self, percent: Option<u8>) -> DeviceResult {
+        if let Some(reason) = self.refusal(Capability::FrontlightControl) {
+            return DeviceResult::Denied(reason);
+        }
+        let Some(steps) = self.warmth_steps else {
+            return DeviceResult::Denied(DenyReason::Unsupported);
+        };
+        if let Some(percent) = percent {
+            self.state.warmth_percent = self.nearest_warmth(percent);
+        }
+        DeviceResult::Warmth {
+            percent: self.state.warmth_percent,
+            steps,
+        }
+    }
+
     fn hold_wifi(&mut self, seconds: u32) -> DeviceResult {
         if seconds == 0 {
             return DeviceResult::Denied(DenyReason::PolicyRejected);
@@ -938,9 +1025,12 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         DeviceRequest::HoldWifi { .. } | DeviceRequest::ReleaseWifi => Capability::HoldWifi,
         DeviceRequest::KeepAwake { .. } | DeviceRequest::AllowSleep => Capability::KeepAwake,
         DeviceRequest::ScheduleWake { .. } | DeviceRequest::CancelWake => Capability::ScheduledWake,
-        DeviceRequest::SetFrontlight { .. } | DeviceRequest::ReadFrontlight => {
-            Capability::FrontlightControl
-        }
+        // Warmth is the same lamp and the same kind of change as its
+        // brightness, so it is asked for under the same declaration.
+        DeviceRequest::SetFrontlight { .. }
+        | DeviceRequest::ReadFrontlight
+        | DeviceRequest::SetWarmth { .. }
+        | DeviceRequest::ReadWarmth => Capability::FrontlightControl,
         DeviceRequest::ReadBluetooth
         | DeviceRequest::SetBluetooth { .. }
         | DeviceRequest::ScanBluetooth
@@ -1512,6 +1602,8 @@ mod tests {
             DeviceRequest::ScheduleWake { seconds: 3600 },
             DeviceRequest::SetFrontlight { percent: 50 },
             DeviceRequest::ReadFrontlight,
+            DeviceRequest::SetWarmth { percent: 50 },
+            DeviceRequest::ReadWarmth,
         ] {
             assert_eq!(
                 services.handle(request.clone()),
@@ -1519,6 +1611,91 @@ mod tests {
                 "{request:?} must be refused without a backend"
             );
         }
+    }
+
+    #[test]
+    fn warmth_is_asked_for_under_the_front_light_declaration() {
+        for request in [
+            DeviceRequest::ReadWarmth,
+            DeviceRequest::SetWarmth { percent: 100 },
+        ] {
+            assert_eq!(
+                super::request_capability(&request),
+                Some(Capability::FrontlightControl)
+            );
+            let mut undeclared = DeviceServices::new(
+                declared(&[]),
+                PowerPolicy::DEFAULT,
+                Backends::with([Capability::FrontlightControl]),
+            )
+            .with_warmth_steps(Some(11));
+            assert_eq!(
+                undeclared.handle(request),
+                DeviceResult::Denied(DenyReason::NotDeclared)
+            );
+        }
+    }
+
+    /// A light whose brightness can be set says nothing about its warmth. A
+    /// reader with no mapping has the first and not the second, and has to
+    /// be told so and left exactly as it was.
+    #[test]
+    fn a_light_with_no_modelled_warmth_refuses_it_and_still_sets_its_brightness() {
+        let mut services = DeviceServices::new(
+            Declared::all(),
+            PowerPolicy::DEFAULT,
+            Backends::with([Capability::FrontlightControl]),
+        );
+        assert_eq!(services.warmth_steps(), None);
+        let before = services.state().warmth_percent;
+        for request in [
+            DeviceRequest::ReadWarmth,
+            DeviceRequest::SetWarmth { percent: 100 },
+        ] {
+            assert_eq!(
+                services.handle(request),
+                DeviceResult::Denied(DenyReason::Unsupported)
+            );
+        }
+        assert_eq!(services.state().warmth_percent, before);
+        assert_eq!(
+            services.handle(DeviceRequest::SetFrontlight { percent: 80 }),
+            DeviceResult::Frontlight { percent: 80 }
+        );
+        // A count the protocol has no room for is no warmth either.
+        for steps in [0, 1, 102, u8::MAX] {
+            assert_eq!(
+                services
+                    .clone()
+                    .with_warmth_steps(Some(steps))
+                    .warmth_steps(),
+                None,
+                "{steps}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_modelled_warmth_starts_in_the_middle_and_moves_a_setting_at_a_time() {
+        let mut services = DeviceServices::simulated();
+        let warmth = |percent| DeviceResult::Warmth { percent, steps: 11 };
+        assert_eq!(services.handle(DeviceRequest::ReadWarmth), warmth(50));
+        for (asked, set) in [(60, 60), (64, 60), (65, 70), (0, 0), (100, 100), (255, 100)] {
+            assert_eq!(
+                services.handle(DeviceRequest::SetWarmth { percent: asked }),
+                warmth(set),
+                "{asked}"
+            );
+            assert_eq!(services.handle(DeviceRequest::ReadWarmth), warmth(set));
+            assert_eq!(services.state().warmth_percent, set);
+        }
+        // Brightness and warmth are two settings of one lamp, and neither
+        // moves the other here.
+        services.handle(DeviceRequest::SetFrontlight { percent: 100 });
+        assert_eq!(services.handle(DeviceRequest::ReadWarmth), warmth(100));
+        services.observe_warmth(33);
+        assert_eq!(services.handle(DeviceRequest::ReadWarmth), warmth(30));
+        assert_eq!(services.state().frontlight_percent, 100);
     }
 
     #[test]

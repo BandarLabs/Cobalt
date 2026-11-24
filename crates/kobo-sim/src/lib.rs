@@ -120,6 +120,20 @@ fn parse_profile(requested: Option<&str>) -> io::Result<&'static DeviceProfile> 
     }
 }
 
+/// How many settings the warmth of a simulated reader has, or `None` when
+/// its profile maps no warmth.
+///
+/// Decided by the same profile fact the runtime reads on a device, so the
+/// simulator refuses warmth on exactly the readers a device would, and a
+/// page's words for a reader whose warmth cannot be set can be looked at
+/// without one.
+fn warmth_steps_for(profile: &DeviceProfile) -> Option<u8> {
+    match profile.warmth {
+        kobo_profile::Warmth::Unmapped => None,
+        kobo_profile::Warmth::Balance { .. } => Some(kobo_policy::services::SIMULATED_WARMTH_STEPS),
+    }
+}
+
 fn validate_configuration() -> io::Result<()> {
     configured_profile()?;
     match std::env::var("KOBO_TEXT_SCALE") {
@@ -853,7 +867,8 @@ impl AppServer {
             kobo_policy::Backends::with(configured_backends()?.iter()),
         )
         .with_library_roots(simulated_library_roots())
-        .with_audio_opener(simulated_audio_opener(&name));
+        .with_audio_opener(simulated_audio_opener(&name))
+        .with_warmth_steps(warmth_steps_for(&PROFILE));
         initial.hardware.magnet_present =
             matches!(std::env::var("KOBO_MAGNET").as_deref(), Ok("1" | "present"));
         initial.observe_hardware();
@@ -1543,7 +1558,11 @@ impl AppState {
             fields.push(("power".into(), self.power_status.clone()));
             fields.push((
                 "hardware".into(),
-                hardware::json(self.effective_hardware(), self.orientation),
+                hardware::json(
+                    self.effective_hardware(),
+                    self.orientation,
+                    self.services.warmth_steps(),
+                ),
             ));
         }
         value.to_json()
@@ -1618,6 +1637,11 @@ impl AppState {
             .observe_battery(observed.battery_percent, observed.charging);
         self.services
             .observe_frontlight(observed.frontlight_percent);
+        self.services.observe_warmth(observed.warmth_percent);
+        // The modelled lamp has few settings, so what was observed is taken
+        // back as the setting it landed on. The inspector and a route then
+        // read the number an application is told.
+        self.hardware.warmth_percent = self.services.state().warmth_percent;
         self.services.set_magnet(observed.magnet_present);
     }
 
@@ -2206,7 +2230,7 @@ impl AppSession {
 
     fn change_hardware(&self, command: &str) -> io::Result<()> {
         let change = hardware::Change::parse(command).ok_or_else(|| io::Error::other(
-            "device expects battery PERCENT charging|unplugged, frontlight PERCENT, cover open|closed, or orientation portrait|landscape"))?;
+            "device expects battery PERCENT charging|unplugged, frontlight PERCENT, warmth PERCENT, cover open|closed, or orientation portrait|landscape"))?;
         let event = {
             let mut state = self
                 .state
@@ -2221,6 +2245,14 @@ impl AppSession {
                 hardware::Change::Frontlight(percent) => {
                     state.hardware.frontlight_percent = percent;
                 }
+                // Refused and not ignored, so a route written for a mapped
+                // reader fails loudly on one that is not.
+                hardware::Change::Warmth(_) if state.services.warmth_steps().is_none() => {
+                    return Err(io::Error::other(
+                        "the selected profile has no warmth mapping, so its warmth cannot be set",
+                    ));
+                }
+                hardware::Change::Warmth(percent) => state.hardware.warmth_percent = percent,
                 hardware::Change::Cover(present) => state.hardware.magnet_present = present,
                 hardware::Change::Orientation(orientation) => state.orientation = orientation,
             }
@@ -2761,7 +2793,12 @@ impl AppSession {
                     .state
                     .lock()
                     .map_err(|_| io::Error::other("app state lock poisoned"))?;
-                let body = hardware::json(state.effective_hardware(), state.orientation).to_json();
+                let body = hardware::json(
+                    state.effective_hardware(),
+                    state.orientation,
+                    state.services.warmth_steps(),
+                )
+                .to_json();
                 write_response(&mut stream, 200, "application/json", body.as_bytes())
             }
             ("GET", "/wifi") => {
@@ -3773,6 +3810,9 @@ fn read_app_messages(
                     }
                     if let kobo_protocol::DeviceResult::Frontlight { percent } = &result {
                         state.hardware.frontlight_percent = *percent;
+                    }
+                    if let kobo_protocol::DeviceResult::Warmth { percent, .. } = &result {
+                        state.hardware.warmth_percent = *percent;
                     }
                     result
                 };
@@ -6234,6 +6274,88 @@ mod tests {
         let elsewhere = started(&Arc::new(Mutex::new(Scenario::Normal)));
         second.set_scenario(Scenario::HostDown).unwrap();
         assert_eq!(current_scenario(&elsewhere.state), Scenario::Normal);
+    }
+
+    /// The simulator refuses warmth on the readers a device would, and
+    /// models the eleven settings of a real control on the rest.
+    #[test]
+    fn warmth_is_modelled_only_for_a_profile_that_maps_one() {
+        for profile in SUPPORTED_PROFILES {
+            let expected = match profile.id {
+                "clara-bw-391"
+                | "clara-bw-395"
+                | "clara-colour-393"
+                | "libra-colour-390"
+                | "libra-colour-390-4.46.23836" => Some(11),
+                _ => None,
+            };
+            assert_eq!(warmth_steps_for(profile), expected, "{}", profile.id);
+        }
+    }
+
+    #[test]
+    fn the_warmth_control_moves_a_mapped_reader_and_is_refused_on_any_other() {
+        use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+        let session_with = |warmth_steps| {
+            let (_client, server) = channel::pair().unwrap();
+            AppSession {
+                state: Arc::new(Mutex::new(AppState {
+                    services: DeviceServices::simulated().with_warmth_steps(warmth_steps),
+                    ..AppState::default()
+                })),
+                writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
+            }
+        };
+        let read = |session: &AppSession| {
+            let mut state = session.state.lock().unwrap();
+            let answer = state.services.handle(DeviceRequest::ReadWarmth);
+            let shown = hardware::json(
+                state.effective_hardware(),
+                state.orientation,
+                state.services.warmth_steps(),
+            );
+            (answer, shown.get("warmthPercent").cloned())
+        };
+
+        let mapped = session_with(Some(11));
+        assert_eq!(
+            read(&mapped),
+            (
+                DeviceResult::Warmth {
+                    percent: 50,
+                    steps: 11
+                },
+                Some(kobo_json::Value::from(50_u32))
+            ),
+            "the middle, before anything moves it"
+        );
+        // Between two settings lands on the nearer, and that is what both
+        // the application and the inspector are then told.
+        mapped.change_hardware("warmth 87").unwrap();
+        assert_eq!(
+            read(&mapped),
+            (
+                DeviceResult::Warmth {
+                    percent: 90,
+                    steps: 11
+                },
+                Some(kobo_json::Value::from(90_u32))
+            )
+        );
+        // Brightness and warmth are set apart.
+        mapped.change_hardware("frontlight 100").unwrap();
+        assert_eq!(read(&mapped).1, Some(kobo_json::Value::from(90_u32)));
+
+        let unmapped = session_with(None);
+        assert!(unmapped.change_hardware("warmth 40").is_err());
+        assert_eq!(
+            read(&unmapped),
+            (
+                DeviceResult::Denied(DenyReason::Unsupported),
+                Some(kobo_json::Value::Null)
+            )
+        );
+        unmapped.change_hardware("frontlight 40").unwrap();
     }
 
     #[test]

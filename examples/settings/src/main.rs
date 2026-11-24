@@ -22,6 +22,9 @@ const LIGHT: &str = "light";
 /// The two ends of the brightness control.
 const DIMMER: &str = "light-dimmer";
 const BRIGHTER: &str = "light-brighter";
+/// The two ends of the warmth control.
+const COOLER: &str = "light-cooler";
+const WARMER: &str = "light-warmer";
 const ABOUT: &str = "about";
 const UPDATE: &str = "update";
 const CHECK: &str = "check";
@@ -255,12 +258,96 @@ enum LightState {
     Unsupported,
 }
 
-/// A step the light was asked to take and has not yet shown on a reading.
+/// What Settings knows of the warmth of the light.
 ///
-/// The runtime answers a set with the level it was asked for, whether or
-/// not the reader took it. Only a reading afterwards says where the light
-/// is, so each step is remembered until that reading comes back, and a
-/// light still at `from` is a step that was not taken.
+/// Apart from the brightness because a reader can have one without the
+/// other: the runtime sets the brightness of every light it can open, and
+/// the warmth only where it knows which way that reader's control runs.
+/// `Unsupported` is that settled answer, and the page then says so in the
+/// place the control would have been.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum WarmthState {
+    /// The runtime has not answered yet.
+    #[default]
+    Unread,
+    Level(WarmthLevel),
+    Unsupported,
+}
+
+/// Where the warmth stands, counted in the lamp's own settings.
+///
+/// The runtime answers in percent and says how many settings the lamp has,
+/// eleven on every reader known. The page counts in those settings, because
+/// a tap that moved the lamp half a setting would be a tap that sometimes
+/// did nothing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WarmthLevel {
+    /// The setting the lamp is at, from 0 at the coolest.
+    step: u8,
+    /// The warmest setting, which is one less than how many there are.
+    last: u8,
+}
+
+impl WarmthLevel {
+    /// The setting a reading of `percent` is, on a lamp with `steps` of them.
+    fn new(percent: u8, steps: u8) -> Self {
+        let last = steps.saturating_sub(1).max(1);
+        let step = (u16::from(percent.min(100)) * u16::from(last) + 50) / 100;
+        Self {
+            step: u8::try_from(step).unwrap_or(last).min(last),
+            last,
+        }
+    }
+
+    /// The percentage that asks the runtime for exactly this setting.
+    fn percent(self) -> u8 {
+        let percent =
+            (u16::from(self.step) * 100 + u16::from(self.last) / 2) / u16::from(self.last);
+        u8::try_from(percent).unwrap_or(100)
+    }
+
+    /// The setting as the control says it: a name at each end, where there
+    /// is nowhere further to go, and its place on the scale between them.
+    fn words(self) -> String {
+        if self.step == 0 {
+            "Coolest".to_owned()
+        } else if self.step >= self.last {
+            "Warmest".to_owned()
+        } else {
+            format!("{} of {}", self.step, self.last)
+        }
+    }
+
+    /// The setting as the home row says it, after the brightness. The ends
+    /// name themselves; a place on the scale needs to say what it is of.
+    fn summary(self) -> String {
+        if self.step == 0 || self.step >= self.last {
+            self.words()
+        } else {
+            format!("Warmth {}", self.words())
+        }
+    }
+}
+
+/// How much of the light page one screen carries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LightPart {
+    /// Both sections, which is every panel and text size with room.
+    Whole,
+    /// The first of two pages: the brightness.
+    Brightness,
+    /// The second: the warmth, or the sentence in its place.
+    Warmth,
+}
+
+/// A step the light was asked to take and has not yet shown on a reading:
+/// of its brightness, in percent, or of its warmth, in settings.
+///
+/// A runtime from before the warmth control answered a set with the level
+/// it was asked for whether or not the reader took it, and a lamp can accept
+/// a value and stay where it is. Only a reading afterwards says where the
+/// light is, so each step is remembered until that reading comes back, and
+/// a light still at `from` is a step that was not taken.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct LightStep {
     from: u8,
@@ -272,6 +359,20 @@ struct LightStep {
 
 /// Said when a reading after a step finds the light where it was.
 const LIGHT_DID_NOT_CHANGE: &str = "The light did not change. Try again.";
+/// The same, for a step of the warmth.
+const WARMTH_DID_NOT_CHANGE: &str = "The warmth did not change. Try again.";
+
+/// Under the last control on the light page: how long what is set there
+/// lasts. The runtime puts the light back as it found it when the session
+/// ends, so a level chosen here is not the reader's for good, and the page
+/// says so before somebody wonders why the Kobo reader came back brighter.
+const BRIGHTNESS_LASTS: &str = "Lasts until Cobalt closes. The Kobo reader keeps its own level.";
+/// The same where there are two controls above it, and it is true of both.
+const BOTH_LAST: &str =
+    "Both last until Cobalt closes. The Kobo reader keeps its own brightness and warmth.";
+/// In place of the warmth control on a reader whose warmth the runtime
+/// cannot set.
+const WARMTH_UNSUPPORTED: &str = "This version of Cobalt cannot set the warmth on this reader.";
 
 /// The light one step brighter, stopping at full.
 ///
@@ -299,6 +400,9 @@ const fn dimmer(level: u8) -> u8 {
         (level - 1) / 5 * 5
     }
 }
+
+/// The longest summary the home row for the light shows.
+const LIGHT_ROW_WIDEST: &str = "Not available in this version of Cobalt";
 
 /// A level as the row and the control both say it.
 fn light_words(level: u8) -> String {
@@ -389,6 +493,10 @@ enum Topic {
     Wifi,
     Battery,
     Light,
+    /// The warmth of the light. On the same page as its brightness and a
+    /// topic of its own, so that a brightness that was read does not clear
+    /// what was said about a warmth that could not be set.
+    Warmth,
     About,
 }
 
@@ -411,6 +519,7 @@ impl Topic {
             DeviceRequest::ReadFrontlight | DeviceRequest::SetFrontlight { .. } => {
                 Some(Self::Light)
             }
+            DeviceRequest::ReadWarmth | DeviceRequest::SetWarmth { .. } => Some(Self::Warmth),
             DeviceRequest::ReadIdentity => Some(Self::About),
             _ => None,
         }
@@ -488,6 +597,18 @@ struct Settings {
     battery: Option<BatteryDetail>,
     light: LightState,
     light_step: Option<LightStep>,
+    warmth: WarmthState,
+    warmth_step: Option<LightStep>,
+    /// Whether Settings has set a warmth in this run: by a tap on the
+    /// warmth control, or by the one it sends ahead of the first brightness
+    /// step to keep the warmth the owner already had.
+    warmth_set: bool,
+    /// A brightness step waiting for that warmth to be answered, as the
+    /// level it is headed for.
+    held_level: Option<u8>,
+    /// Which of its two pages the light page is on, where the panel is too
+    /// short for both controls at once. Follows the control last tapped.
+    light_page: usize,
     identity: Option<DeviceIdentity>,
     about_page: usize,
     /// This reader's address on the local network, when the runtime said.
@@ -559,7 +680,7 @@ impl Settings {
             View::Wifi => self.wifi_for(context),
             View::WifiPassword => self.wifi_password(),
             View::Battery => self.battery(),
-            View::Light => self.light(),
+            View::Light => self.light_for(context),
             View::About => self.about_for(context),
             View::Update => self.update_for(context),
             View::UpdateOptions => self.update_options_for(context),
@@ -591,6 +712,11 @@ impl Settings {
                 self.wifi_page = self
                     .wifi_page
                     .min(self.wifi_pages(context).len().saturating_sub(1));
+            }
+            View::Light => {
+                self.light_page = self
+                    .light_page
+                    .min(self.light_pages(context).saturating_sub(1));
             }
             _ => {}
         }
@@ -660,8 +786,10 @@ impl Settings {
                 Glyph::Battery,
             )
             .measured_as("100% · Not charging"),
+            // The longest thing this row says, longer than any level with
+            // any warmth after it.
             SettingsRow::new(None, LIGHT, "Light", self.light_summary(), Glyph::Light)
-                .measured_as("Not available in this version of Cobalt"),
+                .measured_as(LIGHT_ROW_WIDEST),
             SettingsRow::new(
                 Some(COBALT_GROUP),
                 UPDATE,
@@ -1675,10 +1803,20 @@ impl Settings {
         screen.build()
     }
 
-    /// One line for the home row: the level, or why there is none.
+    /// One line for the home row: the level and the warmth, or why there
+    /// is none.
+    ///
+    /// The warmth follows the level only where there is one to say: a reader
+    /// whose warmth cannot be set gets the level alone, and so does a light
+    /// that is off, which has no warmth to see.
     fn light_summary(&self) -> String {
         match self.light {
-            LightState::Level(level) => light_words(level),
+            LightState::Level(level) => match self.warmth {
+                WarmthState::Level(warmth) if level > 0 => {
+                    format!("{} · {}", light_words(level), warmth.summary())
+                }
+                _ => light_words(level),
+            },
             LightState::Unsupported => "Not available in this version of Cobalt".to_owned(),
             // A reading that was refused is not still on its way.
             LightState::Unread if self.banner_for(Topic::Light).is_some() => {
@@ -1688,18 +1826,62 @@ impl Settings {
         }
     }
 
-    /// The front light: one control, and how long what it sets will last.
+    /// The front light: its brightness, its warmth, and how long what is
+    /// set here will last.
     ///
-    /// The control is drawn only from a level the runtime has answered. A
+    /// Two sections, each one control of the same shape, so the pair reads
+    /// as a pair: minus and plus at the ends, the reading between them and
+    /// its place on the scale under it. Plus is brighter on the first and
+    /// warmer on the second.
+    ///
+    /// A control is drawn only from a reading the runtime has answered. A
     /// reader whose light the runtime cannot drive gets the sentence the
-    /// Bluetooth page gives an unsupported radio, and a reading that was
-    /// refused gets its banner and the way to read again. Neither gets a
+    /// Bluetooth page gives an unsupported radio. One whose brightness it
+    /// can set and whose warmth it cannot keeps the first control and gets
+    /// a sentence where the second would be. A reading that was refused
+    /// gets its banner and the way to read again. None of them gets a
     /// control that would do nothing.
     ///
-    /// Brightness is a section of its own so that a second control, should
-    /// the runtime learn to set one, goes under it as another section
-    /// rather than into a page that was laid out for one.
+    /// The line about how long a setting lasts is said once, under the last
+    /// control on the page, in words that are true of every control above
+    /// it.
+    ///
+    /// Both sections fit one page at every text size on every panel. The
+    /// one thing that can push the second off the foot is a banner over them
+    /// at the largest sizes with the reader held sideways, and there the
+    /// page turns between the two sections, never through the middle of
+    /// one, and opens on the control that was last tapped.
+    fn light_for(&self, context: &Context) -> Screen {
+        match (self.light_pages(context), self.light_page) {
+            (1, _) => self.light_screen(LightPart::Whole),
+            (_, 0) => self.light_screen(LightPart::Brightness),
+            _ => self.light_screen(LightPart::Warmth),
+        }
+    }
+
+    #[cfg(test)]
     fn light(&self) -> Screen {
+        self.light_for(&Context::default())
+    }
+
+    /// One page where the whole light page fits, and two where it does not.
+    fn light_pages(&self, context: &Context) -> usize {
+        // With nothing under the brightness control there is nothing to
+        // move to a second page.
+        if !matches!(self.light, LightState::Level(_)) || self.warmth == WarmthState::Unread {
+            return 1;
+        }
+        let whole = self
+            .light_screen(LightPart::Whole)
+            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true));
+        if whole.has_errors() {
+            2
+        } else {
+            1
+        }
+    }
+
+    fn light_screen(&self, part: LightPart) -> Screen {
         let mut screen = ScreenBuilder::new("settings-light")
             .top_bar("Light")
             .owns_back(true);
@@ -1712,12 +1894,15 @@ impl Settings {
             LightState::Level(level) => Some(level),
             LightState::Unread => None,
         };
-        let trouble = self.banner_for(Topic::Light);
+        let warmth_trouble = self.banner_for(Topic::Warmth);
+        // A warmth that could not be read has no control either.
+        let warmth_unread = self.warmth == WarmthState::Unread && warmth_trouble.is_some();
+        let trouble = self.banner_for(Topic::Light).or(warmth_trouble);
         if let Some(trouble) = &trouble {
             screen = screen.banner(BannerLevel::Error, trouble.clone());
             // With a control on the page, tapping it again is the way to try
             // again. With none, the banner carries the only way forward.
-            if level.is_none() {
+            if level.is_none() || warmth_unread {
                 screen = screen.banner_action(RESCAN, "Read again");
             }
         }
@@ -1727,23 +1912,66 @@ impl Settings {
             }
             return screen.text("Reading the light.").build();
         };
-        screen
-            .section("Brightness")
-            .stepper(
-                light_words(level),
-                DIMMER,
-                Glyph::Minus,
-                BRIGHTER,
-                Glyph::Plus,
-            )
-            .stepper_ends(level > 0, level < 100)
-            .stepper_track(level)
-            // The runtime puts the light back as it found it when the
-            // session ends, so a level chosen here is not the reader's for
-            // good, and the page says so before somebody wonders why the
-            // Kobo reader came back brighter.
-            .secondary("Lasts until Cobalt closes. The Kobo reader keeps its own level.")
-            .build()
+        let brightness = |screen: ScreenBuilder| {
+            screen
+                .section("Brightness")
+                .stepper(
+                    light_words(level),
+                    DIMMER,
+                    Glyph::Minus,
+                    BRIGHTER,
+                    Glyph::Plus,
+                )
+                .stepper_ends(level > 0, level < 100)
+                .stepper_track(level)
+        };
+        // The second section: the control and the line that speaks for
+        // both, or the sentence that stands where the control would be.
+        let second = |screen: ScreenBuilder| match self.warmth {
+            WarmthState::Level(warmth) => screen
+                .section("Warmth")
+                .stepper(warmth.words(), COOLER, Glyph::Minus, WARMER, Glyph::Plus)
+                .stepper_ends(warmth.step > 0, warmth.step < warmth.last)
+                .stepper_track(warmth.percent())
+                .secondary(BOTH_LAST),
+            WarmthState::Unsupported => screen.section("Warmth").text(WARMTH_UNSUPPORTED),
+            // Not answered yet, or refused under the banner above.
+            WarmthState::Unread => screen,
+        };
+        // The first section carries the line itself wherever the brightness
+        // is the last control there is.
+        let first = |screen: ScreenBuilder| {
+            if matches!(self.warmth, WarmthState::Level(_)) {
+                brightness(screen)
+            } else {
+                brightness(screen).secondary(BRIGHTNESS_LASTS)
+            }
+        };
+        match part {
+            // Room between the two, so each track reads as the foot of the
+            // control above it and not as a second rule over the section
+            // below. Only where a second section follows.
+            LightPart::Whole if self.warmth != WarmthState::Unread => {
+                second(first(screen).spacer(kobo_sdk::Space::Medium))
+            }
+            LightPart::Whole => first(screen),
+            LightPart::Brightness => page_controls(first(screen), 0, 2),
+            LightPart::Warmth => page_controls(second(screen), 1, 2),
+        }
+        .build()
+    }
+
+    /// Reads both settings of the light, as its page does when it opens,
+    /// when Settings comes back to the front and when a reading is asked
+    /// for again.
+    ///
+    /// The warmth is not asked for again once the runtime has said it
+    /// cannot set it on this reader: that answer does not change.
+    fn read_light(&self, context: &mut Context) {
+        context.device().read_frontlight();
+        if self.warmth != WarmthState::Unsupported {
+            context.device().read_warmth();
+        }
     }
 
     /// Asks for the light one step up or down from where it stands.
@@ -1754,6 +1982,16 @@ impl Settings {
     /// A second tap can arrive before the first is answered, and stepping
     /// both from the level on the panel would ask for the same level twice.
     /// The second steps on from where the first was headed.
+    ///
+    /// The first step of a run is held back for one request. Until a warmth
+    /// has been set, the runtime reads the top of the brightness range as a
+    /// request for every lamp and moves the balance between them to get it,
+    /// which on this page would be the Warmth reading jumping because the
+    /// owner touched Brightness. So before the first step Settings sets the
+    /// warmth to the value it just read. Nothing moves, the runtime now
+    /// holds that warmth as chosen, and the step goes out when that is
+    /// answered, whatever the answer. Once a run, and only with a warmth
+    /// that has been read: a reader with none steps as it always has.
     fn step_light(&mut self, context: &mut Context, up: bool) {
         let LightState::Level(level) = self.light else {
             return;
@@ -1772,7 +2010,33 @@ impl Settings {
             to,
             answered: false,
         });
-        context.device().set_frontlight(to);
+        // Should the answer put a banner up and split the page, it stays on
+        // the control that was tapped.
+        self.light_page = 0;
+        if self.held_level.is_some() {
+            // Still waiting on the warmth: the step that goes out is the
+            // latest one asked for.
+            self.held_level = Some(to);
+            return;
+        }
+        match self.warmth {
+            WarmthState::Level(warmth) if !self.warmth_set => {
+                self.warmth_set = true;
+                self.held_level = Some(to);
+                context.device().set_warmth(warmth.percent());
+            }
+            _ => context.device().set_frontlight(to),
+        }
+    }
+
+    /// Sends the brightness step that was waiting for the warmth to be
+    /// kept, now that the runtime has answered. The step is taken whether
+    /// the warmth was kept or not: a refusal is said over the page, and the
+    /// owner still asked for the light to change.
+    fn release_held_level(&mut self, context: &mut Context) {
+        if let Some(level) = self.held_level.take() {
+            context.device().set_frontlight(level);
+        }
     }
 
     /// Takes a level the runtime answered, and checks a step against it.
@@ -1790,12 +2054,89 @@ impl Settings {
                     step.answered = true;
                 }
                 context.device().read_frontlight();
+                // Keeping the warmth ahead of the first step can be
+                // refused, and then the top of the brightness range still
+                // moves it. The page shows the warmth the light is at. Not
+                // while that refusal is on the page, though: this reading
+                // would clear words the owner has had no time to read.
+                if matches!(self.warmth, WarmthState::Level(_))
+                    && self.banner_for(Topic::Warmth).is_none()
+                {
+                    context.device().read_warmth();
+                }
             }
             DeviceRequest::ReadFrontlight => {
                 if let Some(step) = self.light_step.filter(|step| step.answered) {
                     self.light_step = None;
                     if level == step.from {
                         self.fail(Topic::Light, LIGHT_DID_NOT_CHANGE);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Asks for the warmth one setting up or down from where it stands.
+    ///
+    /// As [`Self::step_light`]: nothing is drawn on the tap, and a second
+    /// tap before the first is answered steps on from where the first was
+    /// headed. One tap is one setting of the lamp, however many it has.
+    fn step_warmth(&mut self, context: &mut Context, warmer: bool) {
+        let WarmthState::Level(warmth) = self.warmth else {
+            return;
+        };
+        let standing = self.warmth_step.map_or(warmth.step, |step| step.to);
+        let to = if warmer {
+            standing.saturating_add(1).min(warmth.last)
+        } else {
+            standing.saturating_sub(1)
+        };
+        if to == standing {
+            return;
+        }
+        self.warmth_step = Some(LightStep {
+            from: self.warmth_step.map_or(warmth.step, |step| step.from),
+            to,
+            answered: false,
+        });
+        // A warmth the owner chose is the one the runtime keeps, so there
+        // is nothing for a later brightness step to keep first.
+        self.warmth_set = true;
+        self.light_page = 1;
+        context.device().set_warmth(
+            WarmthLevel {
+                step: to,
+                last: warmth.last,
+            }
+            .percent(),
+        );
+    }
+
+    /// Takes a warmth the runtime answered, and checks a step against it,
+    /// the way [`Self::took_light_level`] does for the brightness.
+    fn took_warmth(
+        &mut self,
+        context: &mut Context,
+        request: &DeviceRequest,
+        percent: u8,
+        steps: u8,
+    ) {
+        let warmth = WarmthLevel::new(percent, steps);
+        self.warmth = WarmthState::Level(warmth);
+        self.settled(Topic::Warmth);
+        match request {
+            DeviceRequest::SetWarmth { .. } => {
+                if let Some(step) = &mut self.warmth_step {
+                    step.answered = true;
+                }
+                context.device().read_warmth();
+            }
+            DeviceRequest::ReadWarmth => {
+                if let Some(step) = self.warmth_step.filter(|step| step.answered) {
+                    self.warmth_step = None;
+                    if warmth.step == step.from {
+                        self.fail(Topic::Warmth, WARMTH_DID_NOT_CHANGE);
                     }
                 }
             }
@@ -1932,6 +2273,7 @@ impl Settings {
         context.device().read_update_channel();
         context.device().read_time_zone();
         context.device().read_frontlight();
+        context.device().read_warmth();
     }
 
     /// Asks GitHub what the newest published release is. Nothing is
@@ -2162,6 +2504,7 @@ impl Settings {
             // Not a radio, but the same settled answer: a light the runtime
             // cannot drive on this reader will not be driven later either.
             Topic::Light => self.light = LightState::Unsupported,
+            Topic::Warmth => self.warmth = WarmthState::Unsupported,
             Topic::Battery | Topic::About => {}
         }
     }
@@ -2196,6 +2539,7 @@ impl Settings {
             View::Bluetooth => self.bluetooth_pages(context).len(),
             View::Wifi => self.wifi_pages(context).len(),
             View::About => self.about_pages(context).len(),
+            View::Light => self.light_pages(context),
             _ => return,
         };
         let page = match self.view {
@@ -2203,6 +2547,7 @@ impl Settings {
             View::Bluetooth => &mut self.bluetooth_page,
             View::Wifi => &mut self.wifi_page,
             View::About => &mut self.about_page,
+            View::Light => &mut self.light_page,
             _ => return,
         };
         let last = pages.saturating_sub(1);
@@ -2382,7 +2727,12 @@ impl Settings {
             if let Some(reason) = refused {
                 self.settle_unreadable_radio(topic, reason);
             }
-            self.fail(topic, words);
+            // A warmth this reader does not have is not trouble. The page
+            // says so once, where the control would be, and a banner over
+            // a brightness control that works would say it went wrong.
+            if !(topic == Topic::Warmth && refused == Some(DenyReason::Unsupported)) {
+                self.fail(topic, words);
+            }
             self.drop_busy(request);
         }
     }
@@ -2409,6 +2759,9 @@ impl Settings {
             DeviceRequest::SetBluetooth { .. } => self.bluetooth_switching = None,
             DeviceRequest::SetFrontlight { .. } | DeviceRequest::ReadFrontlight => {
                 self.light_step = None;
+            }
+            DeviceRequest::SetWarmth { .. } | DeviceRequest::ReadWarmth => {
+                self.warmth_step = None;
             }
             DeviceRequest::PairBluetooth { .. }
             | DeviceRequest::ConnectBluetooth { .. }
@@ -2437,13 +2790,13 @@ impl KoboApp for Settings {
     /// back to the front or the reader wakes, which is what its refresh mark
     /// used to be pressed for.
     ///
-    /// The light page does the same. Books has a light control of its own
-    /// and the Kobo reader is still running underneath, so the level may
-    /// have moved while Settings was away.
+    /// The light page does the same, for both of its settings. Books has a
+    /// light control of its own and the Kobo reader is still running
+    /// underneath, so either may have moved while Settings was away.
     fn on_foreground(&mut self, context: &mut Context) {
         match self.view {
             View::Battery => context.device().read_battery_detail(),
-            View::Light => context.device().read_frontlight(),
+            View::Light => self.read_light(context),
             _ => {}
         }
     }
@@ -2503,12 +2856,17 @@ impl KoboApp for Settings {
             self.show(context);
         } else if action == action_id(LIGHT) {
             self.view = View::Light;
-            context.device().read_frontlight();
+            self.light_page = 0;
+            self.read_light(context);
             self.show(context);
         } else if action == action_id(DIMMER) {
             self.step_light(context, false);
         } else if action == action_id(BRIGHTER) {
             self.step_light(context, true);
+        } else if action == action_id(COOLER) {
+            self.step_warmth(context, false);
+        } else if action == action_id(WARMER) {
+            self.step_warmth(context, true);
         } else if action == action_id(ABOUT) {
             self.view = View::About;
             self.about_page = 0;
@@ -2580,7 +2938,7 @@ impl KoboApp for Settings {
                     self.delay_refresh(context, Pending::WifiRefresh);
                 }
                 View::Battery => context.device().read_battery_detail(),
-                View::Light => context.device().read_frontlight(),
+                View::Light => self.read_light(context),
                 View::About => context.device().read_identity(),
                 View::Update => {
                     context.device().read_auto_update();
@@ -2637,6 +2995,12 @@ impl KoboApp for Settings {
             self.show(context);
             return;
         }
+        // Any answer to a warmth that was set lets a waiting brightness
+        // step go. Answers come back in the order they were asked for, so
+        // the first is the one the step was waiting on.
+        if matches!(request, DeviceRequest::SetWarmth { .. }) {
+            self.release_held_level(context);
+        }
         match result {
             DeviceResult::Bluetooth {
                 available,
@@ -2685,6 +3049,9 @@ impl KoboApp for Settings {
             }
             DeviceResult::Frontlight { percent } => {
                 self.took_light_level(context, &request, percent);
+            }
+            DeviceResult::Warmth { percent, steps } => {
+                self.took_warmth(context, &request, percent, steps);
             }
             DeviceResult::AutoUpdate { cobalt, apps } => {
                 self.auto_update = Some((cobalt, apps));
@@ -3203,9 +3570,9 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        LightState, RadioState, Settings, Topic, View, ZoneChoice, AUTO_APPS, AUTO_COBALT,
-        CANCEL_CHANNEL, CHANNEL_BETA, CHANNEL_STABLE, CONFIRM_CHANNEL, MORE, PREVIOUS, RESCAN,
-        TOGGLE, VERSION,
+        LightState, RadioState, Settings, Topic, View, WarmthLevel, WarmthState, ZoneChoice,
+        AUTO_APPS, AUTO_COBALT, CANCEL_CHANNEL, CHANNEL_BETA, CHANNEL_STABLE, CONFIRM_CHANNEL,
+        MORE, PREVIOUS, RESCAN, TOGGLE, VERSION,
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
@@ -4067,6 +4434,15 @@ mod tests {
         assert_eq!(
             super::Topic::of(&DeviceRequest::SetFrontlight { percent: 40 }),
             Some(super::Topic::Light)
+        );
+        // Its warmth is said on the same page and kept apart from it.
+        assert_eq!(
+            super::Topic::of(&DeviceRequest::ReadWarmth),
+            Some(super::Topic::Warmth)
+        );
+        assert_eq!(
+            super::Topic::of(&DeviceRequest::SetWarmth { percent: 40 }),
+            Some(super::Topic::Warmth)
         );
         assert_eq!(super::Topic::of(&DeviceRequest::ReadCover), None);
     }
@@ -6079,9 +6455,10 @@ mod tests {
         assert_eq!(levels_asked(&mut context), [20]);
     }
 
-    /// The runtime answers a set with the level asked for even when the
-    /// reader did not take it, so the answer alone would leave the page
-    /// showing a brightness the panel is not at.
+    /// An earlier runtime answered a set with the level asked for even when
+    /// the reader did not take it, and a lamp can accept a level and stay
+    /// where it is, so the answer alone could leave the page showing a
+    /// brightness the panel is not at.
     #[test]
     fn a_step_the_reader_did_not_take_is_said_over_the_level_the_light_is_at() {
         use kobo_sdk::KoboApp;
@@ -6338,52 +6715,1018 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn every_state_of_the_light_page_fits_every_panel_with_both_ends_in_reach() {
+    /// Every state the light page can be in, each named for a failure
+    /// message.
+    fn every_state_of_the_light_page() -> Vec<(&'static str, Settings)> {
+        const BUSY: &str = "Something else is using that right now. Try again in a moment.";
         let refused = |light| Settings {
             light,
-            trouble: Some((
-                Topic::Light,
-                "Something else is using that right now. Try again in a moment.".to_owned(),
-            )),
+            trouble: Some((Topic::Light, BUSY.to_owned())),
             ..Settings::default()
         };
-        for metrics in every_panel_the_light_page_is_drawn_on() {
-            let _runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
-            for (what, settings) in [
-                ("reading", Settings::default()),
-                ("off", light_at(0)),
-                ("dim", light_at(7)),
-                ("full", light_at(100)),
-                ("refused before a level", refused(LightState::Unread)),
-                ("refused over a level", refused(LightState::Level(40))),
-                (
-                    "unsupported",
-                    Settings {
-                        light: LightState::Unsupported,
-                        ..Settings::default()
-                    },
-                ),
-            ] {
-                let screen = settings.light();
-                fits(&screen, metrics, what);
-                let Some((_, less, more, _)) = brightness(&screen) else {
-                    continue;
-                };
-                let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
-                for (name, answers) in [(super::DIMMER, less), (super::BRIGHTER, more)] {
-                    let Some(rect) = layout.rect_of_action(action_id(name)) else {
-                        assert!(!answers, "{what} on {metrics:?}: {name} is not drawn");
-                        continue;
-                    };
+        let warmth_refused = |settings| Settings {
+            trouble: Some((Topic::Warmth, BUSY.to_owned())),
+            ..settings
+        };
+        vec![
+            ("reading", Settings::default()),
+            ("off", light_at(0)),
+            ("dim", light_at(7)),
+            ("full", light_at(100)),
+            ("refused before a level", refused(LightState::Unread)),
+            ("refused over a level", refused(LightState::Level(40))),
+            (
+                "unsupported",
+                Settings {
+                    light: LightState::Unsupported,
+                    ..Settings::default()
+                },
+            ),
+            ("both in the middle", light_and_warmth_at(40, 4)),
+            ("both at the bottom", light_and_warmth_at(0, 0)),
+            ("both at the top", light_and_warmth_at(100, 10)),
+            (
+                "a warmth that cannot be set",
+                Settings {
+                    warmth: WarmthState::Unsupported,
+                    ..light_at(40)
+                },
+            ),
+            (
+                "a warmth refused before a reading",
+                warmth_refused(light_at(40)),
+            ),
+            (
+                "a warmth refused over a reading",
+                warmth_refused(light_and_warmth_at(40, 4)),
+            ),
+            (
+                "a warmth that cannot be set, under a refused brightness",
+                Settings {
+                    warmth: WarmthState::Unsupported,
+                    ..refused(LightState::Level(40))
+                },
+            ),
+        ]
+    }
+
+    /// Checks one state of the light page on one panel: every page of it
+    /// fits, every end that answers is drawn large enough to tap, and a page
+    /// that turns says everything the whole page would have.
+    fn the_light_page_fits(
+        context: &kobo_sdk::Context,
+        metrics: kobo_sdk::DisplayMetrics,
+        what: &str,
+        settings: Settings,
+    ) {
+        let mut settings = Settings {
+            view: View::Light,
+            ..settings
+        };
+        let pages = settings.light_pages(context);
+        if settings.trouble.is_none() {
+            assert_eq!(pages, 1, "{what} on {metrics:?}: one page with no banner");
+        }
+        let whole = settings.light_screen(super::LightPart::Whole);
+        let mut drawn = Vec::new();
+        let mut said = Vec::new();
+        for page in 0..pages {
+            settings.light_page = page;
+            let screen = settings.light_for(context);
+            fits(&screen, metrics, &format!("{what}, page {page}"));
+            said.extend(shape_of(&screen));
+            let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+            for name in [super::DIMMER, super::BRIGHTER, super::COOLER, super::WARMER] {
+                if let Some(rect) = layout.rect_of_action(action_id(name)) {
                     assert!(
                         rect.height >= metrics.touch_target_minimum()
                             && rect.width >= metrics.touch_target_minimum(),
                         "{what} on {metrics:?}: {name} is {rect:?}"
                     );
+                    drawn.push(name);
+                }
+            }
+            if pages > 1 {
+                // The page turns between the sections: each page
+                // holds one of them whole and nothing of the other.
+                let sections: Vec<_> = shape_of(&screen)
+                    .into_iter()
+                    .filter(|line| line.starts_with("section "))
+                    .collect();
+                assert_eq!(
+                    sections,
+                    [["section Brightness"], ["section Warmth"]][page],
+                    "{what} on {metrics:?}"
+                );
+                let way_on = [super::MORE, super::PREVIOUS][page];
+                assert!(layout.rect_of_action(action_id(way_on)).is_some());
+            }
+        }
+        // Nothing the whole page says is lost by turning it, and
+        // nothing but the banner over both pages is said twice.
+        let mut expected = shape_of(&whole);
+        if pages > 1 {
+            let banners: Vec<_> = expected
+                .iter()
+                .filter(|line| line.starts_with("banner "))
+                .cloned()
+                .collect();
+            let warmth = expected
+                .iter()
+                .position(|line| line == "section Warmth")
+                .expect("a second section to turn to");
+            expected.splice(warmth..warmth, banners);
+        }
+        assert_eq!(said, expected, "{what} on {metrics:?}");
+        let ends = [
+            (super::DIMMER, brightness(&whole).map(|control| control.1)),
+            (super::BRIGHTER, brightness(&whole).map(|control| control.2)),
+            (
+                super::COOLER,
+                warmth_control(&whole).map(|control| control.1),
+            ),
+            (
+                super::WARMER,
+                warmth_control(&whole).map(|control| control.2),
+            ),
+        ];
+        for (name, answers) in ends {
+            assert_eq!(
+                drawn.contains(&name),
+                answers == Some(true),
+                "{what} on {metrics:?}: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_state_of_the_light_page_fits_every_panel_with_both_ends_in_reach() {
+        for metrics in every_panel_the_light_page_is_drawn_on() {
+            let runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+            for (what, settings) in every_state_of_the_light_page() {
+                the_light_page_fits(&runner.context(), metrics, what, settings);
+            }
+        }
+    }
+
+    /// The one case with no room for both controls: the largest text, the
+    /// reader held sideways, and a banner over the page. The page turns
+    /// there, and it stays with the control the owner was using, so trying
+    /// again is a tap in the same place and not a page away.
+    #[test]
+    fn a_page_too_short_for_both_controls_turns_between_them_and_stays_on_the_one_tapped() {
+        use kobo_sdk::KoboApp;
+        let mut largest = CLARA_BW_METRICS.text_scale;
+        while let Some(larger) = largest.larger() {
+            largest = larger;
+        }
+        let metrics = kobo_sdk::DisplayMetrics {
+            width: 1448,
+            height: 1072,
+            text_scale: largest,
+            ..CLARA_BW_METRICS
+        };
+        let runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+        let mut context = runner.context();
+        let mut settings = light_and_warmth_at(40, 4);
+        assert_eq!(settings.light_pages(&context), 1);
+
+        settings.on_action(&mut context, action_id(super::WARMER));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetWarmth { percent: 50 },
+            DeviceResult::Failed(kobo_sdk::DeviceError::Backend),
+        );
+        assert_eq!(settings.light_pages(&context), 2);
+        let screen = settings.light_for(&context);
+        fits(&screen, metrics, "the warmth page");
+        assert_eq!(
+            shape_of(&screen),
+            [
+                "banner The reader could not finish that. Try again.",
+                "section Warmth",
+                "stepper 4 of 10",
+                "secondary Both last until Cobalt closes. The Kobo reader keeps its own brightness and warmth.",
+            ]
+        );
+        settings.on_action(&mut context, action_id(PREVIOUS));
+        assert_eq!(
+            shape_of(&settings.light_for(&context)),
+            [
+                "banner The reader could not finish that. Try again.",
+                "section Brightness",
+                "stepper 40%",
+            ]
+        );
+        settings.on_action(&mut context, action_id(MORE));
+
+        // A step that is taken clears the banner, and the page is whole.
+        settings.on_action(&mut context, action_id(super::WARMER));
+        for request in [
+            DeviceRequest::SetWarmth { percent: 50 },
+            DeviceRequest::ReadWarmth,
+        ] {
+            settings.on_device_result(
+                &mut context,
+                request,
+                DeviceResult::Warmth {
+                    percent: 50,
+                    steps: 11,
+                },
+            );
+        }
+        assert_eq!(settings.light_pages(&context), 1);
+        assert_eq!(
+            shape_of(&settings.light_for(&context)),
+            shape_of(&light_and_warmth_at(40, 5).light())
+        );
+
+        // Opening the page again starts at its first control.
+        settings.on_action(&mut context, kobo_sdk::ActionId::BACK);
+        settings.on_action(&mut context, action_id(super::LIGHT));
+        assert_eq!(settings.light_page, 0);
+    }
+
+    /// The warmth control as a screen declares it: the stepper under the
+    /// section named Warmth, read the way [`brightness`] reads the first.
+    fn warmth_control(screen: &kobo_sdk::Screen) -> Option<(String, bool, bool, Option<u8>)> {
+        screen
+            .nodes
+            .iter()
+            .skip_while(|node| !matches!(node, Node::Section { title, .. } if title == "Warmth"))
+            .find_map(|node| match node {
+                Node::Stepper {
+                    label,
+                    less_state,
+                    more_state,
+                    fill,
+                    ..
+                } => Some((
+                    label.clone(),
+                    *less_state == ControlState::Enabled,
+                    *more_state == ControlState::Enabled,
+                    *fill,
+                )),
+                _ => None,
+            })
+    }
+
+    /// The warmths asked for since the commands were last taken.
+    fn warmths_asked(context: &mut kobo_sdk::Context) -> Vec<u8> {
+        context
+            .take_commands()
+            .into_iter()
+            .filter_map(|command| match command {
+                kobo_sdk::Command::Device(DeviceRequest::SetWarmth { percent }) => Some(percent),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn warmth_reads(context: &mut kobo_sdk::Context) -> usize {
+        context
+            .take_commands()
+            .iter()
+            .filter(|command| {
+                matches!(
+                    command,
+                    kobo_sdk::Command::Device(DeviceRequest::ReadWarmth)
+                )
+            })
+            .count()
+    }
+
+    /// Settings on its light page with the light at `level` and the warmth
+    /// at `step` of a lamp that runs from 0 to 10, as every known one does.
+    fn light_and_warmth_at(level: u8, step: u8) -> Settings {
+        Settings {
+            warmth: WarmthState::Level(WarmthLevel { step, last: 10 }),
+            ..light_at(level)
+        }
+    }
+
+    /// The text nodes of the light page, in the order they are declared,
+    /// each named by what it is.
+    fn shape_of(screen: &kobo_sdk::Screen) -> Vec<String> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Section { title, .. } => Some(format!("section {title}")),
+                Node::Stepper { label, .. } => Some(format!("stepper {label}")),
+                Node::Secondary { text, .. } => Some(format!("secondary {text}")),
+                Node::Text { text, .. } => Some(format!("text {text}")),
+                Node::Banner { text, .. } => Some(format!("banner {text}")),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_warmth_is_named_at_its_ends_and_counted_between_them() {
+        let said = |step, last| WarmthLevel { step, last }.words();
+        assert_eq!(said(0, 10), "Coolest");
+        assert_eq!(said(1, 10), "1 of 10");
+        assert_eq!(said(4, 10), "4 of 10");
+        assert_eq!(said(9, 10), "9 of 10");
+        assert_eq!(said(10, 10), "Warmest");
+        // The count is the lamp's own, not a ten that was written down.
+        assert_eq!(said(2, 4), "2 of 4");
+        assert_eq!(said(4, 4), "Warmest");
+        assert_eq!(said(0, 1), "Coolest");
+        assert_eq!(said(1, 1), "Warmest");
+    }
+
+    /// One tap has to move the lamp one setting, so the percentage Settings
+    /// asks for is the one the runtime reports for that setting, and a
+    /// reading of it is taken back as that setting.
+    #[test]
+    fn every_setting_of_a_lamp_is_asked_for_by_the_percentage_that_reads_back_as_it() {
+        for steps in 2..=101_u8 {
+            for step in 0..steps {
+                let level = WarmthLevel {
+                    step,
+                    last: steps - 1,
+                };
+                assert!(level.percent() <= 100);
+                assert_eq!(
+                    WarmthLevel::new(level.percent(), steps),
+                    level,
+                    "{step} of {steps}"
+                );
+            }
+        }
+        // Eleven settings are ten percent apart.
+        assert_eq!(WarmthLevel::new(40, 11), WarmthLevel { step: 4, last: 10 });
+        assert_eq!(WarmthLevel { step: 7, last: 10 }.percent(), 70);
+        // A count no lamp has is still a scale with two ends.
+        assert_eq!(WarmthLevel::new(100, 0), WarmthLevel { step: 1, last: 1 });
+    }
+
+    #[test]
+    fn the_light_row_says_the_level_and_then_the_warmth_where_there_is_one() {
+        let mut settings = light_and_warmth_at(40, 4);
+        assert_eq!(summary_of_the_light_row(&settings), "40% · Warmth 4 of 10");
+        settings.warmth = WarmthState::Level(WarmthLevel { step: 0, last: 10 });
+        assert_eq!(summary_of_the_light_row(&settings), "40% · Coolest");
+        settings.warmth = WarmthState::Level(WarmthLevel { step: 10, last: 10 });
+        assert_eq!(summary_of_the_light_row(&settings), "40% · Warmest");
+        // A reader whose warmth cannot be set, or has not been read, gets
+        // the level alone.
+        settings.warmth = WarmthState::Unsupported;
+        assert_eq!(summary_of_the_light_row(&settings), "40%");
+        settings.warmth = WarmthState::Unread;
+        assert_eq!(summary_of_the_light_row(&settings), "40%");
+        // A light that is off has no warmth to see.
+        assert_eq!(summary_of_the_light_row(&light_and_warmth_at(0, 4)), "Off");
+    }
+
+    /// The home list is paginated by the longest line each row can show, so
+    /// a level gaining a warmth must never be longer than what the row is
+    /// measured as, or the row could move to another page as the light does.
+    #[test]
+    fn no_level_and_warmth_is_longer_than_the_light_row_is_measured_as() {
+        let measured = super::LIGHT_ROW_WIDEST.chars().count();
+        let row = Settings::default()
+            .home_rows()
+            .into_iter()
+            .find(|row| row.action == super::LIGHT)
+            .expect("the light row");
+        assert_eq!(row.measure, super::LIGHT_ROW_WIDEST);
+        for level in 0..=100 {
+            for last in 1..=100 {
+                for step in 0..=last {
+                    let settings = Settings {
+                        warmth: WarmthState::Level(WarmthLevel { step, last }),
+                        ..light_at(level)
+                    };
+                    let summary = summary_of_the_light_row(&settings);
+                    assert!(summary.chars().count() <= measured, "{summary}");
                 }
             }
         }
+        assert_eq!(
+            summary_of_the_light_row(&light_and_warmth_at(100, 9)),
+            "100% · Warmth 9 of 10"
+        );
+    }
+
+    #[test]
+    fn the_warmth_is_read_wherever_the_brightness_is() {
+        use kobo_sdk::KoboApp;
+        let mut settings = Settings::default();
+        let mut context = kobo_sdk::Context::default();
+        settings.on_start(&mut context);
+        assert_eq!(warmth_reads(&mut context), 1, "the home row says it");
+        settings.on_action(&mut context, action_id(super::LIGHT));
+        assert_eq!(warmth_reads(&mut context), 1);
+        settings.on_foreground(&mut context);
+        assert_eq!(warmth_reads(&mut context), 1);
+        settings.on_resume(&mut context);
+        assert_eq!(warmth_reads(&mut context), 1);
+        settings.on_action(&mut context, kobo_sdk::ActionId::BACK);
+        settings.on_foreground(&mut context);
+        assert_eq!(warmth_reads(&mut context), 0);
+    }
+
+    #[test]
+    fn the_light_page_has_two_controls_and_says_once_how_long_they_last() {
+        let settings = light_and_warmth_at(40, 4);
+        let screen = settings.light();
+        assert_eq!(
+            shape_of(&screen),
+            [
+                "section Brightness",
+                "stepper 40%",
+                "section Warmth",
+                "stepper 4 of 10",
+                "secondary Both last until Cobalt closes. The Kobo reader keeps its own brightness and warmth.",
+            ]
+        );
+        assert_eq!(
+            brightness(&screen),
+            Some(("40%".to_owned(), true, true, Some(40)))
+        );
+        assert_eq!(
+            warmth_control(&screen),
+            Some(("4 of 10".to_owned(), true, true, Some(40)))
+        );
+        // Until the warmth has been read there is one control, and the
+        // line under it speaks for one.
+        assert_eq!(
+            shape_of(&light_at(40).light()),
+            [
+                "section Brightness",
+                "stepper 40%",
+                "secondary Lasts until Cobalt closes. The Kobo reader keeps its own level.",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tap_moves_the_warmth_one_setting_and_plus_is_warmer() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_and_warmth_at(40, 4);
+        let mut context = kobo_sdk::Context::default();
+        settings.on_action(&mut context, action_id(super::WARMER));
+        assert_eq!(warmths_asked(&mut context), [50]);
+        // Asked for, not answered: the page still says where the lamp is.
+        assert_eq!(
+            warmth_control(&settings.light()).map(|control| control.0),
+            Some("4 of 10".to_owned())
+        );
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetWarmth { percent: 50 },
+            DeviceResult::Warmth {
+                percent: 50,
+                steps: 11,
+            },
+        );
+        assert_eq!(
+            warmth_control(&settings.light()),
+            Some(("5 of 10".to_owned(), true, true, Some(50)))
+        );
+        // The reading after the answer is the one from the lamp.
+        assert_eq!(warmth_reads(&mut context), 1);
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadWarmth,
+            DeviceResult::Warmth {
+                percent: 50,
+                steps: 11,
+            },
+        );
+        assert!(settings.banner_for(Topic::Warmth).is_none());
+        assert_eq!(summary_of_the_light_row(&settings), "40% · Warmth 5 of 10");
+
+        settings.on_action(&mut context, action_id(super::COOLER));
+        assert_eq!(warmths_asked(&mut context), [40]);
+
+        // A lamp with five settings moves a quarter of the way on a tap.
+        let mut coarse = Settings {
+            warmth: WarmthState::Level(WarmthLevel { step: 1, last: 4 }),
+            ..light_at(40)
+        };
+        coarse.on_action(&mut context, action_id(super::WARMER));
+        assert_eq!(warmths_asked(&mut context), [50]);
+    }
+
+    #[test]
+    fn a_second_warmth_tap_before_the_first_is_answered_steps_on_from_the_first() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_and_warmth_at(40, 8);
+        let mut context = kobo_sdk::Context::default();
+        for _ in 0..4 {
+            settings.on_action(&mut context, action_id(super::WARMER));
+        }
+        // Two settings were left, so two are asked for and the rest are
+        // taps on an end that has nowhere further to go.
+        assert_eq!(warmths_asked(&mut context), [90, 100]);
+    }
+
+    #[test]
+    fn each_end_of_the_warmth_is_named_and_stops_answering() {
+        use kobo_sdk::KoboApp;
+        let mut context = kobo_sdk::Context::default();
+
+        let mut coolest = light_and_warmth_at(40, 0);
+        assert_eq!(
+            warmth_control(&coolest.light()),
+            Some(("Coolest".to_owned(), false, true, Some(0)))
+        );
+        coolest.on_action(&mut context, action_id(super::COOLER));
+        assert!(warmths_asked(&mut context).is_empty());
+        coolest.on_action(&mut context, action_id(super::WARMER));
+        assert_eq!(warmths_asked(&mut context), [10]);
+
+        let mut warmest = light_and_warmth_at(40, 10);
+        assert_eq!(
+            warmth_control(&warmest.light()),
+            Some(("Warmest".to_owned(), true, false, Some(100)))
+        );
+        warmest.on_action(&mut context, action_id(super::WARMER));
+        assert!(warmths_asked(&mut context).is_empty());
+        warmest.on_action(&mut context, action_id(super::COOLER));
+        assert_eq!(warmths_asked(&mut context), [90]);
+    }
+
+    #[test]
+    fn a_warmth_step_the_reader_did_not_take_is_said_over_the_setting_it_is_at() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_and_warmth_at(40, 4);
+        let mut context = kobo_sdk::Context::default();
+        settings.on_action(&mut context, action_id(super::WARMER));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetWarmth { percent: 50 },
+            DeviceResult::Warmth {
+                percent: 50,
+                steps: 11,
+            },
+        );
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadWarmth,
+            DeviceResult::Warmth {
+                percent: 40,
+                steps: 11,
+            },
+        );
+        let screen = settings.light();
+        assert_eq!(
+            warmth_control(&screen),
+            Some(("4 of 10".to_owned(), true, true, Some(40)))
+        );
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Banner { level: BannerLevel::Error, text, action: None, .. }
+                if text == "The warmth did not change. Try again."
+        )));
+        // A brightness that is read meanwhile says nothing about the
+        // warmth, so the words stay until the warmth itself answers.
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadFrontlight,
+            DeviceResult::Frontlight { percent: 40 },
+        );
+        assert!(settings.banner_for(Topic::Warmth).is_some());
+
+        let _ = context.take_commands();
+        settings.on_action(&mut context, action_id(super::WARMER));
+        assert_eq!(warmths_asked(&mut context), [50]);
+        for request in [
+            DeviceRequest::SetWarmth { percent: 50 },
+            DeviceRequest::ReadWarmth,
+        ] {
+            settings.on_device_result(
+                &mut context,
+                request,
+                DeviceResult::Warmth {
+                    percent: 50,
+                    steps: 11,
+                },
+            );
+        }
+        assert!(settings.banner_for(Topic::Warmth).is_none());
+        assert_eq!(
+            settings.warmth,
+            WarmthState::Level(WarmthLevel { step: 5, last: 10 })
+        );
+    }
+
+    #[test]
+    fn a_warmth_the_reader_failed_to_set_keeps_both_controls_under_the_reason() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_and_warmth_at(40, 4);
+        let mut context = kobo_sdk::Context::default();
+        settings.on_action(&mut context, action_id(super::WARMER));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetWarmth { percent: 50 },
+            DeviceResult::Failed(kobo_sdk::DeviceError::Backend),
+        );
+        let screen = settings.light();
+        assert_eq!(
+            shape_of(&screen),
+            [
+                "banner The reader could not finish that. Try again.",
+                "section Brightness",
+                "stepper 40%",
+                "section Warmth",
+                "stepper 4 of 10",
+                "secondary Both last until Cobalt closes. The Kobo reader keeps its own brightness and warmth.",
+            ]
+        );
+        // Both controls are there to try again with, so the banner offers
+        // nothing of its own.
+        assert!(screen
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::Banner { action: None, .. })));
+        // The failed step is forgotten, so the next tap starts from the
+        // setting on the panel.
+        let _ = context.take_commands();
+        settings.on_action(&mut context, action_id(super::WARMER));
+        assert_eq!(warmths_asked(&mut context), [50]);
+    }
+
+    #[test]
+    fn a_reader_whose_warmth_cannot_be_set_keeps_its_brightness_and_gets_a_sentence() {
+        use kobo_sdk::KoboApp;
+        let mut settings = Settings::default();
+        let mut context = kobo_sdk::Context::default();
+        settings.on_action(&mut context, action_id(super::LIGHT));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadFrontlight,
+            DeviceResult::Frontlight { percent: 40 },
+        );
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadWarmth,
+            DeviceResult::Denied(DenyReason::Unsupported),
+        );
+        assert_eq!(settings.warmth, WarmthState::Unsupported);
+        let screen = settings.light();
+        // No banner: nothing went wrong, and the brightness works.
+        assert_eq!(
+            shape_of(&screen),
+            [
+                "section Brightness",
+                "stepper 40%",
+                "secondary Lasts until Cobalt closes. The Kobo reader keeps its own level.",
+                "section Warmth",
+                "text This version of Cobalt cannot set the warmth on this reader.",
+            ]
+        );
+        assert!(settings.trouble.is_none());
+        assert_eq!(warmth_control(&screen), None);
+        assert_eq!(summary_of_the_light_row(&settings), "40%");
+
+        // Nothing asks for a warmth this reader does not have: not a tap,
+        // and not the readings the page takes when it comes back.
+        let _ = context.take_commands();
+        settings.on_action(&mut context, action_id(super::WARMER));
+        settings.on_action(&mut context, action_id(super::COOLER));
+        settings.on_foreground(&mut context);
+        let asked = context.take_commands();
+        assert!(asked.iter().all(|command| !matches!(
+            command,
+            kobo_sdk::Command::Device(DeviceRequest::ReadWarmth | DeviceRequest::SetWarmth { .. })
+        )));
+        assert!(asked.iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Device(DeviceRequest::ReadFrontlight)
+        )));
+        // The brightness still steps.
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        assert_eq!(levels_asked(&mut context), [45]);
+    }
+
+    #[test]
+    fn a_refused_warmth_reading_is_said_over_the_brightness_with_the_way_to_read_again() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_at(40);
+        let mut context = kobo_sdk::Context::default();
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadWarmth,
+            DeviceResult::Denied(DenyReason::Busy),
+        );
+        // Not settled the way an unsupported warmth is: this one may be
+        // read yet, so the page offers to.
+        assert_eq!(settings.warmth, WarmthState::Unread);
+        let screen = settings.light();
+        assert_eq!(
+            shape_of(&screen),
+            [
+                "banner Something else is using that right now. Try again in a moment.",
+                "section Brightness",
+                "stepper 40%",
+                "secondary Lasts until Cobalt closes. The Kobo reader keeps its own level.",
+            ]
+        );
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Banner { action: Some(action), .. }
+                if action.action == action_id(RESCAN) && action.label == "Read again"
+        )));
+        // The home row still has a level to say.
+        assert_eq!(summary_of_the_light_row(&settings), "40%");
+
+        let _ = context.take_commands();
+        settings.on_action(&mut context, action_id(RESCAN));
+        assert_eq!(warmth_reads(&mut context), 1);
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadWarmth,
+            DeviceResult::Warmth {
+                percent: 70,
+                steps: 11,
+            },
+        );
+        let screen = settings.light();
+        assert_eq!(
+            warmth_control(&screen),
+            Some(("7 of 10".to_owned(), true, true, Some(70)))
+        );
+        assert!(!screen
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::Banner { .. })));
+    }
+
+    /// What Settings asked the runtime for since the commands were last
+    /// taken, light and warmth only, in the order it asked.
+    fn light_requests(context: &mut kobo_sdk::Context) -> Vec<DeviceRequest> {
+        context
+            .take_commands()
+            .into_iter()
+            .filter_map(|command| match command {
+                kobo_sdk::Command::Device(
+                    request @ (DeviceRequest::SetFrontlight { .. }
+                    | DeviceRequest::SetWarmth { .. }
+                    | DeviceRequest::ReadFrontlight
+                    | DeviceRequest::ReadWarmth),
+                ) => Some(request),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn warmth_answer(percent: u8) -> DeviceResult {
+        DeviceResult::Warmth { percent, steps: 11 }
+    }
+
+    /// The runtime moves the balance between the lamps at the top of the
+    /// brightness range until a warmth has been set. On this page that
+    /// would be the Warmth reading jumping because Brightness was tapped,
+    /// so the first brightness step of a run is preceded by setting the
+    /// warmth to the value it already has.
+    #[test]
+    fn the_first_brightness_step_keeps_the_warmth_first_and_the_second_does_not() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_and_warmth_at(95, 7);
+        let mut context = kobo_sdk::Context::default();
+
+        // Opening the page reads and sets nothing.
+        settings.on_action(&mut context, kobo_sdk::ActionId::BACK);
+        settings.on_action(&mut context, action_id(super::LIGHT));
+        assert_eq!(
+            light_requests(&mut context),
+            [DeviceRequest::ReadFrontlight, DeviceRequest::ReadWarmth]
+        );
+
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        // The warmth as it was read, and no brightness yet.
+        assert_eq!(
+            light_requests(&mut context),
+            [DeviceRequest::SetWarmth { percent: 70 }]
+        );
+        assert_eq!(settings.light, LightState::Level(95));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetWarmth { percent: 70 },
+            warmth_answer(70),
+        );
+        // Answered, so the step goes out.
+        assert_eq!(
+            light_requests(&mut context),
+            [
+                DeviceRequest::SetFrontlight { percent: 100 },
+                DeviceRequest::ReadWarmth
+            ]
+        );
+        settings.on_device_result(&mut context, DeviceRequest::ReadWarmth, warmth_answer(70));
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetFrontlight { percent: 100 },
+            DeviceResult::Frontlight { percent: 100 },
+        );
+        let _ = context.take_commands();
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::ReadFrontlight,
+            DeviceResult::Frontlight { percent: 100 },
+        );
+        let screen = settings.light();
+        assert_eq!(
+            brightness(&screen).map(|control| control.0),
+            Some("100%".to_owned())
+        );
+        assert_eq!(
+            warmth_control(&screen).map(|control| control.0),
+            Some("7 of 10".to_owned())
+        );
+        assert!(settings.trouble.is_none());
+
+        // Once a run: the second step is a brightness step and nothing else,
+        // and so is one taken after leaving the page and coming back.
+        let _ = context.take_commands();
+        settings.on_action(&mut context, action_id(super::DIMMER));
+        assert_eq!(
+            light_requests(&mut context),
+            [DeviceRequest::SetFrontlight { percent: 95 }]
+        );
+        settings.on_action(&mut context, kobo_sdk::ActionId::BACK);
+        settings.on_action(&mut context, action_id(super::LIGHT));
+        let _ = context.take_commands();
+        settings.on_action(&mut context, action_id(super::DIMMER));
+        assert_eq!(
+            light_requests(&mut context),
+            [DeviceRequest::SetFrontlight { percent: 90 }]
+        );
+    }
+
+    #[test]
+    fn brightness_taps_while_the_warmth_is_being_kept_go_out_as_one_step_to_the_last() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_and_warmth_at(8, 4);
+        let mut context = kobo_sdk::Context::default();
+        for _ in 0..3 {
+            settings.on_action(&mut context, action_id(super::BRIGHTER));
+        }
+        assert_eq!(
+            light_requests(&mut context),
+            [DeviceRequest::SetWarmth { percent: 40 }]
+        );
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetWarmth { percent: 40 },
+            warmth_answer(40),
+        );
+        assert_eq!(levels_asked(&mut context), [15]);
+        // Nothing is left waiting for a later answer to release.
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetWarmth { percent: 40 },
+            warmth_answer(40),
+        );
+        assert!(levels_asked(&mut context).is_empty());
+    }
+
+    /// A warmth the owner set on this page is already the one the runtime
+    /// keeps, so a brightness step after it has nothing to keep first.
+    #[test]
+    fn a_warmth_the_owner_chose_needs_no_keeping_before_a_brightness_step() {
+        use kobo_sdk::KoboApp;
+        let mut settings = light_and_warmth_at(95, 4);
+        let mut context = kobo_sdk::Context::default();
+        settings.on_action(&mut context, action_id(super::WARMER));
+        assert_eq!(
+            light_requests(&mut context),
+            [DeviceRequest::SetWarmth { percent: 50 }]
+        );
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        assert_eq!(
+            light_requests(&mut context),
+            [DeviceRequest::SetFrontlight { percent: 100 }]
+        );
+    }
+
+    #[test]
+    fn a_reader_with_no_warmth_to_keep_steps_its_brightness_straight_away() {
+        use kobo_sdk::KoboApp;
+        for warmth in [WarmthState::Unsupported, WarmthState::Unread] {
+            let mut settings = Settings {
+                warmth,
+                ..light_at(95)
+            };
+            let mut context = kobo_sdk::Context::default();
+            settings.on_action(&mut context, action_id(super::BRIGHTER));
+            assert_eq!(
+                light_requests(&mut context),
+                [DeviceRequest::SetFrontlight { percent: 100 }],
+                "{warmth:?}"
+            );
+            settings.on_device_result(
+                &mut context,
+                DeviceRequest::SetFrontlight { percent: 100 },
+                DeviceResult::Frontlight { percent: 100 },
+            );
+            // And is not asked for a warmth it does not have.
+            assert_eq!(
+                light_requests(&mut context),
+                [DeviceRequest::ReadFrontlight],
+                "{warmth:?}"
+            );
+        }
+    }
+
+    /// The owner asked for the light to change. A warmth that could not be
+    /// kept is said over the page, and the light still changes.
+    #[test]
+    fn a_warmth_that_could_not_be_kept_is_said_and_the_brightness_step_still_goes() {
+        use kobo_sdk::KoboApp;
+        for (answer, words) in [
+            (
+                DeviceResult::Failed(kobo_sdk::DeviceError::Backend),
+                "The reader could not finish that. Try again.",
+            ),
+            (
+                DeviceResult::Denied(DenyReason::NotDeclared),
+                "Cobalt did not allow Settings to do that.",
+            ),
+        ] {
+            let mut settings = light_and_warmth_at(95, 7);
+            let mut context = kobo_sdk::Context::default();
+            settings.on_action(&mut context, action_id(super::BRIGHTER));
+            let _ = context.take_commands();
+            settings.on_device_result(
+                &mut context,
+                DeviceRequest::SetWarmth { percent: 70 },
+                answer,
+            );
+            assert_eq!(
+                light_requests(&mut context),
+                [DeviceRequest::SetFrontlight { percent: 100 }],
+                "{words}"
+            );
+            settings.on_device_result(
+                &mut context,
+                DeviceRequest::SetFrontlight { percent: 100 },
+                DeviceResult::Frontlight { percent: 100 },
+            );
+            // The step is checked against the light as ever. The warmth is
+            // not read behind it, which would clear the words unread.
+            assert_eq!(
+                light_requests(&mut context),
+                [DeviceRequest::ReadFrontlight],
+                "{words}"
+            );
+            settings.on_device_result(
+                &mut context,
+                DeviceRequest::ReadFrontlight,
+                DeviceResult::Frontlight { percent: 100 },
+            );
+            assert_eq!(
+                shape_of(&settings.light()),
+                [
+                    format!("banner {words}").as_str(),
+                    "section Brightness",
+                    "stepper 100%",
+                    "section Warmth",
+                    "stepper 7 of 10",
+                    "secondary Both last until Cobalt closes. The Kobo reader keeps its own brightness and warmth.",
+                ]
+            );
+            // Not tried again on the next step: once a run.
+            settings.on_action(&mut context, action_id(super::DIMMER));
+            assert_eq!(
+                light_requests(&mut context),
+                [DeviceRequest::SetFrontlight { percent: 95 }],
+                "{words}"
+            );
+        }
+    }
+
+    /// Where the warmth could not be kept, the top of the brightness range
+    /// still moves it. Once the words about that are gone, the page reads
+    /// the warmth after a brightness step so the second control never shows
+    /// a setting the light has left.
+    #[test]
+    fn a_brightness_step_is_followed_by_a_reading_of_the_warmth_where_it_may_have_moved() {
+        use kobo_sdk::KoboApp;
+        let mut settings = Settings {
+            warmth_set: true,
+            ..light_and_warmth_at(95, 10)
+        };
+        let mut context = kobo_sdk::Context::default();
+        settings.on_action(&mut context, action_id(super::BRIGHTER));
+        let _ = context.take_commands();
+        settings.on_device_result(
+            &mut context,
+            DeviceRequest::SetFrontlight { percent: 100 },
+            DeviceResult::Frontlight { percent: 100 },
+        );
+        assert_eq!(warmth_reads(&mut context), 1);
+        settings.on_device_result(&mut context, DeviceRequest::ReadWarmth, warmth_answer(50));
+        assert_eq!(
+            warmth_control(&settings.light()).map(|control| control.0),
+            Some("5 of 10".to_owned())
+        );
+        assert!(settings.trouble.is_none());
     }
 }
 
