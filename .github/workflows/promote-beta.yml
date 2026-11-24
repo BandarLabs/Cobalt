@@ -321,7 +321,19 @@ jobs:
             --field "sha=${TESTED_COMMIT}" \
             --jq '.object.sha')"
           test "$created_sha" = "$TESTED_COMMIT"
+          # The stable release carries the tested beta's notes, because they
+          # describe the same bytes, and Settings on a stable reader reads
+          # them to say what an update changes before it is installed. A
+          # beta whose description lists no changes, which every beta before
+          # 0.3.40 is, keeps the one line this has always written.
+          notes="$RUNNER_TEMP/stable-notes.md"
+          if gh release view "beta-v${VERSION}" --json body --jq .body > "$notes" \
+            && grep -q '^- \*\*' "$notes"; then
+            printf '\nPromoted from the tested beta-v%s.\n' "$VERSION" >> "$notes"
+          else
+            printf 'Promoted verified artifacts from tested beta-v%s.\n' "$VERSION" > "$notes"
+          fi
           gh release create "$tag" dist/* \
             --title "Cobalt ${VERSION}" \
-            --notes "Promoted verified artifacts from tested beta-v${VERSION}." \
+            --notes-file "$notes" \
             --latest
