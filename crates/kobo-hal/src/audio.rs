@@ -173,7 +173,6 @@ enum Command {
     Pause,
     Seek(u32),
     Stop,
-    Volume(u8),
     Speed(u16),
     Shutdown,
 }
@@ -368,7 +367,10 @@ impl Audio {
             state.volume = percent;
             state.error = None;
         }
-        self.send(Command::Volume(percent))
+        // Nothing to send: the worker reads the volume for every chunk it
+        // writes, so the next chunk is already at the new level. A command
+        // here only ever recorded the value a second time, late.
+        self.state()
     }
 
     /// Sets the playing speed as a percentage, within what the stretcher
@@ -607,18 +609,20 @@ impl Worker<'_> {
                 };
                 observed.error = None;
             }
-            Command::Volume(percent) => {
-                let mut observed = locked(self.state);
-                observed.volume = percent;
-                observed.error = None;
-            }
+            // The speed is recorded by the call that chose it, before the
+            // command is queued, so the answer to that call already says what
+            // was kept. The worker only applies it. It used to record it again
+            // as it reached the command, and two choices made in quick
+            // succession were then answered with the newer one and briefly
+            // overwritten by the older one, when the worker caught up with
+            // the first command after the second call had returned. Anything
+            // that read the state in that moment was told the older choice,
+            // and the test that reads it straight after two calls failed
+            // often enough to hold up a release.
             Command::Speed(percent) => {
                 if let Some(media) = self.media.as_mut() {
                     media.stretcher.set_speed(percent);
                 }
-                let mut observed = locked(self.state);
-                observed.speed_percent = percent;
-                observed.error = None;
             }
             Command::Shutdown => {}
         }
@@ -1418,6 +1422,30 @@ mod tests {
         assert_eq!(audio.speed_percent(), 300);
         let _ = audio.set_speed(1);
         assert_eq!(audio.speed_percent(), 50);
+    }
+
+    #[test]
+    fn a_choice_the_worker_reaches_late_never_overwrites_a_newer_one() {
+        // The interleaving the worker thread produces by chance, replayed in
+        // order: both calls return, and only then does the worker reach the
+        // first of their two commands.
+        let state = std::sync::Mutex::new(super::State::default());
+        let sockets = super::Sockets::firmware();
+        let mut worker = super::Worker {
+            state: &state,
+            fetcher: None,
+            sockets: &sockets,
+            patience: std::time::Duration::from_millis(1),
+            media: None,
+            sink: None,
+            waiting: None,
+            next_write: std::time::Instant::now(),
+            paused_at: None,
+            chunk: Vec::new(),
+        };
+        super::locked(&state).speed_percent = 300;
+        worker.handle(super::Command::Speed(175));
+        assert_eq!(super::locked(&state).speed_percent, 300);
     }
 
     #[test]
