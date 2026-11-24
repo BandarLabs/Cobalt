@@ -238,6 +238,15 @@ jobs:
           targets: armv7-unknown-linux-musleabihf
       - name: Install the ARM cross-compiler
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
+      # A run that fetched the pinned Zig archive leaves it in the Actions
+      # cache, so a later run does not depend on the mirrors answering. All
+      # three timed out together twice on 2026-11-24 and failed beta. The
+      # restored copy is held to the same digest as a download.
+      - name: Restore the pinned Zig archive
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/zig.tar.xz
+          key: zig-x86_64-linux-0.16.0-70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
       # The device target is musl, but the C in the dependency tree was being
       # compiled by the glibc armhf cross-compiler. Ubuntu's armhf toolchain
       # now defaults to 64-bit time_t, so SQLite's calls to stat, fcntl and
@@ -253,10 +262,18 @@ jobs:
           # Every source must match the same reviewed digest before extraction.
           # Bound each attempt: ziglang.org has stalled indefinitely on CI runners.
           zig_downloaded=false
+          if [ -f /tmp/zig.tar.xz ] \
+            && echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" \
+              | sha256sum -c -; then
+            zig_downloaded=true
+          fi
           for zig_url in \
             'https://pkg.hexops.org/zig/zig-x86_64-linux-0.16.0.tar.xz?source=cobalt-ci' \
             'https://ziglang.freetls.fastly.net/zig-x86_64-linux-0.16.0.tar.xz?source=cobalt-ci' \
             'https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz'; do
+            if [ "$zig_downloaded" = true ]; then
+              break
+            fi
             if curl -fL --connect-timeout 15 --max-time 120 \
               --speed-limit 1024 --speed-time 20 -o /tmp/zig.tar.xz "$zig_url" \
               && echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" \
