@@ -173,7 +173,6 @@ enum Command {
     Pause,
     Seek(u32),
     Stop,
-    Volume(u8),
     Speed(u16),
     Shutdown,
 }
@@ -368,7 +367,10 @@ impl Audio {
             state.volume = percent;
             state.error = None;
         }
-        self.send(Command::Volume(percent))
+        // Nothing to send: the worker reads the volume for every chunk it
+        // writes, so the next chunk is already at the new level. A command
+        // here only ever recorded the value a second time, late.
+        self.state()
     }
 
     /// Sets the playing speed as a percentage, within what the stretcher
@@ -607,17 +609,16 @@ impl Worker<'_> {
                 };
                 observed.error = None;
             }
-            // The volume and the speed are recorded by the call that chose
-            // them, before the command is queued, so the answer to that call
-            // already says what was kept. The worker only applies them. It
-            // used to record each one again as it reached the command, and
-            // two choices made in quick succession were then answered with
-            // the newer one and briefly overwritten by the older one, when
-            // the worker caught up with the first command after the second
-            // call had returned. Anything that read the state in that moment
-            // was told the older choice, and the test that reads it straight
-            // after two calls failed often enough to hold up a release.
-            Command::Volume(_) => {}
+            // The speed is recorded by the call that chose it, before the
+            // command is queued, so the answer to that call already says what
+            // was kept. The worker only applies it. It used to record it again
+            // as it reached the command, and two choices made in quick
+            // succession were then answered with the newer one and briefly
+            // overwritten by the older one, when the worker caught up with
+            // the first command after the second call had returned. Anything
+            // that read the state in that moment was told the older choice,
+            // and the test that reads it straight after two calls failed
+            // often enough to hold up a release.
             Command::Speed(percent) => {
                 if let Some(media) = self.media.as_mut() {
                     media.stretcher.set_speed(percent);
@@ -1442,15 +1443,9 @@ mod tests {
             paused_at: None,
             chunk: Vec::new(),
         };
-        {
-            let mut chosen = super::locked(&state);
-            chosen.speed_percent = 300;
-            chosen.volume = 40;
-        }
+        super::locked(&state).speed_percent = 300;
         worker.handle(super::Command::Speed(175));
-        worker.handle(super::Command::Volume(90));
         assert_eq!(super::locked(&state).speed_percent, 300);
-        assert_eq!(super::locked(&state).volume, 40);
     }
 
     #[test]
