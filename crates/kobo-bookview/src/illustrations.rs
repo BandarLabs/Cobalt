@@ -42,6 +42,8 @@ pub struct Illustrations {
     /// Published copies whose memory record has been dropped, oldest first.
     disk: VecDeque<ShelfCopy>,
     pub failed: bool,
+    /// Where pictures may come from: see [`crate::PictureHosts`].
+    pub picture_hosts: crate::PictureHosts,
 }
 
 impl Illustrations {
@@ -74,7 +76,7 @@ impl Illustrations {
             self.failed = true;
         }
         for name in wanted.into_iter().take(MAX_IMAGES) {
-            let Some(url) = crate::picture_url(origin, &name) else {
+            let Some(url) = crate::picture_url_from(origin, &name, self.picture_hosts) else {
                 self.failed = true;
                 continue;
             };

@@ -19,7 +19,7 @@
 //! previous design spent one on every article ever opened and one on every
 //! picture, until the store refused to write the list of what had been read.
 
-use crate::{picture_url, MAX_PICTURES, MAX_PICTURE_BYTES};
+use crate::{picture_url_from, PictureHosts, MAX_PICTURES, MAX_PICTURE_BYTES};
 use kobo_sdk::{
     Context, Failure, ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskId,
     TaskOutcome,
@@ -252,6 +252,8 @@ pub struct Keeper {
     queue: VecDeque<Job>,
     job: Option<Running>,
     reading: Option<(String, ShelfDownload)>,
+    /// Where a kept article's pictures may come from.
+    picture_hosts: PictureHosts,
 }
 
 /// The store key a [`Keeper`] made with [`Default`] keeps its index under.
@@ -283,7 +285,17 @@ impl Keeper {
             queue: VecDeque::new(),
             job: None,
             reading: None,
+            picture_hosts: PictureHosts::OwnSite,
         }
+    }
+
+    /// Lets the pictures of articles kept from now on come from the hosts
+    /// given: see [`PictureHosts`]. The same as the reader they are opened
+    /// in, so a kept article fetches nothing the open one would not.
+    #[must_use]
+    pub const fn with_picture_hosts(mut self, hosts: PictureHosts) -> Self {
+        self.picture_hosts = hosts;
+        self
     }
 
     /// Asks for the index. Call once, at start.
@@ -496,7 +508,7 @@ impl Keeper {
                     job.page = Some(url);
                 }
                 Source::Markup { origin, html } => {
-                    job.wanted = wanted_pictures(&origin, &html);
+                    job.wanted = wanted_pictures(&origin, &html, self.picture_hosts);
                     job.origin = origin;
                     job.html = html;
                 }
@@ -555,7 +567,7 @@ impl Keeper {
             match outcome {
                 TaskOutcome::Completed(body) => {
                     job.html = kobo_doc::web::main_content(&String::from_utf8_lossy(body));
-                    job.wanted = wanted_pictures(&job.origin, &job.html);
+                    job.wanted = wanted_pictures(&job.origin, &job.html, self.picture_hosts);
                 }
                 TaskOutcome::Failed(error) => {
                     let id = job.id.clone();
@@ -747,9 +759,9 @@ fn fetch(url: String, max_bytes: u32) -> Task {
 /// Every picture the markup names that may be asked for, with its address.
 ///
 /// The same rule the reader uses when it fetches pictures for a page being
-/// read: only the page's own host. A kept article must not phone anybody the
-/// open one would not.
-fn wanted_pictures(origin: &str, html: &str) -> VecDeque<(String, String)> {
+/// read, given as `hosts`. A kept article must not phone anybody the open one
+/// would not.
+fn wanted_pictures(origin: &str, html: &str, hosts: PictureHosts) -> VecDeque<(String, String)> {
     let mut wanted = VecDeque::new();
     for name in kobo_doc::web::picture_sources(html) {
         if wanted.len() >= MAX_PICTURES {
@@ -758,7 +770,7 @@ fn wanted_pictures(origin: &str, html: &str) -> VecDeque<(String, String)> {
         if wanted.iter().any(|(known, _)| *known == name) {
             continue;
         }
-        if let Some(url) = picture_url(origin, &name) {
+        if let Some(url) = picture_url_from(origin, &name, hosts) {
             wanted.push_back((name, url));
         }
     }

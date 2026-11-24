@@ -2494,6 +2494,13 @@ impl KoboApp for Feeds {
     }
 
     fn on_start(&mut self, context: &mut Context) {
+        // Everything read here is from a feed its owner chose to follow, and
+        // its publisher's pictures are usually on an image host of their own.
+        // The owner chose to see them anyway: see `PictureHosts::Public`.
+        let hosts = kobo_bookview::PictureHosts::Public;
+        self.reader.set_picture_hosts(hosts);
+        self.illustrations.picture_hosts = hosts;
+        self.keeper = std::mem::take(&mut self.keeper).with_picture_hosts(hosts);
         context.store().load(FEEDS);
         context.store().load(progress::KEY);
         context.store().load(status::KEY);
