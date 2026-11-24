@@ -36,6 +36,12 @@ class SimulatorRunnerTests(unittest.TestCase):
             route.write_text('# sweep: computer\n')
             self.assertTrue(runner.route_directive(route)['computer'])
 
+    def test_a_run_a_site_refused_as_too_many_requests_is_told_from_a_failure(self):
+        refused = 'shot listing\ntask 1 failed: RateLimited(60)\nkobo: line 9: wait-for 1 of: waited 10s\n'
+        self.assertIsNotNone(runner.RATE_LIMITED.search(refused))
+        for failure in ('task 1 failed: Offline\n', 'kobo: line 9: expect RateLimited(60)\n'):
+            self.assertIsNone(runner.RATE_LIMITED.search(failure), failure)
+
     def test_a_route_names_a_site_it_reads_by_its_https_address(self):
         with tempfile.TemporaryDirectory() as temporary:
             route = Path(temporary) / 'drive-catalog.kobo'
