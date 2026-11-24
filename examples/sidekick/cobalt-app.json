@@ -3,12 +3,12 @@
   "display_name": "Sidekick",
   "short_label": "Sidekick",
   "summary": "Answer coding-agent permission prompts from your Kobo. Needs your computer.",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "glyph": "key",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
+  "release_notes": "Sidekick can be paired with your computer's home address and its tailnet name at once. It asks the one that answered last, and the other when that one is not there.",
   "setup": {
     "steps": [
       {
