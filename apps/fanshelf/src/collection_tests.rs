@@ -33,6 +33,7 @@ pub(super) fn collection_app() -> Fanshelf {
         .map(|index| FollowedTag {
             name: format!("The Long Road Home and Other Public Domain Adventures {index:02}"),
             slug: format!("PublicDomain{index}"),
+            feed: None,
         })
         .collect();
     let feed = (0..18)

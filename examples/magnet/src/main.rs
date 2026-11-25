@@ -13,8 +13,8 @@
 //! before a gesture built on this does.
 
 use kobo_sdk::{
-    action_id, ActionId, Context, DenyReason, DeviceRequest, DeviceResult, KoboApp, PictureHandle,
-    Screen, ScreenBuilder, StoreResult, TilePicture,
+    action_id, ActionId, Context, DenyReason, DeviceRequest, DeviceResult, DisplayMetrics, KoboApp,
+    PictureHandle, Screen, ScreenBuilder, StoreResult, TilePicture,
 };
 use std::process::ExitCode;
 
@@ -109,6 +109,12 @@ impl Magnet {
             // not how many times it moved, but where it was when it did.
             self.per_edge[self.sweeping.index()] += 1;
             self.found = Some(self.sweeping);
+        } else if magnet_present {
+            // A magnet already against the bezel when the sensor first
+            // answers is not a change, but it is an answer, and it is the
+            // edge being swept that it answered at. Left uncredited, the
+            // screen said "Magnet found" beside "Found on: nothing yet".
+            self.found = Some(self.sweeping);
         }
         self.sensor = Sensor::Watching { magnet_present };
     }
@@ -119,6 +125,12 @@ impl Magnet {
     }
 
     fn decode(&mut self, text: &str) {
+        // A magnet found this run, before the store answered, is newer than
+        // whatever was written down last time, and the sweep is already on
+        // its edge.
+        if self.found.is_some() {
+            return;
+        }
         self.found = text
             .trim()
             .parse::<usize>()
@@ -222,7 +234,15 @@ impl Magnet {
         pixels
     }
 
+    /// The screen as a Clara draws it at the default text size.
+    #[cfg(test)]
     fn screen(&self, picture: Option<TilePicture>) -> Screen {
+        self.screen_at(picture, &kobo_sdk::CLARA_BW_METRICS)
+    }
+
+    /// The screen for `metrics`, which the guidance line is measured
+    /// against so that it wraps the same with the magnet there or not.
+    fn screen_at(&self, picture: Option<TilePicture>, metrics: &DisplayMetrics) -> Screen {
         let builder = ScreenBuilder::new("magnet").top_bar("Magnet");
         match self.sensor {
             Sensor::Unasked => builder
@@ -243,7 +263,7 @@ impl Magnet {
                     } else {
                         "No magnet"
                     })
-                    .secondary(self.guidance());
+                    .secondary(self.guidance(metrics));
                 if let Some(picture) = picture {
                     screen = screen.unframed_picture(picture, 46);
                 }
@@ -275,15 +295,49 @@ impl Magnet {
     }
 
     /// What to do next, in one line, against the diagram.
-    fn guidance(&self) -> String {
+    ///
+    /// The count is the one for the edge the line tells you to hold the
+    /// magnet against, the same number as "Changes here" below it. Counted
+    /// over every edge, the line said "2 changes so far" about a right edge
+    /// whose own count read 0. And "Nothing has answered yet" is kept for a
+    /// reader where nothing ever has: once an edge is found, this run's or
+    /// the one saved from last time, saying so sat beside "Found on".
+    ///
+    ///
+    /// While the magnet is against the bezel there is nothing to do but read
+    /// the answer, so the line gives it. It used to keep telling a reader
+    /// holding a magnet that had just been found to hold a magnet there.
+    ///
+    /// The answer is shorter than the instruction, and the sweep and reset
+    /// buttons sit under this line, so they would rise as the magnet arrived
+    /// and fall as it went, under a finger already on its way. So the answer
+    /// is set on as many lines as the instruction takes at this size, a
+    /// sentence to a line.
+    fn guidance(&self, metrics: &DisplayMetrics) -> String {
+        let here = match self.per_edge[self.sweeping.index()] {
+            1 => "1 change so far.".to_owned(),
+            count => format!("{count} changes so far."),
+        };
         let lead = format!(
             "Hold a magnet against the {} and move it slowly along.",
             self.sweeping.label()
         );
-        match self.changes {
-            0 => format!("{lead} Nothing has answered yet."),
-            1 => format!("{lead} 1 change so far."),
-            count => format!("{lead} {count} changes so far."),
+        let instruction = if self.found.is_none() {
+            format!("{lead} Nothing has answered yet.")
+        } else {
+            format!("{lead} {here}")
+        };
+        if self.sensor
+            != (Sensor::Watching {
+                magnet_present: true,
+            })
+        {
+            return instruction;
+        }
+        let found = format!("Found on the {}.", self.sweeping.label());
+        match lines_of(&instruction, metrics) {
+            0 | 1 => format!("{found} {here}"),
+            lines => format!("{found}{}{here}", "\n".repeat(lines - 1)),
         }
     }
 
@@ -304,6 +358,23 @@ impl Magnet {
     }
 }
 
+/// How many lines `text` takes as the line under the heading, at `metrics`.
+fn lines_of(text: &str, metrics: &DisplayMetrics) -> usize {
+    ScreenBuilder::new("magnet")
+        .top_bar("Magnet")
+        .secondary(text)
+        .build()
+        .layout_with(metrics, &kobo_sdk::Chrome::measuring(true))
+        .nodes
+        .iter()
+        .find(|node| {
+            node.text_lines
+                .first()
+                .is_some_and(|line| text.starts_with(line.as_str()))
+        })
+        .map_or(1, |node| node.text_lines.len())
+}
+
 const RESET: &str = "reset";
 const NEXT_EDGE: &str = "next-edge";
 
@@ -313,7 +384,7 @@ impl Magnet {
         let picture = matches!(self.sensor, Sensor::Watching { .. })
             .then(|| context.put_picture(DIAGRAM, DIAGRAM_WIDTH, DIAGRAM_HEIGHT, self.diagram()))
             .flatten();
-        let drawn = self.screen(picture);
+        let drawn = self.screen_at(picture, &context.metrics());
         context.set_screen(drawn);
     }
 }
@@ -374,7 +445,15 @@ impl KoboApp for Magnet {
             DeviceResult::Cover {
                 available: true,
                 magnet_present,
-            } => self.observe(magnet_present),
+            } => {
+                let before = self.found;
+                self.observe(magnet_present);
+                // A magnet there from the start is a finding too, written
+                // down as one met mid-sweep is.
+                if self.found != before {
+                    context.store().save(SAVED, self.encode());
+                }
+            }
             DeviceResult::Cover {
                 available: false, ..
             } => self.sensor = Sensor::Unavailable("This reader has no hall sensor."),
@@ -553,6 +632,80 @@ mod tests {
         assert_eq!(fresh.found, None);
     }
 
+    /// Found means found: the line gives the answer rather than telling a
+    /// reader holding the magnet to hold the magnet there.
+    #[test]
+    fn a_found_magnet_gives_the_edge_and_the_count_instead_of_the_instruction() {
+        let mut app = watching(false);
+        app.observe(true);
+        app.observe(false);
+        app.observe(true);
+        let text = format!("{:?}", app.screen(Some(drawn())));
+        assert!(
+            text.contains("Found on the top edge. 3 changes so far."),
+            "{text}"
+        );
+        assert!(!text.contains("Hold a magnet"), "{text}");
+        app.observe(false);
+        let text = format!("{:?}", app.screen(Some(drawn())));
+        assert!(
+            text.contains("Hold a magnet against the top edge"),
+            "{text}"
+        );
+    }
+
+    /// A magnet already against the bezel when the application opens is an
+    /// answer at the edge being swept, so "Magnet found" never sits beside
+    /// "Found on: nothing yet". It is still not a change: nothing moved.
+    #[test]
+    fn a_magnet_there_from_the_start_is_found_on_the_edge_being_swept() {
+        let app = watching(true);
+        assert_eq!(app.found, Some(Edge::Top));
+        assert_eq!(app.changes, 0);
+        let text = format!("{:?}", app.screen(Some(drawn())));
+        assert!(!text.contains("nothing yet"), "{text}");
+        assert!(
+            text.contains("Found on the top edge. 0 changes so far."),
+            "{text}"
+        );
+        // The store answering after the sensor does not take it back.
+        let mut later = watching(true);
+        later.decode("1");
+        assert_eq!(later.found, Some(Edge::Top));
+        assert_eq!(later.sweeping, Edge::Top);
+    }
+
+    /// The controls stay put as the magnet comes and goes, on every edge and
+    /// at every text size, because a finger is on its way to them while the
+    /// other hand holds the magnet.
+    #[test]
+    fn the_controls_stay_put_as_the_magnet_comes_and_goes_at_every_size() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            for edge in Edge::ALL {
+                let mut app = watching(false);
+                app.sweeping = edge;
+                app.observe(true);
+                app.observe(false);
+                let place = |app: &Magnet| {
+                    let layout = app
+                        .screen_at(Some(drawn()), &metrics)
+                        .layout_with(&metrics, &Chrome::default());
+                    (
+                        layout.rect_of_action(action_id(NEXT_EDGE)),
+                        layout.rect_of_action(action_id(RESET)),
+                    )
+                };
+                let absent = place(&app);
+                app.observe(true);
+                assert_eq!(absent, place(&app), "{text_scale:?} {edge:?}");
+            }
+        }
+    }
+
     /// The four edges are offered in order and come back round.
     #[test]
     fn the_sweep_walks_the_edges_and_says_which_one_is_next() {
@@ -647,5 +800,45 @@ mod tests {
         assert!(format!("{:?}", app.screen(Some(drawn()))).contains("1 change so far"));
         app.observe(false);
         assert!(format!("{:?}", app.screen(Some(drawn()))).contains("2 changes so far"));
+    }
+
+    /// The line names an edge, so its count is that edge's: summed over the
+    /// sweep, the right edge read "2 changes so far" beside "Changes here 0".
+    #[test]
+    fn the_count_in_the_line_is_the_count_for_the_edge_it_names() {
+        let mut runner = kobo_sdk::AppRunner::new(watching(false));
+        runner.app_mut().observe(true);
+        runner.app_mut().observe(false);
+        runner.action(action_id(NEXT_EDGE));
+        let text = format!("{:?}", runner.app().screen(Some(drawn())));
+        assert!(text.contains("right edge"), "{text}");
+        assert!(text.contains("0 changes so far"), "{text}");
+        assert!(!text.contains("2 changes so far"), "{text}");
+    }
+
+    /// A finding saved from last time is an answer, so a reopened reader no
+    /// longer says nothing has answered while "Found on" names an edge.
+    #[test]
+    fn a_reader_found_before_does_not_say_nothing_has_answered() {
+        let mut reopened = Magnet::default();
+        reopened.decode("0");
+        reopened.observe(false);
+        let text = format!("{:?}", reopened.screen(Some(drawn())));
+        assert!(text.contains("top edge"), "{text}");
+        assert!(!text.contains("Nothing has answered yet"), "{text}");
+        assert!(text.contains("0 changes so far"), "{text}");
+    }
+
+    /// Clearing the count keeps the finding, so the line keeps agreeing with
+    /// it rather than going back to saying nothing has answered.
+    #[test]
+    fn a_reset_count_still_agrees_with_the_edge_that_was_found() {
+        let mut runner = kobo_sdk::AppRunner::new(watching(false));
+        runner.app_mut().observe(true);
+        runner.action(action_id(RESET));
+        let text = format!("{:?}", runner.app().screen(Some(drawn())));
+        assert_eq!(runner.app().found, Some(Edge::Top));
+        assert!(!text.contains("Nothing has answered yet"), "{text}");
+        assert!(text.contains("0 changes so far"), "{text}");
     }
 }

@@ -338,13 +338,10 @@ def main():
                 assert [r['path'] for r in account.requests] == ['/v1/me', '/v1/me'], account.requests
                 account.requests.clear()
 
-                # Check again picks it up without a restart.
-                drive('tap-id check-again', 'wait-for-id sync')
-                first = capture('01-before-the-first-sync')
-                assert says(first, 'No unread articles'), first
-                assert not account.requests, 'the application called Miniflux unasked'
-
-                drive('tap-id sync')
+                # Check again picks it up without a restart, and a newly
+                # connected account syncs by itself rather than calling an
+                # empty shelf empty.
+                drive('tap-id check-again', 'wait-for A morning by the river')
                 listed = capture('02-unread-after-sync')
                 assert says(listed, 'A morning by the river'), listed
                 assert not says(listed, 'An evening walk'), 'a read article was listed as unread'

@@ -50,7 +50,6 @@ enum View {
     Reveal,
     Restart,
     Rules,
-    Result,
 }
 struct Crossword {
     games: Vec<Progress>,
@@ -140,9 +139,6 @@ impl Crossword {
             };
         }
         b = b.owns_back(self.view != View::Puzzles);
-        let p = &PUZZLES[self.current];
-        let g = self.game();
-        let (label, _) = p.clue(g.position.selected, g.position.down);
         // The board ignores input until the save succeeds, so this replaces
         // it rather than sitting over it as a banner.
         if matches!(self.draft.status(), Status::Failed(_)) {
@@ -206,11 +202,6 @@ impl Crossword {
                     DialogAction::new("confirm-restart", "Restart"),
                     DialogAction::new("board", "Keep playing"),
                 )
-                .build(),
-            View::Result => b
-                .top_bar(label)
-                .text(self.notice.as_deref().unwrap_or("Puzzle complete."))
-                .bottom_action("board", "Back to puzzle")
                 .build(),
             View::Rules => {
                 let pages = context.paginate(RULES, true);
@@ -687,8 +678,9 @@ impl Crossword {
                 g.position.letters[g.position.selected] = b'.';
             }
         } else if is("check") {
+            // The count takes the clue's line over the grid until the next
+            // tap, so the word it is about stays in view under it.
             self.notice = Some(self.game_mut().check(p));
-            self.view = View::Result;
         } else if is("reveal") {
             self.view = View::Reveal;
         } else if is("restart") {
@@ -917,7 +909,7 @@ impl KoboApp for Crossword {
                             .min(context.paginate(RULES, true).len().saturating_sub(1));
                     }
                 }
-                View::Reveal | View::Restart | View::Result => (),
+                View::Reveal | View::Restart => (),
             },
         }
         if before != self.games || old_current != self.current {

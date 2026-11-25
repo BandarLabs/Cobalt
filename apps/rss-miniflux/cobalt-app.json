@@ -4,8 +4,8 @@
   "short_label": "Digest",
   "summary": "Read your Miniflux feeds anywhere. Needs an account.",
   "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project.",
-  "version": "0.1.15",
-  "release_notes": "Find words in an article and go to any page from the reading controls. With the bar shown, the foot of the page says where you are.",
+  "version": "0.1.16",
+  "release_notes": "A newly connected account syncs by itself the first time.",
   "glyph": "inbox",
   "capabilities": [
     "network"

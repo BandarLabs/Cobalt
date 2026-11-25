@@ -331,6 +331,13 @@ struct Feeds {
     statuses: status::Statuses,
 
     illustrations: illustrations::Illustrations,
+    /// The feed whose article last asked for its pictures.
+    ///
+    /// Whether some of them failed is said on that feed and no other: the
+    /// flag is the image loader's, kept until the next article opens, so
+    /// "Some article images could not be loaded." followed the reader onto
+    /// every feed they opened after, an empty one included.
+    illustrated_feed: Option<String>,
     /// The subscription list, as stored.
     subscriptions: Vec<Subscription>,
     /// False until the store has answered once, so that an empty list is not
@@ -1999,6 +2006,7 @@ impl Feeds {
                 memory,
             );
             self.illustrations.open(context, &mut self.reader, &origin);
+            self.illustrated_feed = self.open_feed_url().map(str::to_owned);
         }
         self.keep_position(context);
     }
@@ -2045,6 +2053,17 @@ impl Feeds {
             .and_then(|index| self.subscriptions.get(index))
             .map_or("", |feed| feed.url.as_str());
         self.progress.has_read(&article_id(item, url))
+    }
+
+    fn open_feed_url(&self) -> Option<&str> {
+        self.open
+            .and_then(|index| self.subscriptions.get(index))
+            .map(|feed| feed.url.as_str())
+    }
+
+    /// Whether pictures failed in an article of the feed that is open.
+    fn images_failed_here(&self) -> bool {
+        self.illustrations.failed && self.illustrated_feed.as_deref() == self.open_feed_url()
     }
 
     fn article_notice(&self) -> Option<String> {
@@ -2102,7 +2121,7 @@ impl Feeds {
             notices.push("Reading progress is not saved.");
         } else if self.illustrations.can_retry() {
             notices.push("Some images are not saved.");
-        } else if self.illustrations.failed {
+        } else if self.images_failed_here() {
             notices.push("Some article images could not be loaded.");
         }
         (!notices.is_empty()).then(|| notices.join(" "))
@@ -2133,7 +2152,7 @@ impl Feeds {
             screen = screen.banner(
                 if self.problem.is_some()
                     || self.progress.failed
-                    || self.illustrations.failed
+                    || self.images_failed_here()
                     || self.subscription_save.failed
                 {
                     BannerLevel::Attention
@@ -4465,6 +4484,56 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn pictures_that_failed_in_one_feed_are_not_reported_on_another() {
+        const FAILED: &str = "Some article images could not be loaded.";
+        let mut subscriptions = following();
+        subscriptions.push(Subscription {
+            url: "https://example.org/empty.xml".to_owned(),
+            title: "An Empty Feed".to_owned(),
+            site: "https://example.org/".to_owned(),
+        });
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions,
+            items: vec![super::feed::Item {
+                title: "An illustrated article".to_owned(),
+                link: "https://example.com/story/".to_owned(),
+                html: r#"<p>Story text.</p><img src="/photo.png" alt="A mountain"/>"#.to_owned(),
+                ..super::feed::Item::default()
+            }],
+            ..Feeds::default()
+        });
+        runner.action(action_id("item-0"));
+        let key = kobo_net::sha256::hex_digest(b"rss-image:https://example.com/photo.png");
+        let commands = runner.store_result(kobo_sdk::StoreResult::Loaded { key, value: None });
+        let task = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn {
+                    task,
+                    work: kobo_sdk::Task::Fetch { .. },
+                } => Some(*task),
+                _ => None,
+            })
+            .expect("the picture was asked for");
+        runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::TooLarge));
+        runner.action(kobo_sdk::ActionId::BACK);
+        // Progress is never answered here, and its notice would stand in
+        // front of this one.
+        runner.app_mut().progress.failed = false;
+        let notice = runner.app_mut().article_notice().unwrap_or_default();
+        assert!(notice.contains(FAILED), "the feed it failed in: {notice:?}");
+
+        let app = runner.app_mut();
+        app.open = Some(1);
+        app.items.clear();
+        let notice = app.article_notice().unwrap_or_default();
+        assert!(!notice.contains(FAILED), "another feed said it: {notice:?}");
     }
 
     #[test]

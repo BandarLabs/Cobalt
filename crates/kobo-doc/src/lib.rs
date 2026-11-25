@@ -632,6 +632,12 @@ impl Document {
 pub(crate) struct Builder {
     document: Document,
     text_used: usize,
+    /// Whether a `\n` in prose is a line the author broke.
+    ///
+    /// In plain text and Markdown it is the file's hard wrap and folds into a
+    /// space. HTML says where a line ends with `<br>`, and its parser hands
+    /// that over as the only `\n` left in the block.
+    line_breaks: bool,
 }
 
 impl Builder {
@@ -639,6 +645,19 @@ impl Builder {
         Self {
             document: Document::default(),
             text_used: 0,
+            line_breaks: false,
+        }
+    }
+
+    /// A builder for markup, where the only `\n` in prose is a `<br>`.
+    ///
+    /// An EPUB goes through two of these, the chapter's and then the book's,
+    /// so the second has to keep what the first kept: a builder that folded
+    /// the breaks back into spaces would undo every poem on the way in.
+    pub(crate) fn keeping_line_breaks() -> Self {
+        Self {
+            line_breaks: true,
+            ..Self::new()
         }
     }
 
@@ -787,7 +806,11 @@ impl Builder {
                 let Some(text) = other.text() else {
                     return;
                 };
-                let text = collapse(text);
+                let text = if self.line_breaks {
+                    collapse_keeping_lines(text)
+                } else {
+                    collapse(text)
+                };
                 if text.is_empty() {
                     return;
                 }
@@ -1030,6 +1053,37 @@ pub fn collapse(text: &str) -> String {
         if space {
             out.push(' ');
             space = false;
+        }
+        out.push(character);
+    }
+    out
+}
+
+/// [`collapse`], except that a run holding a `\n` becomes that line break.
+///
+/// For markup, where the only `\n` left in prose is a `<br>`: a poem's lines,
+/// a letter's closing and an address all ran together as one sentence when
+/// the break was folded into a space. A run of breaks is one break, and one
+/// at either end of the block is dropped, because an empty line inside a
+/// paragraph is a gap the paginator would have to draw as a line of nothing.
+/// It is one byte, like the space it replaces, so a place kept in a block
+/// before this still points at the same word.
+#[must_use]
+pub(crate) fn collapse_keeping_lines(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut gap: Option<char> = None;
+    for character in text.chars() {
+        if character.is_whitespace() {
+            if !out.is_empty() && gap != Some('\n') {
+                gap = Some(if character == '\n' { '\n' } else { ' ' });
+            }
+            continue;
+        }
+        if character.is_control() {
+            continue;
+        }
+        if let Some(gap) = gap.take() {
+            out.push(gap);
         }
         out.push(character);
     }

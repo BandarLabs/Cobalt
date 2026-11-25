@@ -33,6 +33,10 @@ const PAIRED: &str = "paired";
 /// Sidekick older than this one reads that record as it always did.
 const HOSTS: &str = kobo_dial::HOSTS_KEY;
 
+/// The pairing the computer has answered, saved beside [`PAIRED`] so a
+/// restart does not take it back to "Not confirmed yet".
+const CONFIRMED: &str = kobo_dial::CONFIRMED_KEY;
+
 const ALLOW: &str = "allow";
 const DENY: &str = "deny";
 const IGNORE: &str = "pass";
@@ -180,6 +184,15 @@ struct Sidekick {
     /// happened, so a reader whose computer was off looked ready for
     /// questions that were going straight to the terminal instead.
     connected: Option<bool>,
+    /// Whether the computer has answered this pairing at least once.
+    ///
+    /// Until it has, the pairing is an address and a code nobody has
+    /// checked, and the watching screen said "Paired with" a computer that
+    /// had never been reached.
+    confirmed: bool,
+    /// The confirmation record as the store last gave it, kept until the
+    /// pairing it belongs beside has been read.
+    confirmed_record: Option<Vec<u8>>,
 }
 
 impl Sidekick {
@@ -309,9 +322,19 @@ impl Sidekick {
         if let Some(last) = &self.last {
             screen = screen.section("Last answer").text(last.clone());
         }
+        // Said as a pairing still being made until the computer has answered
+        // it once, in the same two lines, so nothing moves when it does.
+        let (section, address) = if self.confirmed {
+            ("Paired with", self.address.clone())
+        } else {
+            (
+                "Pairing with",
+                format!("{} · Not confirmed yet", self.address),
+            )
+        };
         screen
-            .section("Paired with")
-            .text(self.address.clone())
+            .section(section)
+            .text(address)
             .spacer(Space::Small)
             .button(REPAIR, "Change pairing")
             .build()
@@ -671,6 +694,7 @@ impl Sidekick {
                 if let Some(record) = self.hosts.answered() {
                     context.store().save(HOSTS, record.into_bytes());
                 }
+                self.confirm(context);
                 let repaint =
                     self.trouble.take().is_some() | (self.connected.replace(true) != Some(true));
                 let asks = read_asks(&bytes);
@@ -736,10 +760,23 @@ impl Sidekick {
         }
     }
 
+    /// Takes an answer from the computer as confirming the pairing, the
+    /// first time, and writes that down so a restart still knows.
+    fn confirm(&mut self, context: &mut Context) {
+        if self.confirmed || self.address.is_empty() || self.code.is_empty() {
+            return;
+        }
+        self.confirmed = true;
+        let record = kobo_dial::confirmed_record(&self.address, &self.code);
+        self.confirmed_record = Some(record.clone().into_bytes());
+        context.store().save(CONFIRMED, record.into_bytes());
+    }
+
     /// What came back from posting an answer.
     fn on_answer(&mut self, context: &mut Context, outcome: &TaskOutcome) {
         match outcome {
             TaskOutcome::Completed(bytes) => {
+                self.confirm(context);
                 if !answer_landed(bytes) {
                     // The daemon said no: the question was gone -- timed out
                     // or already collected -- before the tap arrived. Saying
@@ -830,6 +867,11 @@ impl Sidekick {
                 self.view = View::Watching;
                 self.trouble = None;
                 self.connected = None;
+                self.confirmed = kobo_dial::confirms(
+                    self.confirmed_record.as_deref(),
+                    &self.address,
+                    &self.code,
+                );
                 // A poll still in flight belongs to the old pairing.
                 // Forgetting its id makes whatever it brings back land on
                 // nothing, and clears the way for this pairing's poll.
@@ -1065,6 +1107,7 @@ impl KoboApp for Sidekick {
         // The hosts first, so they are in hand when the pairing arrives and
         // its first poll goes out.
         context.store().load(HOSTS);
+        context.store().load(CONFIRMED);
         context.store().load(PAIRED);
         self.show(context);
     }
@@ -1075,6 +1118,10 @@ impl KoboApp for Sidekick {
         };
         if key == HOSTS {
             self.hosts_record = value;
+            return;
+        }
+        if key == CONFIRMED {
+            self.confirmed_record = value;
             return;
         }
         // A first-run pairing screen with nothing typed yet also takes a
@@ -1100,6 +1147,7 @@ impl KoboApp for Sidekick {
         if let Some((address, code)) = remembered {
             self.hosts =
                 kobo_dial::Hosts::paired(&address, self.hosts_record.as_deref(), read_address);
+            self.confirmed = kobo_dial::confirms(self.confirmed_record.as_deref(), &address, &code);
             self.address = address;
             self.code = code;
             self.view = View::Watching;
@@ -1239,6 +1287,7 @@ impl KoboApp for Sidekick {
         }
         if self.waiting_for_a_pairing() {
             context.store().load(HOSTS);
+            context.store().load(CONFIRMED);
             context.store().load(PAIRED);
         }
     }
@@ -1256,7 +1305,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Sidekick, View, ALLOW, DENY, HOSTS, IGNORE, PAIRED, REPAIR, SEND};
+    use super::{Sidekick, View, ALLOW, CONFIRMED, DENY, HOSTS, IGNORE, PAIRED, REPAIR, SEND};
     use kobo_sdk::keyboard::testing::type_text;
     use kobo_sdk::{
         action_id, ActionId, Command, Context, KoboApp, Screen, StoreRequest, StoreResult, Task,
@@ -1780,7 +1829,63 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(loads, [HOSTS, PAIRED]);
+        assert_eq!(loads, [HOSTS, CONFIRMED, PAIRED]);
+    }
+
+    /// A pairing the computer has never answered is not called paired: the
+    /// screen said "Paired with" a computer that was off, or had never been
+    /// given this code. The first answer is written down for next time.
+    #[test]
+    fn a_pairing_is_not_confirmed_until_the_computer_answers_and_stays_confirmed() {
+        let (mut app, poll) = paired();
+        let lines = shown(&app.screen(&Context::default()));
+        assert!(lines.iter().any(|line| line == "Pairing with"), "{lines:?}");
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "192.168.1.5:9331 · Not confirmed yet"),
+            "{lines:?}"
+        );
+        assert!(!lines.iter().any(|line| line == "Paired with"), "{lines:?}");
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, TaskOutcome::Completed(b"{}".to_vec()));
+        let commands = context.take_commands();
+        let lines = shown(&painted(&commands).expect("a repaint"));
+        assert!(lines.iter().any(|line| line == "Paired with"), "{lines:?}");
+        assert!(
+            !lines.iter().any(|line| line.contains("Not confirmed")),
+            "{lines:?}"
+        );
+        let saved = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Store(StoreRequest::Save { key, value }) if key == CONFIRMED => {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .expect("the confirmation was written down");
+
+        // After a restart the record is read before the pairing, and the
+        // same pairing opens confirmed; a new code for it does not.
+        for (pairing, confirmed) in [
+            (&b"192.168.1.5:9331\nabc123"[..], true),
+            (&b"192.168.1.5:9331\nxyz789"[..], false),
+        ] {
+            let mut app = Sidekick::default();
+            let mut context = Context::default();
+            app.on_start(&mut context);
+            for (key, value) in [(CONFIRMED, saved.clone()), (PAIRED, pairing.to_vec())] {
+                app.on_store(
+                    &mut context,
+                    StoreResult::Loaded {
+                        key: key.to_owned(),
+                        value: Some(value),
+                    },
+                );
+            }
+            assert_eq!(app.confirmed, confirmed);
+        }
     }
 
     #[test]

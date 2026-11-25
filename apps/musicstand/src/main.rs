@@ -81,6 +81,9 @@ struct Stand {
     open_setlist: Option<usize>,
     page: Option<TilePicture>,
     page_key: Option<String>,
+    /// Where the music sits across the last page Staff width cropped, by
+    /// page key, so the turn to its other half reuses the scan.
+    ink: Option<(String, Option<(u32, u32)>)>,
     menu_open: bool,
     /// What the last turn or read came to, with how it is drawn: the end
     /// of the music is news, a page or list that cannot be read is an
@@ -129,13 +132,27 @@ impl Stand {
         Some((score.id.clone(), shelf::page_name(&score.id, page)))
     }
 
-    fn crop_region(score: &Score, state: ScoreState) -> (u32, u32, u32, u32) {
+    /// The part of the page to show: a half, and with Staff width on, only
+    /// the columns `music` says hold the printed music.
+    ///
+    /// Staff width used to keep the middle two thirds of every page, which
+    /// cut off clefs, key signatures, bar numbers and the ends of lines on
+    /// any score printed wider than that. Without a span (a blank page, or
+    /// music from edge to edge) the whole width is kept.
+    fn crop_region(
+        score: &Score,
+        state: ScoreState,
+        music: Option<(u32, u32)>,
+    ) -> (u32, u32, u32, u32) {
         let (mut x, mut y, mut width, mut height) = (0, 0, score.width, score.height);
-        if state.zoomed {
-            // Centre crop at two thirds width: the staff area keeps its detail
-            // and the empty margins go first.
-            width = score.width * 2 / 3;
-            x = (score.width - width) / 2;
+        if let Some((left, across)) = music.filter(|_| state.zoomed) {
+            if left
+                .checked_add(across)
+                .is_some_and(|end| end <= score.width)
+                && across > 0
+            {
+                (x, width) = (left, across);
+            }
         }
         let half = height / 2;
         let overlap = height * HALF_OVERLAP_NUMERATOR / HALF_OVERLAP_DENOMINATOR;
@@ -811,11 +828,19 @@ impl Stand {
                 {
                     match kobo_image::decode(&bytes) {
                         Ok(picture) => {
+                            let zoomed = self
+                                .wanted_page()
+                                .is_some_and(|(id, _)| self.state_of(&id).zoomed);
+                            let music = if zoomed {
+                                self.music_across(&key, &picture)
+                            } else {
+                                None
+                            };
                             if let (Some(score), Some((id, _))) =
                                 (self.current_score(), self.wanted_page())
                             {
                                 let state = self.state_of(&id);
-                                let (x, y, width, height) = Self::crop_region(score, state);
+                                let (x, y, width, height) = Self::crop_region(score, state, music);
                                 let panel = context.metrics().width;
                                 let cropped = picture.crop(x, y, width, height).and_then(|crop| {
                                     match zoomed_size(state, crop.width(), crop.height(), panel) {
@@ -874,6 +899,78 @@ impl Stand {
             ShelfProgress::Elsewhere => false,
         }
     }
+}
+
+impl Stand {
+    /// The span of printed music across the page `key` names, scanned once
+    /// per page: both halves of a page share one width, so a half turn does
+    /// not change the size of the notes.
+    fn music_across(&mut self, key: &str, picture: &kobo_image::Picture) -> Option<(u32, u32)> {
+        if let Some((scanned, span)) = &self.ink {
+            if scanned == key {
+                return *span;
+            }
+        }
+        let span = music_span(picture);
+        self.ink = Some((key.to_owned(), span));
+        span
+    }
+}
+
+/// Grey at or below this is ink. Paper in a scan is rarely pure white, and
+/// faint show-through from the other side of the sheet stays above it.
+const INK: u8 = 160;
+/// The page is read every fourth column and every second row: a full scan
+/// of a two-panel-wide page is six million reads on a single core, and the
+/// edge of the music only has to be found to within the margin kept round it.
+const INK_COLUMN_STEP: usize = 4;
+const INK_ROW_STEP: usize = 2;
+/// Dark samples a column needs before it counts as music, so a speck of
+/// dust beside the staves does not hold the crop open.
+const INK_MIN_SAMPLES: usize = 3;
+
+/// The columns that hold the printed music, as a left edge and a width,
+/// with a little paper kept either side.
+///
+/// Found on the reader from the page it has already decoded, so every score
+/// on a shelf gets it, including ones pushed before it existed. A column
+/// dark from top to bottom is a scanner's shadow at the edge of the sheet
+/// rather than music, and is passed over. The crop is never narrower than
+/// half the page: past that the half page is too tall for the panel to
+/// grow any wider, and a short title alone on a page would be drawn huge.
+/// `None` when the music already reaches both edges or nothing is printed.
+fn music_span(picture: &kobo_image::Picture) -> Option<(u32, u32)> {
+    let width = usize::try_from(picture.width()).ok()?;
+    let height = usize::try_from(picture.height()).ok()?;
+    let grey = picture.grey();
+    if width == 0 || height == 0 || grey.len() < width * height {
+        return None;
+    }
+    let mut dark = vec![0_usize; width.div_ceil(INK_COLUMN_STEP)];
+    let mut rows = 0;
+    for row in grey.chunks_exact(width).step_by(INK_ROW_STEP) {
+        rows += 1;
+        for (count, &shade) in dark.iter_mut().zip(row.iter().step_by(INK_COLUMN_STEP)) {
+            *count += usize::from(shade <= INK);
+        }
+    }
+    let shadow = rows * 9 / 10;
+    let music = |count: &usize| *count >= INK_MIN_SAMPLES && *count < shadow;
+    let first = dark.iter().position(music)? * INK_COLUMN_STEP;
+    let last = dark.iter().rposition(music)? * INK_COLUMN_STEP + INK_COLUMN_STEP;
+    let margin = width / 50;
+    let mut left = first.saturating_sub(margin);
+    let mut right = (last + margin).min(width);
+    let narrowest = width / 2;
+    if right - left < narrowest {
+        let centre = (left + right) / 2;
+        left = centre.saturating_sub(narrowest / 2).min(width - narrowest);
+        right = left + narrowest;
+    }
+    if left == 0 && right == width {
+        return None;
+    }
+    Some((u32::try_from(left).ok()?, u32::try_from(right - left).ok()?))
 }
 
 /// The size to draw a Staff width crop at, when it has to grow.
@@ -1153,32 +1250,113 @@ mod tests {
     #[test]
     fn half_page_crops_overlap_so_the_line_stays_in_sight() {
         let score = score();
-        let top = Stand::crop_region(&score, ScoreState::default());
+        let top = Stand::crop_region(&score, ScoreState::default(), None);
         let bottom = Stand::crop_region(
             &score,
             ScoreState {
                 bottom_half: true,
                 ..ScoreState::default()
             },
+            None,
         );
         let top_end = top.1 + top.3;
         assert!(bottom.1 < top_end, "halves must overlap");
         assert_eq!(bottom.1 + bottom.3, score.height, "bottom reaches the foot");
     }
 
+    const ZOOMED: ScoreState = ScoreState {
+        page: 0,
+        bottom_half: false,
+        zoomed: true,
+        marked: false,
+    };
+
+    /// A white page with dark marks in the columns `from..to`, on every
+    /// row from a tenth of the way down to nine tenths.
+    fn page_inked(width: u32, height: u32, from: u32, to: u32) -> kobo_image::Picture {
+        let mut grey = vec![250_u8; (width * height) as usize];
+        for y in height / 10..height * 9 / 10 {
+            for x in from..to {
+                grey[(y * width + x) as usize] = 20;
+            }
+        }
+        kobo_image::Picture::from_grey(width, height, grey).expect("page")
+    }
+
     #[test]
-    fn zoom_keeps_the_staff_and_drops_margins() {
+    fn staff_width_keeps_every_column_of_music_and_drops_the_margins() {
         let score = score();
-        let plain = Stand::crop_region(&score, ScoreState::default());
-        let zoomed = Stand::crop_region(
-            &score,
-            ScoreState {
-                zoomed: true,
-                ..ScoreState::default()
-            },
+        // Music from the clef at 200 to the final bar line at 1500.
+        let page = page_inked(score.width, score.height, 200, 1500);
+        let music = music_span(&page);
+        let plain = Stand::crop_region(&score, ScoreState::default(), music);
+        let zoomed = Stand::crop_region(&score, ZOOMED, music);
+        assert_eq!(plain.2, score.width, "Staff width off keeps the page");
+        assert!(zoomed.2 < plain.2, "{zoomed:?}");
+        assert!(zoomed.0 < 200, "the clef was cut: {zoomed:?}");
+        assert!(
+            zoomed.0 + zoomed.2 >= 1500,
+            "the line end was cut: {zoomed:?}"
         );
-        assert!(zoomed.2 < plain.2);
-        assert_eq!(zoomed.0, (score.width - zoomed.2) / 2);
+        assert!(zoomed.0 + zoomed.2 <= score.width);
+    }
+
+    #[test]
+    fn music_printed_off_centre_is_cropped_where_it_is_not_round_the_middle() {
+        // A score set close to the left edge, as a two-thirds centre crop
+        // used to cut its clefs and key signatures off.
+        let page = page_inked(1654, 2339, 40, 1300);
+        let (left, across) = music_span(&page).expect("margins to drop");
+        assert!(left <= 40 && left + across >= 1300, "{left} {across}");
+        assert!(left + across < 1654);
+    }
+
+    #[test]
+    fn a_page_without_room_to_crop_is_shown_at_its_whole_width() {
+        let score = score();
+        let edge_to_edge = page_inked(score.width, score.height, 0, score.width);
+        assert_eq!(music_span(&edge_to_edge), None);
+        let blank = page_inked(score.width, score.height, 0, 0);
+        assert_eq!(music_span(&blank), None);
+        let zoomed = Stand::crop_region(&score, ZOOMED, None);
+        assert_eq!((zoomed.0, zoomed.2), (0, score.width));
+    }
+
+    #[test]
+    fn a_scanner_shadow_at_the_edge_and_a_speck_of_dust_do_not_count_as_music() {
+        let (width, height) = (1654, 2339);
+        let mut page = page_inked(width, height, 300, 1300).into_grey();
+        for y in 0..height {
+            // The shadow runs the full height of the sheet.
+            for x in 0..24 {
+                page[(y * width + x) as usize] = 30;
+            }
+        }
+        // One dark dot in the right margin.
+        page[(1000 * width + 1600) as usize] = 0;
+        let page = kobo_image::Picture::from_grey(width, height, page).expect("page");
+        let (left, across) = music_span(&page).expect("margins to drop");
+        assert!(left > 200 && left <= 300, "{left}");
+        assert!(left + across < 1500, "{}", left + across);
+    }
+
+    #[test]
+    fn a_short_line_alone_on_a_page_is_not_blown_up_past_half_the_page() {
+        let page = page_inked(1654, 2339, 800, 900);
+        let (left, across) = music_span(&page).expect("margins to drop");
+        assert_eq!(across, 1654 / 2);
+        assert!(left <= 800 && left + across >= 900);
+    }
+
+    #[test]
+    fn both_halves_of_a_page_are_cropped_from_one_scan() {
+        let mut stand = Stand::default();
+        let page = page_inked(1654, 2339, 200, 1500);
+        let first = stand.music_across("score-a:score-a-000.png", &page);
+        // A different picture under the same key is not scanned again.
+        let blank = page_inked(1654, 2339, 0, 0);
+        assert_eq!(stand.music_across("score-a:score-a-000.png", &blank), first);
+        assert_eq!(stand.music_across("score-a:score-a-001.png", &blank), None);
     }
 
     #[test]

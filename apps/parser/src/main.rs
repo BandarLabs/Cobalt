@@ -19,6 +19,22 @@ const TUTORIAL_BLOB: &str = "story-first-light.z3";
 const SAVE_PREFIX: &str = "save-";
 /// What a save that could not be written says, until one is.
 const SAVE_FAILED: &str = "The save could not be written. Check free space.";
+/// The notes the app writes into the transcript itself. They are not the
+/// story's words: "[Restored.]" offered Restored as a thing to light.
+const RESTORED_NOTE: &str = "[Restored.]";
+const ENDED_NOTE: &str = "[The story has ended.]";
+const APP_NOTES: &[&str] = &[RESTORED_NOTE, ENDED_NOTE];
+/// The Quetzal chunk a save carries the transcript in. Quetzal readers skip
+/// chunks they do not know, so the file is still a save to any interpreter.
+const TRANSCRIPT_CHUNK: &[u8; 4] = b"Trsc";
+/// How much of the transcript a save carries: enough pages to read back
+/// over and to find the things recently named, without every turn's save
+/// growing with the whole game.
+const TRANSCRIPT_KEPT: usize = 16 * 1024;
+/// The most things a verb question offers.
+const MOST_OBJECTS: usize = 8;
+/// How many pages before the one shown a verb question looks back over.
+const EARLIER_PAGES: usize = 8;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Library,
@@ -285,7 +301,7 @@ impl Parser {
             builder.keyboard(&self.keyboard, "Run")
         } else if let Some(verb) = self.asking {
             let mut choices: Vec<(String, String, bool)> = self
-                .objects(text)
+                .objects()
                 .into_iter()
                 .enumerate()
                 .map(|(index, thing)| (format!("object-{index}"), sentence_case(&thing), false))
@@ -328,44 +344,30 @@ impl Parser {
         builder.build()
     }
 
-    /// The things on the page a verb could be applied to: words the story's
-    /// own dictionary knows, without the verbs, directions and small words
-    /// that are never what an owner means. At most eight, in page order.
-    fn objects(&self, text: &str) -> Vec<String> {
+    /// The things a verb could be applied to: the ones on the page first,
+    /// in page order, then the ones named on the pages before it, nearest
+    /// first, up to eight. Only the page's own left out the matchbox seen a
+    /// page back and the lamp taken a few turns ago, which a reader still
+    /// has in mind, and in hand.
+    fn objects(&self) -> Vec<String> {
         let Some(machine) = self.machine.as_ref() else {
             return Vec::new();
         };
-        // Words the story knows that stand next to each other on the page,
-        // "wooden crate", are one thing and are offered as one: offered one
-        // word at a time, Open what? asked whether to open the wooden or
-        // the crate.
-        let mut found: Vec<String> = Vec::new();
-        let mut previous_end = None;
-        // Every word on the page, not only the ones that carry a link: a
-        // thing named low on a long page is as much on it as one at the top.
-        for (start, end) in words(text) {
-            let word = text[start..end]
-                .trim_matches(|character: char| !character.is_alphanumeric())
-                .to_lowercase();
-            if !worth_a_tap(machine, &word) || CHIPS.iter().any(|(probe, ..)| *probe == word) {
-                previous_end = None;
-                continue;
-            }
-            let joined = previous_end
-                .is_some_and(|before: usize| text.get(before..start).is_some_and(|gap| gap == " "));
-            previous_end = Some(end);
-            match found.last_mut() {
-                Some(last) if joined => {
-                    last.push(' ');
-                    last.push_str(&word);
-                }
-                _ => found.push(word),
-            }
-            found.dedup();
-            if found.len() == 8 {
+        let page = self.page.min(self.pages.len().saturating_sub(1));
+        let mut found = things(machine, self.page_text());
+        for earlier in (0..page).rev().take(EARLIER_PAGES) {
+            if found.len() >= MOST_OBJECTS {
                 break;
             }
+            let (start, end) = self.pages[earlier];
+            let text = self.transcript.get(start..end).unwrap_or("");
+            for thing in things(machine, text).into_iter().rev() {
+                if !found.contains(&thing) {
+                    found.push(thing);
+                }
+            }
         }
+        found.truncate(MOST_OBJECTS);
         found
     }
 
@@ -374,7 +376,7 @@ impl Parser {
     /// in one paragraph. Linking every word spent that limit on the first
     /// line or two, and nothing further down the page could be tapped.
     fn tappable(&self, text: &str) -> Vec<(String, usize, usize, String)> {
-        words(text)
+        story_words(text)
             .into_iter()
             .filter(|&(start, end)| {
                 self.machine.as_ref().is_none_or(|machine| {
@@ -566,7 +568,7 @@ impl Parser {
             Ok(state) => {
                 self.transcript.push_str(&machine.take_output());
                 if state == RunState::Halted {
-                    self.transcript.push_str("\n\n[The story has ended.]\n");
+                    let _ = write!(self.transcript, "\n\n{ENDED_NOTE}\n");
                 }
                 self.repaginate(context);
                 self.page = self.last_content_page();
@@ -582,7 +584,24 @@ impl Parser {
     }
 
     fn command(&mut self, context: &mut Context, command: &str) {
+        self.send(context, command, true);
+    }
+
+    /// Sends a command to the story. `echoed` writes it into the transcript
+    /// as the reader's turn; the look the app sends after a restore is not
+    /// one, and echoed it read as "> look" the reader never typed.
+    fn send(&mut self, context: &mut Context, command: &str, echoed: bool) {
         if command.trim().is_empty() {
+            return;
+        }
+        if !self.listening() {
+            // The story has ended, so nothing is reading commands. Sent
+            // anyway, the reader got the interpreter's own fault, "story
+            // stopped: the story did not ask for input"; the end of the
+            // story is the answer, so that is where they are taken.
+            self.asking = None;
+            self.page = self.last_content_page();
+            self.show(context);
             return;
         }
         let Some(machine) = &mut self.machine else {
@@ -597,12 +616,16 @@ impl Parser {
         {
             self.message = None;
         }
-        let _ = write!(self.transcript, "\n> {}\n", command.trim());
+        if echoed {
+            let _ = write!(self.transcript, "\n> {}\n", command.trim());
+        } else {
+            self.transcript.push('\n');
+        }
         match machine.input(command.trim()) {
             Ok(state) => {
                 self.transcript.push_str(&machine.take_output());
                 if state == RunState::Halted {
-                    self.transcript.push_str("\n\n[The story has ended.]\n");
+                    let _ = write!(self.transcript, "\n\n{ENDED_NOTE}\n");
                 }
                 self.repaginate(context);
                 self.page = self.last_content_page();
@@ -677,12 +700,28 @@ impl Parser {
     }
 
     fn begin_save(&mut self, context: &mut Context, name: String) {
-        let Some(machine) = &self.machine else {
+        let Some(save) = self.save_file() else {
             return;
         };
-        let mut upload = ShelfUpload::new(name, machine.save_quetzal());
+        let mut upload = ShelfUpload::new(name, save);
         upload.start(context);
         self.saving = Some(upload);
+    }
+
+    /// What a save writes. It carries the transcript, so a story reopened
+    /// after the app closed reads on from the pages before rather than from
+    /// a bare "[Restored.]", and its verb questions still know the lamp.
+    fn save_file(&self) -> Option<Vec<u8>> {
+        let machine = self.machine.as_ref()?;
+        Some(with_transcript(
+            machine.save_quetzal(),
+            kept_transcript(&self.transcript),
+        ))
+    }
+
+    /// Whether the open story is waiting for a command.
+    fn listening(&self) -> bool {
+        self.machine.as_ref().is_some_and(Machine::wants_input)
     }
 
     fn last_content_page(&self) -> usize {
@@ -701,7 +740,7 @@ impl Parser {
         if !self.transcript.is_empty() {
             self.transcript.push_str("\n\n");
         }
-        self.transcript.push_str("[Restored.]");
+        self.transcript.push_str(RESTORED_NOTE);
     }
 
     fn noun(&mut self, index: usize) {
@@ -1050,7 +1089,7 @@ impl KoboApp for Parser {
             return;
         }
         if let Some(verb) = self.asking {
-            let objects = self.objects(self.page_text());
+            let objects = self.objects();
             if let Some(object) = (0..objects.len())
                 .find(|index| action == action_id(&format!("object-{index}")))
                 .map(|index| objects[index].clone())
@@ -1074,7 +1113,9 @@ impl KoboApp for Parser {
         }
         for &(_, name, _, command) in CHIPS {
             if action == action_id(name) {
-                if let Some(verb) = command.strip_suffix(' ') {
+                // After the end a verb asks nothing: the command goes the
+                // way of any other, to the story's last page.
+                if let Some(verb) = command.strip_suffix(' ').filter(|_| self.listening()) {
                     // A verb needs its object: asking which thing, from the
                     // ones on the page, is a tap away from the story's own
                     // "What do you want to read?".
@@ -1237,11 +1278,18 @@ impl KoboApp for Parser {
                         }
                     }
                     if restored {
+                        // Only a story just opened has no transcript yet;
+                        // a slot restored mid-game keeps the one on screen.
+                        if self.transcript.is_empty() {
+                            if let Some(earlier) = saved_transcript(&bytes) {
+                                self.transcript = earlier;
+                            }
+                        }
                         self.note_restored();
                     }
                     self.advance_story(context);
                     if restored {
-                        self.command(context, "look");
+                        self.send(context, "look", false);
                     }
                 }
                 ShelfProgress::Failed(kobo_sdk::StoreError::Missing) => {
@@ -1289,6 +1337,119 @@ fn words(text: &str) -> Vec<(usize, usize)> {
 /// words on every page.
 fn worth_a_tap(machine: &Machine, word: &str) -> bool {
     word.chars().count() >= 3 && !NOT_OBJECTS.contains(&word) && machine.knows_word(word)
+}
+
+/// The words of a stretch of transcript the story wrote or the reader
+/// typed, leaving out the notes the app adds itself.
+fn story_words(text: &str) -> Vec<(usize, usize)> {
+    let notes: Vec<(usize, usize)> = APP_NOTES
+        .iter()
+        .flat_map(|note| {
+            text.match_indices(note)
+                .map(|(at, note)| (at, at + note.len()))
+        })
+        .collect();
+    words(text)
+        .into_iter()
+        .filter(|&(start, end)| !notes.iter().any(|&(from, to)| start < to && end > from))
+        .collect()
+}
+
+/// The things named in a stretch of transcript, in the order they appear:
+/// words the story's own dictionary knows, without the verbs, directions
+/// and small words that are never what an owner means.
+fn things(machine: &Machine, text: &str) -> Vec<String> {
+    // Words the story knows that stand next to each other, "wooden crate",
+    // are one thing and are offered as one: offered one word at a time,
+    // Open what? asked whether to open the wooden or the crate.
+    let mut found: Vec<String> = Vec::new();
+    let mut previous_end = None;
+    // Every word, not only the ones that carry a link: a thing named low on
+    // a long page is as much on it as one at the top.
+    for (start, end) in story_words(text) {
+        let word = text[start..end]
+            .trim_matches(|character: char| !character.is_alphanumeric())
+            .to_lowercase();
+        if !worth_a_tap(machine, &word) || CHIPS.iter().any(|(probe, ..)| *probe == word) {
+            previous_end = None;
+            continue;
+        }
+        let joined = previous_end
+            .is_some_and(|before: usize| text.get(before..start).is_some_and(|gap| gap == " "));
+        previous_end = Some(end);
+        match found.last_mut() {
+            Some(last) if joined => {
+                last.push(' ');
+                last.push_str(&word);
+            }
+            _ => found.push(word),
+        }
+    }
+    let mut unique: Vec<String> = Vec::new();
+    for thing in found {
+        if !unique.contains(&thing) {
+            unique.push(thing);
+        }
+    }
+    unique
+}
+
+/// The end of the transcript a save carries, from a paragraph break where
+/// there is one so it does not open mid-sentence.
+fn kept_transcript(transcript: &str) -> &str {
+    if transcript.len() <= TRANSCRIPT_KEPT {
+        return transcript;
+    }
+    let mut cut = transcript.len() - TRANSCRIPT_KEPT;
+    while !transcript.is_char_boundary(cut) {
+        cut += 1;
+    }
+    let tail = &transcript[cut..];
+    tail.find("\n\n").map_or(tail, |at| &tail[at + 2..])
+}
+
+/// A Quetzal save with the transcript added as a chunk of its own.
+fn with_transcript(mut save: Vec<u8>, transcript: &str) -> Vec<u8> {
+    if save.len() < 12 || &save[..4] != b"FORM" || transcript.is_empty() {
+        return save;
+    }
+    let Ok(length) = u32::try_from(transcript.len()) else {
+        return save;
+    };
+    save.extend_from_slice(TRANSCRIPT_CHUNK);
+    save.extend_from_slice(&length.to_be_bytes());
+    save.extend_from_slice(transcript.as_bytes());
+    if transcript.len() & 1 != 0 {
+        save.push(0);
+    }
+    let form = u32::try_from(save.len() - 8).unwrap_or(u32::MAX);
+    save[4..8].copy_from_slice(&form.to_be_bytes());
+    save
+}
+
+/// The transcript a save carries, if it carries one.
+fn saved_transcript(save: &[u8]) -> Option<String> {
+    if save.get(..4) != Some(b"FORM".as_slice()) {
+        return None;
+    }
+    let mut cursor = 12usize;
+    while cursor.checked_add(8)? <= save.len() {
+        let id = &save[cursor..cursor + 4];
+        let length = usize::try_from(u32::from_be_bytes(
+            save[cursor + 4..cursor + 8].try_into().ok()?,
+        ))
+        .ok()?;
+        let start = cursor + 8;
+        let end = start.checked_add(length)?;
+        if end > save.len() {
+            return None;
+        }
+        if id == TRANSCRIPT_CHUNK {
+            return String::from_utf8(save[start..end].to_vec()).ok();
+        }
+        cursor = end + (length & 1);
+    }
+    None
 }
 
 fn slot_subtitle(action: SlotAction, occupied: bool) -> String {
@@ -1549,7 +1710,7 @@ mod tests {
         let mut context = Context::default();
         parser.machine = Some(Machine::new(story_fixture(), "lamplight.z3").expect("story"));
         parser.begin_save(&mut context, "save-autosave".to_owned());
-        let total = parser.machine.as_ref().expect("story").save_quetzal().len();
+        let total = parser.save_file().expect("story").len();
         let mut written = 0;
         while parser.saving.is_some() {
             written = (written + kobo_sdk::MAX_SHELF_CHUNK).min(total);
@@ -1590,15 +1751,17 @@ mod tests {
     #[test]
     fn a_thing_named_low_on_a_long_page_can_still_be_chosen() {
         let machine = Machine::new(story_fixture(), "lamplight.z3").expect("story");
-        let parser = Parser {
-            machine: Some(machine),
-            ..Parser::default()
-        };
         let text = format!(
             "{} In the corner sits a wooden crate.",
             "It is so and so on to me. ".repeat(8)
         );
-        assert!(parser.objects(&text).contains(&"wooden crate".to_owned()));
+        let parser = Parser {
+            machine: Some(machine),
+            pages: vec![(0, text.len())],
+            transcript: text.clone(),
+            ..Parser::default()
+        };
+        assert!(parser.objects().contains(&"wooden crate".to_owned()));
         assert!(parser
             .tappable(&text)
             .iter()
@@ -1722,7 +1885,7 @@ mod tests {
             "nothing is sent without an object"
         );
         // "a wooden crate" is one thing on the page, offered as one.
-        let objects = app.objects(app.page_text());
+        let objects = app.objects();
         assert!(objects.contains(&"wooden crate".to_owned()), "{objects:?}");
         assert!(!objects.contains(&"wooden".to_owned()), "{objects:?}");
         assert!(!objects.contains(&"the".to_owned()));
@@ -1975,6 +2138,149 @@ mod tests {
         assert_eq!(parser.transcript, "[Restored.]");
         parser.note_restored();
         assert_eq!(parser.transcript, "[Restored.]\n\n[Restored.]");
+    }
+
+    /// Opens the Lamplight fixture as a first run, with no autosave.
+    fn opened_lamplight(context: &mut Context) -> Parser {
+        install_real_face();
+        let mut app = Parser::default();
+        app.start_story(context, "story-lamplight.z3".to_owned(), story_fixture());
+        app.on_store(context, StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        app
+    }
+
+    /// Hands a blob to the app the way the shelf does, a piece at a time.
+    fn deliver(app: &mut Parser, context: &mut Context, name: &str, bytes: &[u8]) {
+        let size = u32::try_from(bytes.len()).expect("small blob");
+        for (index, piece) in bytes.chunks(kobo_sdk::MAX_SHELF_CHUNK).enumerate() {
+            app.on_store(
+                context,
+                StoreResult::ShelfRead {
+                    name: name.to_owned(),
+                    offset: u32::try_from(index * kobo_sdk::MAX_SHELF_CHUNK).expect("small"),
+                    bytes: piece.to_vec(),
+                    size,
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn a_reopened_story_reads_on_from_its_transcript_and_never_offers_the_restore_note() {
+        let mut context = Context::default();
+        let mut app = opened_lamplight(&mut context);
+        app.command(&mut context, "open crate");
+        app.command(&mut context, "take note");
+        assert!(app.transcript.contains("Taken."), "{}", app.transcript);
+        let machine = app.machine.as_ref().expect("story open");
+        let autosave = with_transcript(machine.save_quetzal(), kept_transcript(&app.transcript));
+        let name = save_name(machine.info(), "auto");
+
+        // The app closed; the story opens again from its autosave.
+        let mut reopened = Parser::default();
+        reopened.start_story(
+            &mut context,
+            "story-lamplight.z3".to_owned(),
+            story_fixture(),
+        );
+        deliver(&mut reopened, &mut context, &name, &autosave);
+        let transcript = &reopened.transcript;
+        assert!(transcript.contains("> take note"), "{transcript}");
+        let after = &transcript[transcript.find(RESTORED_NOTE).expect("restore note")..];
+        assert!(after.contains("Lamp Square"), "{after}");
+        assert!(
+            !after.contains("> look"),
+            "the app's own look is not the reader's turn: {after}"
+        );
+
+        reopened.on_action(&mut context, action_id("read"));
+        assert_eq!(reopened.asking, Some("read"));
+        let objects = reopened.objects();
+        assert!(!objects.contains(&"restored".to_owned()), "{objects:?}");
+        assert!(objects.contains(&"note".to_owned()), "{objects:?}");
+        assert!(reopened
+            .tappable(reopened.page_text())
+            .iter()
+            .all(|(_, _, _, word)| word != "Restored"));
+    }
+
+    #[test]
+    fn a_save_carries_its_transcript_and_still_restores_as_a_save() {
+        let mut machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
+        machine.run().expect("opening runs");
+        let save = with_transcript(machine.save_quetzal(), "> look\nLamp Square");
+        assert_eq!(
+            saved_transcript(&save).as_deref(),
+            Some("> look\nLamp Square")
+        );
+        assert_eq!(saved_transcript(&machine.save_quetzal()), None);
+        let mut restored = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
+        restored
+            .restore_quetzal(&save)
+            .expect("the extra chunk is skipped");
+        let long = "Rain on the shutters.\n\n".repeat(2000);
+        let kept = kept_transcript(&long);
+        assert!(
+            kept.len() <= TRANSCRIPT_KEPT && kept.starts_with("Rain"),
+            "{}",
+            kept.len()
+        );
+    }
+
+    #[test]
+    fn a_verb_question_also_offers_things_named_on_the_page_before() {
+        let mut context = Context::default();
+        let mut app = opened_lamplight(&mut context);
+        let before = app.transcript.len();
+        app.transcript.push_str(
+            "\n> north\nGarden Path\nGravel crunches underfoot. The square lies south.\n",
+        );
+        app.pages = vec![(0, before), (before, app.transcript.len())];
+        app.paginated_len = app.transcript.len();
+        app.page = 1;
+        app.on_action(&mut context, action_id("open"));
+        assert_eq!(app.asking, Some("open"));
+        let objects = app.objects();
+        assert!(objects.contains(&"wooden crate".to_owned()), "{objects:?}");
+    }
+
+    #[test]
+    fn commands_after_the_story_ends_go_to_its_last_page_not_to_a_fault() {
+        install_real_face();
+        let mut context = Context::default();
+        let mut app = Parser::default();
+        app.start_story(
+            &mut context,
+            TUTORIAL_BLOB.to_owned(),
+            crate::story::build_first_light(),
+        );
+        app.on_store(
+            &mut context,
+            StoreResult::Denied(kobo_sdk::StoreError::Missing),
+        );
+        for command in ["north", "take lamp", "take matchbox", "light lamp", "north"] {
+            app.command(&mut context, command);
+        }
+        assert!(
+            app.transcript.ends_with(&format!("{ENDED_NOTE}\n")),
+            "{}",
+            app.transcript
+        );
+        let ended = app.transcript.clone();
+        app.page = 0;
+        app.on_action(&mut context, action_id("look"));
+        assert_eq!(app.message, None, "no interpreter fault is shown");
+        assert_eq!(
+            app.transcript, ended,
+            "nothing is sent to a story that has ended"
+        );
+        assert_eq!(app.page, app.last_content_page());
+        app.on_action(&mut context, action_id("take"));
+        assert_eq!(app.asking, None, "a verb asks nothing after the end");
+        assert_eq!(app.message, None);
+        app.command(&mut context, "look");
+        assert_eq!(app.message, None);
+        assert_eq!(app.transcript, ended);
     }
 
     #[test]

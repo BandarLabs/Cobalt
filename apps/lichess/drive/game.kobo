@@ -4,7 +4,7 @@ shot live-board
 tap-id square-e7
 wait-for e7 →
 tap-id square-e4
-wait-for Illegal
+wait-for That move is not allowed
 shot illegal-move
 tap More
 wait-for Offer draw

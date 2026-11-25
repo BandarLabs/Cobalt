@@ -55,7 +55,14 @@ tap Unread
 wait-for Nothing on this reader yet
 expect-missing No unread articles
 restart
+# Opened again with the key on the reader and nothing saved, the account
+# syncs by itself, and the empty shelf says why it is still empty.
 wait-for Unread
+wait-idle 30000
+wait 5000
+wait-for Could not sync
+expect Nothing on this reader yet
+expect-missing No Miniflux account
 tap Settings
 wait-for https://flux.invalid
 tap Suggested feeds

@@ -4,7 +4,7 @@
 # title.
 wait-for Daily brief
 expect Nothing yet
-expect refreshes itself each morning
+expect refreshes when you open it
 expect not fetched yet
 clean
 shot brief-empty

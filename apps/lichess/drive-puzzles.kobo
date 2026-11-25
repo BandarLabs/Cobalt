@@ -13,24 +13,23 @@ wait-for-id skip-puzzle
 expect White
 # Only the solving side's pieces can be picked up.
 tap-id square-a7
-expect Your piece
+expect White · Tap one of your pieces
 tap-id square-e2
 expect White · e2 →
 # A rook cannot move diagonally: refused, and the rook stays picked up.
 tap-id square-d3
-expect Illegal
-expect White · e2 →
+expect White · That move is not allowed
 # A legal move that is not the solution is a first miss, and the puzzle
 # goes on from the same position.
 tap-id square-e3
-expect Not it. Try again.
+expect White · Not it, try again
 expect-missing e2 →
 clean
 shot puzzle-first-miss
 # The right move plays the opponent's forced reply.
 tap-id square-e2
 tap-id square-e8
-wait-for Opponent replied Rxe8.
+wait-for White · Opponent replied Rxe8
 clean
 shot puzzle-reply
 tap-id square-e1
@@ -53,7 +52,7 @@ wait-for-id skip-puzzle
 # Two wrong moves end the puzzle and name the first move.
 tap-id square-a1
 tap-id square-a2
-expect Not it. Try again.
+expect Not it, try again
 tap-id square-a1
 tap-id square-a3
 wait-for Not solved

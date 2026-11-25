@@ -664,11 +664,14 @@ impl Brief {
             // Centred in what is left rather than stacked at the top, so a
             // brief that has not been fetched yet reads as a page waiting for
             // a tap instead of a page that failed to load.
+            // Says what opening does rather than what the morning wake would
+            // do: readers refuse the wake, so a promise of a brief waiting
+            // each morning was one the reader never kept.
             screen = screen.splash(
                 Some(Glyph::News),
                 "Nothing yet",
                 "Tap Refresh once the reader is on Wi-Fi. After that the brief \
-                 refreshes itself each morning.",
+                 refreshes when you open it, at most every six hours.",
             );
         } else if !self.stories.is_empty() {
             // Numbered rather than illustrated: the same note icon beside
@@ -754,9 +757,11 @@ impl Brief {
         ScreenBuilder::new("brief-sources")
             .top_bar("Source")
             .owns_back(true)
+            // No word about mornings: readers refuse the wake that would
+            // keep that promise, and the line is a fact or it is nothing.
             .secondary(
                 "All four are public Hacker News lists. Nothing is fetched until you \
-                 refresh once; after that the brief refreshes itself each morning.",
+                 refresh once.",
             )
             .option_list(
                 "",
@@ -1865,6 +1870,39 @@ mod tests {
                 .any(|kind| matches!(kind, kobo_ui::LayoutKind::Button(..))),
             "an idle brief drew a button at its foot"
         );
+    }
+
+    /// Readers refuse the morning wake, so neither the empty brief nor the
+    /// source list may promise one: the empty page used to say the brief
+    /// "refreshes itself each morning", and on a reader it never did.
+    #[test]
+    fn no_screen_promises_a_morning_refresh_the_reader_refuses() {
+        let words = |brief: &Brief| {
+            brief
+                .screen(&Context::default())
+                .layout_with(
+                    &kobo_ui::CLARA_BW_METRICS,
+                    &kobo_ui::Chrome::measuring(true),
+                )
+                .nodes
+                .into_iter()
+                .flat_map(|node| node.text_lines)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let mut brief = ready();
+        let empty = words(&brief);
+        assert!(empty.contains("Nothing yet"), "{empty}");
+        assert!(empty.contains("refreshes when you open it"), "{empty}");
+        brief.view = View::Sources;
+        let sources = words(&brief);
+        assert!(
+            sources.contains("Nothing is fetched until you refresh once."),
+            "{sources}"
+        );
+        for said in [empty, sources] {
+            assert!(!said.contains("morning"), "{said}");
+        }
     }
 
     /// Choosing another list does not leave the last one's stories under the

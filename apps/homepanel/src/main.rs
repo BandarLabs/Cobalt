@@ -15,6 +15,9 @@ const BASE: &str = "base-url";
 const TILES: &str = "tiles";
 const STATES: &str = "states";
 const CLIMATE: &str = "climate";
+/// Each tile's friendly name and unit, kept apart from the tile list so a
+/// panel saved before names were kept still reads its tiles as it did.
+const LABELS: &str = "labels";
 const SETTINGS: &str = "settings";
 const LASTOK: &str = "last-ok";
 const ADD: &str = "add";
@@ -23,6 +26,8 @@ const BACK: &str = "back";
 const CHECK_AGAIN: &str = "check-again";
 const HOME_URL: &str = "home-url";
 const PHONE: &str = "phone";
+/// The one way out of the dialogue a failed action opens.
+const CLOSE_DIALOG: &str = "close-dialog";
 /// What Check again says when nothing has arrived. It is answered by checking
 /// again, so the banner that says it carries that action.
 const NO_ADDRESS_YET: &str =
@@ -60,6 +65,10 @@ struct HomePanel {
     tiles: Vec<String>,
     states: Vec<(String, String)>,
     climate: Vec<(String, ha::Climate)>,
+    /// What Home Assistant calls each tile and its reading's unit. A tile
+    /// with no entry here, such as one saved before names were kept, is
+    /// named from its entity ID until the next poll brings its name.
+    labels: Vec<(String, ha::Label)>,
     entities: Vec<ha::Entity>,
     query: String,
     /// The address, typed on the runtime's keyboard.
@@ -84,12 +93,27 @@ struct HomePanel {
     edit_page: usize,
     grid_page: usize,
     picker_page: usize,
-    poll_failed: bool,
     /// The owner tapped Check again on setup and is owed an answer.
     checking: bool,
     /// Home Assistant could not list its devices, so the picker says how to
     /// add one by its entity ID instead.
     entities_failed: bool,
+    /// What a tap on the grid or the climate screen came to, said in the
+    /// status line in place of when the readings were taken.
+    ///
+    /// It used to be a banner over the tiles, so every tap pushed the grid
+    /// down under the finger, and on the climate screen "Setting 21.5°…"
+    /// landed between the readings and Cooler and Warmer mid-tapping.
+    note: Option<String>,
+    /// An action that did not happen, as a title and what went wrong. It
+    /// needs reading, so it is a dialogue with one way out rather than a
+    /// line that the next reading replaces.
+    dialog: Option<(String, String)>,
+    /// Why Home Assistant did not give the last request what it asked for,
+    /// until a reading arrives. The status line says it beside the time of
+    /// the readings on show, rather than "Updated 14:39." over a banner
+    /// saying Home Assistant had stopped answering.
+    trouble: Option<kobo_sdk::failure::Cause>,
 }
 
 impl Default for HomePanel {
@@ -100,6 +124,7 @@ impl Default for HomePanel {
             tiles: Vec::new(),
             states: Vec::new(),
             climate: Vec::new(),
+            labels: Vec::new(),
             entities: Vec::new(),
             query: String::new(),
             address: TextEntry::new().address(),
@@ -116,9 +141,11 @@ impl Default for HomePanel {
             edit_page: 0,
             grid_page: 0,
             picker_page: 0,
-            poll_failed: false,
             checking: false,
             entities_failed: false,
+            note: None,
+            dialog: None,
+            trouble: None,
         }
     }
 }
@@ -227,6 +254,23 @@ enum Shape {
     Bare,
 }
 
+/// What went wrong, in the few words the status line has room for. The
+/// whole of it, with the fix, is the dialogue a failed tap opens.
+const fn trouble_words(cause: kobo_sdk::failure::Cause) -> &'static str {
+    use kobo_sdk::failure::Cause;
+    match cause {
+        Cause::Offline => "This reader is not on Wi-Fi.",
+        Cause::AwayFromHome | Cause::Unreachable => "Home Assistant did not answer.",
+        Cause::TimedOut => "Home Assistant was too slow.",
+        Cause::Rejected => "Home Assistant refused your account.",
+        Cause::Missing => "No account for Home Assistant yet.",
+        Cause::Forbidden | Cause::Blocked => "Home Assistant refused the request.",
+        Cause::NotFound => "Nothing found at that address.",
+        Cause::RateLimited => "Home Assistant asked to slow down.",
+        Cause::OutOfCredit | Cause::TooLarge => "Could not read Home Assistant.",
+    }
+}
+
 fn title(id: &str) -> String {
     id.rsplit('.').next().unwrap_or(id).replace('_', " ")
 }
@@ -284,26 +328,86 @@ impl HomePanel {
             .map_or(ha::Climate::default(), |(_, climate)| *climate)
     }
 
+    fn label_of(&self, id: &str) -> Option<&ha::Label> {
+        self.labels
+            .iter()
+            .find(|(known, _)| known == id)
+            .map(|(_, label)| label)
+    }
+
+    /// The tile's name as Home Assistant gives it, "Desk lamp" rather than
+    /// "desk", falling back to one made from the entity ID.
+    fn name_of(&self, id: &str) -> String {
+        self.label_of(id)
+            .map(|label| label.name.as_str())
+            .filter(|name| !name.is_empty())
+            .map_or_else(|| title(id), str::to_owned)
+    }
+
+    /// The state with its unit, the way Home Assistant writes a reading:
+    /// "12.3 °C", and "48%" with the percent sign set close. Only a number
+    /// takes the unit, so "unavailable" never reads as "unavailable °C".
+    fn reading_of(&self, id: &str) -> Option<String> {
+        let state = self.state_of(id)?;
+        let unit = self
+            .label_of(id)
+            .map(|label| label.unit.as_str())
+            .unwrap_or_default();
+        Some(if unit.is_empty() || state.trim().parse::<f64>().is_err() {
+            state.to_owned()
+        } else if unit == "%" || unit == "°" {
+            format!("{state}{unit}")
+        } else {
+            format!("{state} {unit}")
+        })
+    }
+
+    /// Learns names and units, keeping a name already known when Home
+    /// Assistant has none to give, and only for tiles still on the panel.
+    fn learn_labels(&mut self, rows: Vec<(String, ha::Label)>) -> bool {
+        let before = self.labels.clone();
+        for (id, label) in rows {
+            if let Some((_, known)) = self.labels.iter_mut().find(|(known, _)| *known == id) {
+                if !label.name.is_empty() {
+                    known.name = label.name;
+                }
+                known.unit = label.unit;
+            } else if !label.name.is_empty() || !label.unit.is_empty() {
+                self.labels.push((id, label));
+            }
+        }
+        let tiles = &self.tiles;
+        self.labels.retain(|(id, _)| tiles.contains(id));
+        self.labels != before
+    }
+
     fn tile_label(&self, id: &str) -> String {
         let climate = self.climate_of(id);
         if is_climate(id) {
             if let Some(current) = climate.current {
-                return format!("{} · {}°", title(id), format_degrees(current));
+                return format!("{} · {}°", self.name_of(id), format_degrees(current));
             }
         }
-        match self.state_of(id) {
-            Some(state) => format!("{} · {state}", title(id)),
-            None => format!("{} · Not connected", title(id)),
+        match self.reading_of(id) {
+            Some(reading) => format!("{} · {reading}", self.name_of(id)),
+            None => format!("{} · Not connected", self.name_of(id)),
         }
     }
 
+    /// When the readings on show were taken, and why they are not newer
+    /// when Home Assistant did not answer, in one line.
     fn freshness(&self) -> Option<String> {
         if self.tiles.is_empty() {
             return None;
         }
-        match &self.last_ok {
-            None => Some("Not connected yet.".to_owned()),
-            Some((minutes, hhmm)) => {
+        match (&self.last_ok, self.trouble.map(trouble_words)) {
+            (None, None) => Some("Not connected yet.".to_owned()),
+            (None, Some(trouble)) => Some(trouble.to_owned()),
+            (Some((minutes, hhmm)), Some(trouble)) => {
+                let when = reading_time(*minutes, hhmm, reader_clock().now().ok());
+                Some(format!("{trouble} Readings from {when}."))
+            }
+            (Some((minutes, hhmm)), None) => {
                 let stale = now_minutes().is_some_and(|now| now - minutes > STALE_AFTER_MINUTES);
                 if stale {
                     let when = reading_time(*minutes, hhmm, reader_clock().now().ok());
@@ -313,6 +417,34 @@ impl HomePanel {
                 }
             }
         }
+    }
+
+    /// The line under the bar on the grid and the climate screen: what the
+    /// last tap came to, or else how fresh the readings are. It is there on
+    /// every turn and keeps its place, so the tiles and buttons under it stay
+    /// where the finger left them.
+    fn status_line(&self) -> Option<String> {
+        self.note.clone().or_else(|| self.freshness())
+    }
+
+    /// The dialogue for an action that did not happen, over whichever of
+    /// the grid and the climate screen is showing.
+    fn with_dialog(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        match &self.dialog {
+            Some((title, text)) => screen.dialog(title, CLOSE_DIALOG, |dialog| {
+                dialog.text(text).button(CLOSE_DIALOG, "Close")
+            }),
+            None => screen,
+        }
+    }
+
+    /// Takes a tap that did not happen: the dialogue says what went wrong
+    /// and the fix, and the status line what it means for the readings.
+    fn action_failed(&mut self, title: String, error: TaskError) {
+        let problem = failure(&self.base, error);
+        self.trouble = Some(problem.cause);
+        self.note = None;
+        self.dialog = Some((title, problem.message));
     }
 
     /// The banner's words, whatever its level.
@@ -481,15 +613,17 @@ impl HomePanel {
             .unwrap_or_else(|| build(Shape::Bare))
     }
 
+    /// The bar and the status line over the tiles. No banner: one coming
+    /// and going above the grid moved every tile under the finger.
     fn grid_prefix(&self) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("homepanel-grid")
             .top_bar("Home Panel")
             .top_bar_glyph(SETTINGS, "Settings", Glyph::Settings)
             .top_bar_glyph(ADD, "Add tile", Glyph::Plus);
-        if let Some(freshness) = self.freshness() {
-            screen = screen.secondary(freshness);
+        if let Some(line) = self.status_line() {
+            screen = screen.secondary(line);
         }
-        Self::say(screen, self.banner.as_ref())
+        self.with_dialog(screen)
     }
 
     fn page_controls(screen: ScreenBuilder, page: usize, pages: usize) -> ScreenBuilder {
@@ -606,10 +740,9 @@ impl HomePanel {
         s = s.rows((from..to).map(|index| {
             (
                 format!("edit.{index}"),
-                title(&self.tiles[index]),
-                self.state_of(&self.tiles[index])
-                    .unwrap_or("Not connected")
-                    .to_owned(),
+                self.name_of(&self.tiles[index]),
+                self.reading_of(&self.tiles[index])
+                    .unwrap_or_else(|| "Not connected".to_owned()),
                 entity_glyph(&self.tiles[index]),
             )
         }));
@@ -625,9 +758,10 @@ impl HomePanel {
         let Some(id) = self.tiles.get(index) else {
             return s.splash(None, "Tile is gone", "It was removed.").build();
         };
-        s = s.heading(title(id)).text(id.clone()).text(format!(
+        s = s.heading(self.name_of(id)).text(id.clone()).text(format!(
             "State: {}",
-            self.state_of(id).unwrap_or("Not connected")
+            self.reading_of(id)
+                .unwrap_or_else(|| "Not connected".to_owned())
         ));
         let climate = self.climate_of(id);
         if let Some(current) = climate.current {
@@ -647,8 +781,14 @@ impl HomePanel {
         }
     }
 
+    /// The thermostat, with the grid's status line above its readings, so
+    /// "Setting 21.5°…" takes the place of "Updated 14:39." rather than
+    /// pushing Cooler and Warmer down between two taps.
     fn climate_screen(&self, id: &str) -> Screen {
-        let mut s = ScreenBuilder::new("homepanel-climate").top_bar(title(id));
+        let mut s = ScreenBuilder::new("homepanel-climate").top_bar(self.name_of(id));
+        if let Some(line) = self.status_line() {
+            s = s.secondary(line);
+        }
         let climate = self.climate_of(id);
         s = s.text(format!(
             "State: {}",
@@ -660,17 +800,18 @@ impl HomePanel {
         if let Some(target) = climate.target {
             s = s.text(format!("Target: {}°", format_degrees(target)));
         }
-        Self::say(s, self.banner.as_ref())
+        self.with_dialog(s)
             .buttons([("cool", "Cooler"), ("warm", "Warmer"), ("power", "Power")])
             .build()
     }
 
     fn detail_screen(&self, id: &str) -> Screen {
         let s = ScreenBuilder::new("homepanel-reading")
-            .top_bar(title(id))
+            .top_bar(self.name_of(id))
             .text(format!(
                 "State: {}",
-                self.state_of(id).unwrap_or("Not connected")
+                self.reading_of(id)
+                    .unwrap_or_else(|| "Not connected".to_owned())
             ))
             .text(id)
             .secondary("This tile only shows its reading. It is not switched from here.");
@@ -825,6 +966,16 @@ impl HomePanel {
         context.store().save(CLIMATE, saved.into_bytes());
     }
 
+    fn save_labels(&self, context: &mut Context) {
+        let saved = self
+            .labels
+            .iter()
+            .map(|(id, label)| format!("{id}\t{}\t{}", label.name, label.unit))
+            .collect::<Vec<_>>()
+            .join("\n");
+        context.store().save(LABELS, saved.into_bytes());
+    }
+
     fn save_settings(&self, context: &mut Context) {
         let wall = if self.wall { "wall=1\n" } else { "" };
         context.store().save(SETTINGS, wall.as_bytes().to_vec());
@@ -896,20 +1047,14 @@ impl HomePanel {
     fn set_climate(&mut self, context: &mut Context, id: &str, delta: f64) {
         let climate = self.climate_of(id);
         let Some(target) = climate.target else {
-            self.banner = Some((
-                BannerLevel::Attention,
-                "Home Assistant has not reported a target temperature yet.".into(),
-            ));
+            self.note = Some("Home Assistant has not reported a target temperature yet.".into());
             self.show(context);
             return;
         };
         let next = ((target + delta) * 2.0).round() / 2.0;
         if let Some(task) = context.spawn(ha::set_temperature(&self.base, id, next)) {
             self.task = Some((task, "climate"));
-            self.banner = Some((
-                BannerLevel::Info,
-                format!("Setting {}°…", format_degrees(next)),
-            ));
+            self.note = Some(format!("Setting {}°…", format_degrees(next)));
             self.show(context);
         }
     }
@@ -917,31 +1062,37 @@ impl HomePanel {
     fn on_poll(&mut self, context: &mut Context, bytes: &[u8]) {
         self.states = ha::state_rows(bytes);
         self.climate = ha::climate_rows(bytes);
+        if self.learn_labels(ha::label_rows(bytes)) {
+            self.save_labels(context);
+        }
         self.last_ok = now_minutes().map(|minutes| (minutes, now_hhmm()));
+        self.trouble = None;
         self.save_states(context);
         self.save_climate(context);
         self.save_last_ok(context);
         if let Some((id, before)) = self.pending.take() {
-            let now = self.state_of(&id).unwrap_or("Not connected");
-            // A tile that did not move asks the owner to look at Home
-            // Assistant, so it is an error; one that moved is the tap done.
-            self.banner = Some(if now == before {
-                (
-                    BannerLevel::Error,
-                    format!("{} did not change. Check Home Assistant.", title(&id)),
-                )
+            let now = self.state_of(&id).unwrap_or("Not connected").to_owned();
+            let name = self.name_of(&id);
+            // A tile that moved is the tap done, said in the status line. One
+            // that did not is a tap that did not happen, which the owner has
+            // to look into in Home Assistant.
+            if now == before {
+                self.note = None;
+                self.dialog = Some((
+                    format!("{name} did not change"),
+                    format!(
+                        "Home Assistant answered, but {name} still reads {now}. Check it in Home Assistant."
+                    ),
+                ));
             } else {
-                (
-                    BannerLevel::Success,
-                    format!("{} is now {now}.", title(&id)),
-                )
-            });
-        } else if self.poll_failed {
-            // A recovery clears the outage banner; a quiet poll never erases a
-            // named acknowledgement such as "fan removed.".
-            self.banner = None;
+                self.note = Some(format!("{name} is now {now}."));
+            }
+        } else {
+            // A reading with nothing waiting on it: the line goes back to
+            // saying when the readings were taken, so a panel by the door
+            // does not say "Desk lamp is now off." for the rest of the day.
+            self.note = None;
         }
-        self.poll_failed = false;
         self.show(context);
     }
     /// Chrome actions available across views: settings, add, search, and the
@@ -952,10 +1103,7 @@ impl HomePanel {
             self.show(context);
         } else if action == action_id(ADD) {
             if self.tiles.len() >= MAX_TILES {
-                self.banner = Some((
-                    BannerLevel::Info,
-                    "Home Panel can show up to 12 tiles.".into(),
-                ));
+                self.note = Some("Home Panel can show up to 12 tiles.".into());
                 self.show(context);
             } else {
                 self.load_entities(context);
@@ -1003,6 +1151,7 @@ impl HomePanel {
             self.show(context);
             return;
         };
+        let name = self.name_of(&id);
         if action == action_id("move-up") && index > 0 {
             self.tiles.swap(index - 1, index);
             self.save_tiles(context);
@@ -1011,9 +1160,11 @@ impl HomePanel {
         } else if action == action_id("remove") {
             self.tiles.remove(index);
             self.save_tiles(context);
+            self.labels.retain(|(known, _)| *known != id);
+            self.save_labels(context);
             // No poll follows: nothing about the other tiles has changed, and
             // a poll that failed here used to replace this note with an outage.
-            self.banner = Some((BannerLevel::Success, format!("{} removed.", title(&id))));
+            self.banner = Some((BannerLevel::Success, format!("{name} removed.")));
             self.view = View::Edit;
             self.show(context);
         }
@@ -1038,6 +1189,7 @@ impl HomePanel {
         {
             if is_climate(&id) {
                 self.banner = None;
+                self.note = None;
                 self.view = View::Climate(id);
                 self.show(context);
             } else {
@@ -1070,8 +1222,23 @@ impl HomePanel {
         {
             self.tiles.push(entity.id.clone());
             self.states.push((entity.id.clone(), entity.state.clone()));
+            // Discovery falls back to the entity ID for a device with no
+            // friendly name; that is no name, and the tile makes its own.
+            let name = if entity.name == entity.id {
+                String::new()
+            } else {
+                entity.name.clone()
+            };
+            self.learn_labels(vec![(
+                entity.id.clone(),
+                ha::Label {
+                    name,
+                    unit: entity.unit.clone(),
+                },
+            )]);
             self.save_tiles(context);
             self.save_states(context);
+            self.save_labels(context);
             self.view = View::Grid;
             self.banner = None;
             self.show(context);
@@ -1088,7 +1255,7 @@ impl HomePanel {
         if let Some(task) = context.spawn(request) {
             self.task = Some((task, "service"));
             let state = self.state_of(id).unwrap_or_default().to_owned();
-            self.banner = Some((BannerLevel::Info, format!("Updating {}…", title(id))));
+            self.note = Some(format!("Updating {}…", self.name_of(id)));
             self.pending = Some((id.to_owned(), state));
             self.show(context);
         }
@@ -1102,6 +1269,7 @@ impl KoboApp for HomePanel {
         context.store().load(TILES);
         context.store().load(STATES);
         context.store().load(CLIMATE);
+        context.store().load(LABELS);
         context.store().load(SETTINGS);
         context.store().load(LASTOK);
         self.show(context);
@@ -1135,6 +1303,17 @@ impl KoboApp for HomePanel {
                     let current = parts.next().and_then(|v| v.parse::<f64>().ok());
                     let target = parts.next().and_then(|v| v.parse::<f64>().ok());
                     Some((id.to_owned(), ha::Climate { current, target }))
+                })
+                .collect();
+        } else if key == LABELS {
+            self.labels = text
+                .lines()
+                .filter_map(|line| {
+                    let mut parts = line.split('\t');
+                    let id = parts.next().filter(|id| !id.is_empty())?;
+                    let name = parts.next().unwrap_or_default().to_owned();
+                    let unit = parts.next().unwrap_or_default().to_owned();
+                    Some((id.to_owned(), ha::Label { name, unit }))
                 })
                 .collect();
         } else if key == SETTINGS {
@@ -1183,6 +1362,14 @@ impl KoboApp for HomePanel {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        // The dialogue is closed before anything else, by its button or by
+        // Back, which would otherwise leave the screen under it.
+        if self.dialog.is_some() && (action == action_id(CLOSE_DIALOG) || action == ActionId::BACK)
+        {
+            self.dialog = None;
+            self.show(context);
+            return;
+        }
         if action == ActionId::BACK && self.view == View::Setup && self.phone {
             self.phone = false;
             self.show(context);
@@ -1311,22 +1498,13 @@ impl KoboApp for HomePanel {
                 self.on_poll(context, &bytes);
             }
             ("poll", TaskOutcome::Failed(error)) => {
-                self.poll_failed = true;
                 if let Some((id, _)) = self.pending.take() {
-                    self.fail(
-                        Some(format!("Couldn't confirm {}.", title(&id))),
-                        error,
-                        None,
-                    );
-                } else if self.view != View::Grid && self.acknowledgement().is_some() {
-                    // An outage is the grid's to say. Off the grid it would
-                    // replace the note about a change the owner just made.
+                    self.action_failed(format!("Couldn't confirm {}", self.name_of(&id)), error);
                 } else {
-                    let tail = self.last_ok.as_ref().map(|(minutes, hhmm)| {
-                        let when = reading_time(*minutes, hhmm, reader_clock().now().ok());
-                        format!("Showing readings from {when}.")
-                    });
-                    self.fail(None, error, tail);
+                    // A look that nobody tapped for is said in the status
+                    // line, beside the time of the readings still on show.
+                    self.trouble = Some(failure(&self.base, error).cause);
+                    self.note = None;
                 }
                 self.show(context);
             }
@@ -1350,7 +1528,7 @@ impl KoboApp for HomePanel {
                 self.show(context);
             }
             ("service", TaskOutcome::Completed(_)) => {
-                self.banner = Some((BannerLevel::Success, "Updated. Checking status…".into()));
+                self.note = Some("Updated. Checking status…".into());
                 self.show(context);
                 self.fetch(context);
             }
@@ -1358,15 +1536,15 @@ impl KoboApp for HomePanel {
                 let name = self
                     .pending
                     .take()
-                    .map_or_else(|| "that device".to_owned(), |(id, _)| title(&id));
-                self.fail(Some(format!("Couldn't update {name}.")), error, None);
+                    .map_or_else(|| "that device".to_owned(), |(id, _)| self.name_of(&id));
+                self.action_failed(format!("Couldn't update {name}"), error);
                 self.show(context);
             }
             ("climate", TaskOutcome::Completed(_)) => {
                 self.fetch(context);
             }
             ("climate", TaskOutcome::Failed(error)) => {
-                self.fail(Some("Couldn't set the temperature.".into()), error, None);
+                self.action_failed("Couldn't set the temperature".into(), error);
                 self.show(context);
             }
             _ => {}
@@ -1472,6 +1650,109 @@ mod tests {
         );
     }
 
+    /// Picked from the list as "Desk lamp", the tile used to read "desk",
+    /// and a temperature sensor's tile "outside · 12.3" with no degrees.
+    #[test]
+    fn tiles_go_by_their_friendly_names_and_readings_carry_their_units() {
+        let mut app = panel();
+        app.tiles
+            .extend(["sensor.outside".into(), "sensor.humidity".into()]);
+        app.states.extend([
+            ("sensor.outside".into(), "12.3".into()),
+            ("sensor.humidity".into(), "48".into()),
+        ]);
+        app.on_poll(
+            &mut test_context(),
+            br#"[
+                {"id":"light.desk","s":"on","a":{"unit":null,"name":"Desk lamp"}},
+                {"id":"climate.bedroom","s":"heat","a":{"ct":19.5,"t":21,"name":"Bedroom"}},
+                {"id":"sensor.outside","s":"12.3","a":{"unit":"\u00b0C","name":"Outside"}},
+                {"id":"sensor.humidity","s":"unavailable","a":{"unit":"%","name":"Humidity"}}
+            ]"#,
+        );
+        assert_eq!(app.tile_label("light.desk"), "Desk lamp · on");
+        assert_eq!(app.tile_label("climate.bedroom"), "Bedroom · 19.5°");
+        assert_eq!(app.tile_label("sensor.outside"), "Outside · 12.3 °C");
+        assert_eq!(app.tile_label("sensor.humidity"), "Humidity · unavailable");
+        app.states.retain(|(id, _)| id != "sensor.humidity");
+        app.states.push(("sensor.humidity".into(), "48".into()));
+        assert_eq!(app.tile_label("sensor.humidity"), "Humidity · 48%");
+        assert!(format!("{:?}", app.detail_screen("sensor.outside")).contains("State: 12.3 °C"));
+        // A poll from a Home Assistant that has no name for a tile keeps
+        // the one it was added under.
+        app.on_poll(
+            &mut test_context(),
+            br#"[{"id":"light.desk","s":"off","a":{"unit":null,"name":null}}]"#,
+        );
+        assert_eq!(app.tile_label("light.desk"), "Desk lamp · off");
+    }
+
+    #[test]
+    fn a_device_picked_from_the_list_keeps_its_name_and_unit_from_the_first_draw() {
+        let mut runner = kobo_sdk::AppRunner::new(HomePanel {
+            view: View::Add,
+            entities: vec![
+                ha::Entity {
+                    id: "sensor.outside".into(),
+                    name: "Outside".into(),
+                    state: "12.3".into(),
+                    unit: "°C".into(),
+                },
+                ha::Entity {
+                    id: "switch.no_name".into(),
+                    name: "switch.no_name".into(),
+                    state: "off".into(),
+                    unit: String::new(),
+                },
+            ],
+            ..panel()
+        });
+        runner.action(action_id("entity.sensor.outside"));
+        assert_eq!(
+            runner.app().tile_label("sensor.outside"),
+            "Outside · 12.3 °C"
+        );
+        runner.app_mut().view = View::Add;
+        runner.action(action_id("entity.switch.no_name"));
+        assert_eq!(runner.app().tile_label("switch.no_name"), "no name · off");
+    }
+
+    /// A panel saved before names were kept has a tile list and no labels.
+    /// Its tiles load as they always did and are named from their IDs.
+    #[test]
+    fn tiles_saved_before_names_were_kept_still_load_under_their_old_names() {
+        let mut app = HomePanel::default();
+        let mut context = test_context();
+        for (key, value) in [
+            (BASE, "https://ha.example"),
+            (TILES, "light.desk\nsensor.outside"),
+            (STATES, "light.desk\ton\nsensor.outside\t12.3"),
+            (LABELS, ""),
+        ] {
+            app.on_store(
+                &mut context,
+                StoreResult::Loaded {
+                    key: key.to_owned(),
+                    value: Some(value.as_bytes().to_vec()),
+                },
+            );
+        }
+        assert_eq!(app.tiles.len(), 2);
+        assert_eq!(app.tile_label("light.desk"), "desk · on");
+        assert_eq!(app.tile_label("sensor.outside"), "outside · 12.3");
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: LABELS.to_owned(),
+                value: Some(
+                    b"light.desk\tDesk lamp\t\nsensor.outside\tOutside\t\xc2\xb0C".to_vec(),
+                ),
+            },
+        );
+        assert_eq!(app.tile_label("light.desk"), "Desk lamp · on");
+        assert_eq!(app.tile_label("sensor.outside"), "Outside · 12.3 °C");
+    }
+
     #[test]
     fn freshness_says_never_fresh_or_stale() {
         let mut app = panel();
@@ -1558,11 +1839,13 @@ mod tests {
                     id: "light.kitchen".into(),
                     name: "Ceiling lights".into(),
                     state: "on".into(),
+                    unit: String::new(),
                 },
                 ha::Entity {
                     id: "sensor.office".into(),
                     name: "Office temperature".into(),
                     state: "21".into(),
+                    unit: String::new(),
                 },
             ],
             ..HomePanel::default()
@@ -1632,6 +1915,211 @@ mod tests {
         let (task, _) = runner.app().task.expect("a poll is in flight");
         runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unreachable));
         assert_eq!(runner.app().banner_text(), Some("fan removed."));
+    }
+
+    /// Where each tile, or each of the climate screen's buttons, sits.
+    fn places(screen: &Screen, actions: &[&str]) -> Vec<kobo_ui::Rect> {
+        let layout = screen.layout_with(
+            &kobo_sdk::CLARA_BW_METRICS,
+            &kobo_sdk::Chrome::measuring(true),
+        );
+        actions
+            .iter()
+            .map(|action| layout.rect_of_action(action_id(action)).expect(action))
+            .collect()
+    }
+
+    const TILES_ON_GRID: [&str; 3] = ["tile.light.desk", "tile.switch.fan", "tile.climate.bedroom"];
+
+    /// Every tap used to push a banner over the grid, so the tiles jumped a
+    /// banner's height under the finger. Each step of a tap is said in the
+    /// status line instead, in one line, and no tile moves.
+    #[test]
+    fn a_tap_on_a_tile_is_said_in_the_status_line_and_no_tile_moves() {
+        let mut runner = kobo_sdk::AppRunner::new(HomePanel {
+            last_ok: Some((now_minutes().unwrap_or(0), "14:39".to_owned())),
+            ..panel()
+        });
+        let context = test_context();
+        let first = places(&runner.app().grid(&context), &TILES_ON_GRID);
+        let mut said = vec![runner.app().status_line().expect("a status line")];
+        runner.action(action_id("tile.light.desk"));
+        said.push(runner.app().status_line().expect("a status line"));
+        assert_eq!(places(&runner.app().grid(&context), &TILES_ON_GRID), first);
+        let (service, _) = runner.app().task.expect("the switch went out");
+        runner.task_outcome(service, TaskOutcome::Completed(Vec::new()));
+        said.push(runner.app().status_line().expect("a status line"));
+        let (poll, _) = runner.app().task.expect("the confirming look");
+        runner.task_outcome(
+            poll,
+            TaskOutcome::Completed(br#"[{"id":"light.desk","s":"off"}]"#.to_vec()),
+        );
+        said.push(runner.app().status_line().expect("a status line"));
+        assert_eq!(places(&runner.app().grid(&context), &TILES_ON_GRID), first);
+        assert_eq!(
+            said[1..],
+            [
+                "Updating desk…".to_owned(),
+                "Updated. Checking status…".to_owned(),
+                "desk is now off.".to_owned()
+            ]
+        );
+        assert!(said[0].starts_with("Updated "), "{said:?}");
+        assert_eq!(runner.app().banner, None);
+        // The next look with nothing waiting on it says when it was taken.
+        runner.app_mut().fetch(&mut test_context());
+        let (poll, _) = runner.app().task.expect("a look");
+        runner.task_outcome(
+            poll,
+            TaskOutcome::Completed(br#"[{"id":"light.desk","s":"off"}]"#.to_vec()),
+        );
+        let line = runner.app().status_line().expect("a status line");
+        assert!(line.starts_with("Updated "), "{line}");
+    }
+
+    /// "Setting 21.5°…" landed between the readings and Cooler and Warmer,
+    /// moving them between two taps. It takes the status line's place now.
+    #[test]
+    fn the_climate_screen_says_what_it_is_setting_without_moving_its_buttons() {
+        let mut runner = kobo_sdk::AppRunner::new(HomePanel {
+            last_ok: Some((now_minutes().unwrap_or(0), "14:39".to_owned())),
+            ..panel()
+        });
+        runner.action(action_id("tile.climate.bedroom"));
+        let buttons = ["cool", "warm", "power"];
+        let before = places(&runner.app().climate_screen("climate.bedroom"), &buttons);
+        let drawn = format!("{:?}", runner.app().climate_screen("climate.bedroom"));
+        assert!(drawn.contains("Updated 14:39."), "{drawn}");
+        runner.action(action_id("warm"));
+        let screen = runner.app().climate_screen("climate.bedroom");
+        assert!(format!("{screen:?}").contains("Setting 21.5°…"));
+        assert!(!screen
+            .nodes
+            .iter()
+            .any(|node| matches!(node, kobo_sdk::Node::Banner { .. })));
+        assert_eq!(places(&screen, &buttons), before);
+    }
+
+    /// A tap that did not happen needs reading, so it is a dialogue with one
+    /// button that closes it, over tiles that have not moved.
+    #[test]
+    fn a_failed_action_opens_a_dialogue_with_one_way_out() {
+        let mut runner = kobo_sdk::AppRunner::new(HomePanel {
+            last_ok: Some((now_minutes().unwrap_or(0), "14:39".to_owned())),
+            ..panel()
+        });
+        let context = test_context();
+        let first = places(&runner.app().grid(&context), &TILES_ON_GRID);
+        runner.action(action_id("tile.light.desk"));
+        let (service, _) = runner.app().task.expect("the switch went out");
+        runner.task_outcome(service, TaskOutcome::Failed(TaskError::Unreachable));
+        let screen = runner.app().grid(&context);
+        let overlay = screen.overlay.as_ref().expect("a dialogue");
+        assert_eq!(overlay.title, "Couldn't update desk");
+        assert!(format!("{overlay:?}").contains("did not answer"));
+        assert_eq!(places(&screen, &TILES_ON_GRID), first);
+        // The status line agrees with it rather than saying "Updated".
+        assert_eq!(
+            runner.app().status_line().as_deref(),
+            Some("Home Assistant did not answer. Readings from 14:39.")
+        );
+        // Back closes the dialogue and leaves the grid where it is.
+        runner.action(ActionId::BACK);
+        assert!(runner.app().dialog.is_none());
+        assert!(runner.app().view == View::Grid);
+        // A tile that did not change is a tap that did not happen too.
+        runner.action(action_id("tile.switch.fan"));
+        let (service, _) = runner.app().task.expect("the switch went out");
+        runner.task_outcome(service, TaskOutcome::Completed(Vec::new()));
+        let (poll, _) = runner.app().task.expect("the confirming look");
+        runner.task_outcome(
+            poll,
+            TaskOutcome::Completed(br#"[{"id":"switch.fan","s":"off"}]"#.to_vec()),
+        );
+        let (title, _) = runner.app().dialog.clone().expect("a dialogue");
+        assert_eq!(title, "fan did not change");
+        runner.action(action_id(CLOSE_DIALOG));
+        assert!(runner.app().dialog.is_none());
+    }
+
+    /// A Home Assistant that stopped answering used to be explained in a
+    /// banner under "Updated 14:39.", which said the opposite. The status
+    /// line says both: that it did not answer, and when the readings are from.
+    #[test]
+    fn a_home_assistant_that_stops_answering_is_said_beside_the_time_of_the_readings() {
+        let mut runner = kobo_sdk::AppRunner::new(HomePanel {
+            last_ok: Some((now_minutes().unwrap_or(0), "14:39".to_owned())),
+            ..panel()
+        });
+        runner.app_mut().fetch(&mut test_context());
+        let (poll, _) = runner.app().task.expect("a look");
+        runner.task_outcome(poll, TaskOutcome::Failed(TaskError::Unreachable));
+        let context = test_context();
+        let drawn = format!("{:?}", runner.app().grid(&context));
+        assert!(
+            drawn.contains("Home Assistant did not answer. Readings from 14:39."),
+            "{drawn}"
+        );
+        assert!(!drawn.contains("Updated 14:39."), "{drawn}");
+        assert!(!drawn.contains("Banner"), "{drawn}");
+        assert!(runner.app().dialog.is_none(), "nobody tapped anything");
+        runner.app_mut().fetch(&mut test_context());
+        let (poll, _) = runner.app().task.expect("a look");
+        runner.task_outcome(
+            poll,
+            TaskOutcome::Completed(br#"[{"id":"light.desk","s":"on"}]"#.to_vec()),
+        );
+        let line = runner.app().status_line().expect("a status line");
+        assert!(line.starts_with("Updated "), "{line}");
+    }
+
+    /// The status line is one line for everything it says at the size most
+    /// people read at, so its changes never move the tiles.
+    #[test]
+    fn everything_the_status_line_says_fits_on_one_line() {
+        let mut app = HomePanel {
+            last_ok: Some((now_minutes().unwrap_or(0), "14:39".to_owned())),
+            ..panel()
+        };
+        let mut lines = vec![
+            "Updating living room ceiling light…".to_owned(),
+            "Home Panel can show up to 12 tiles.".to_owned(),
+            "Home Assistant has not reported a target temperature yet.".to_owned(),
+        ];
+        for error in [
+            TaskError::Unreachable,
+            TaskError::Offline,
+            TaskError::TimedOut,
+            TaskError::Unauthorized,
+            TaskError::Denied,
+            TaskError::RateLimited(60),
+            TaskError::NoCredential,
+            TaskError::NotFound,
+            TaskError::TooLarge,
+        ] {
+            app.trouble = Some(failure(&app.base, error).cause);
+            lines.push(app.freshness().expect("a line"));
+        }
+        for line in lines {
+            let layout = ScreenBuilder::new("homepanel-grid")
+                .top_bar("Home Panel")
+                .secondary(&line)
+                .build()
+                .layout_with(
+                    &kobo_sdk::CLARA_BW_METRICS,
+                    &kobo_sdk::Chrome::measuring(true),
+                );
+            let wrapped = layout
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.text_lines
+                        .first()
+                        .is_some_and(|first| line.starts_with(first.as_str()))
+                })
+                .map_or(0, |node| node.text_lines.len());
+            assert_eq!(wrapped, 1, "{line}");
+        }
     }
 
     #[test]
@@ -2020,10 +2508,10 @@ mod large_text_tests {
         let mut app = panel_for_settings();
         app.task = Some((TaskId(4), "service"));
         app.on_task(&mut context, TaskId(4), TaskOutcome::Completed(Vec::new()));
-        assert_eq!(
-            app.banner.as_ref().map(|(level, _)| *level),
-            Some(BannerLevel::Success)
-        );
+        // A change on the grid is acknowledged in its status line, which
+        // keeps its place, rather than a banner over the tiles.
+        assert_eq!(app.note.as_deref(), Some("Updated. Checking status…"));
+        assert_eq!(app.banner, None);
         app.task = Some((TaskId(5), "test"));
         app.on_task(
             &mut context,

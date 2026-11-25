@@ -37,6 +37,35 @@ use kobo_protocol::TaskError;
 /// top.
 pub const HOSTS_KEY: &str = "hosts";
 
+/// The store key, beside each app's own pairing, that names the pairing the
+/// computer has answered at least once.
+///
+/// A pairing is two strings typed on the reader or written by the computer,
+/// and nothing about them says the computer agrees. The apps used to say
+/// "Paired with" from the moment one was saved, so a reader whose code was
+/// wrong, or whose computer had never been reached, claimed a pairing that
+/// did not exist. The record names the address and code it confirms, so a
+/// confirmation left by an earlier pairing is never believed for a new one.
+pub const CONFIRMED_KEY: &str = "confirmed";
+
+/// What an app saves under [`CONFIRMED_KEY`] once the computer at `address`
+/// has answered with `code`.
+#[must_use]
+pub fn confirmed_record(address: &str, code: &str) -> String {
+    format!("{address}\n{code}")
+}
+
+/// Whether `record`, as the store gave it, confirms the pairing with
+/// `address` and `code`.
+#[must_use]
+pub fn confirms(record: Option<&[u8]>, address: &str, code: &str) -> bool {
+    !address.is_empty()
+        && !code.is_empty()
+        && record
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .is_some_and(|text| text.trim() == confirmed_record(address, code))
+}
+
 /// The most hosts one pairing holds.
 ///
 /// Two places, two hosts. A third would mean a third full connection
@@ -211,7 +240,20 @@ impl Hosts {
 
 #[cfg(test)]
 mod tests {
-    use super::{not_there, record, Hosts, TaskError};
+    use super::{confirmed_record, confirms, not_there, record, Hosts, TaskError};
+
+    #[test]
+    fn a_confirmation_is_believed_only_for_the_pairing_it_names() {
+        let saved = confirmed_record("192.168.1.20:9331", "abc234");
+        let saved = Some(saved.as_bytes());
+        assert!(confirms(saved, "192.168.1.20:9331", "abc234"));
+        assert!(!confirms(saved, "192.168.1.20:9331", "xyz789"));
+        assert!(!confirms(saved, "192.168.1.21:9331", "abc234"));
+        assert!(!confirms(None, "192.168.1.20:9331", "abc234"));
+        // Nothing paired is nothing confirmed, whatever the record says.
+        let empty = confirmed_record("", "");
+        assert!(!confirms(Some(empty.as_bytes()), "", ""));
+    }
 
     /// Stands in for an app's own address reading: lowercase, a default
     /// port, and nothing with a space in it.

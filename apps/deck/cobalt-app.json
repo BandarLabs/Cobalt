@@ -4,8 +4,8 @@
   "short_label": "Deck",
   "summary": "Turn your Kobo into a remote control for your computer. Needs your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
-  "version": "0.2.16",
-  "release_notes": "Deck can be paired with your computer's home address and its tailnet name at once. It asks the one that answered last, and the other when that one is not there.",
+  "version": "0.2.17",
+  "release_notes": "A pairing reads Not confirmed yet until your computer answers, and pad messages no longer move the pads.",
   "glyph": "remote",
   "capabilities": [
     "network"

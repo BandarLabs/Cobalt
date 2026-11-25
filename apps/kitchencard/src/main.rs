@@ -472,8 +472,11 @@ impl Kitchen {
         self.stop_timer(context);
     }
 
+    /// The last step done. A timer still running keeps running: it is for
+    /// something still in the oven, and Finish used to stop it without a
+    /// word, so the rice it was for burnt. Dinner's ready carries its banner,
+    /// as the cooking pages do.
     fn finish(&mut self, context: &mut Context) {
-        self.stop_timer(context);
         self.view = Some(View::Finished);
         self.step = 0;
         self.persist_tonight(context);
@@ -644,14 +647,15 @@ impl Kitchen {
                 .enumerate()
                 .map(|(index, ingredient)| {
                     let amount = amounts::amount(ingredient, self.servings, recipe.servings);
-                    let detail = if amount.is_empty() || amount == ingredient.label() {
+                    let label = amounts::label(ingredient, self.servings, recipe.servings);
+                    let detail = if amount.is_empty() || amount == label {
                         String::new()
                     } else {
                         amount
                     };
                     (
                         format!("ingredient-{index}"),
-                        ingredient.label().to_owned(),
+                        label,
                         detail,
                         // The box takes the lead's place, so this mark is
                         // never drawn; it is what the row would lead with
@@ -936,8 +940,8 @@ impl Kitchen {
                 let name = self
                     .recipe()
                     .map_or("Dinner", |recipe| recipe.name.as_str());
-                let mut screen = ScreenBuilder::new("kitchencard")
-                    .top_bar("Kitchen Card")
+                let mut screen = self
+                    .timer_banner(ScreenBuilder::new("kitchencard").top_bar("Kitchen Card"))
                     .splash(Some(Glyph::Check), "Dinner's ready", name);
                 if let Some(recipe) = self.recipe() {
                     screen = screen.facts([
@@ -1574,6 +1578,68 @@ mod tests {
         assert!(drawn(&app).contains("Time is up"), "{}", drawn(&app));
     }
 
+    /// Finish is the end of the steps, not of whatever is still in the
+    /// oven. It used to stop a running timer without a word.
+    #[test]
+    fn finishing_keeps_a_running_timer_and_dinners_ready_says_so() {
+        let mut runner = kobo_sdk::AppRunner::new(Kitchen {
+            view: Some(View::Cook),
+            step: 1,
+            ..cooking()
+        });
+        runner.action(action_id("timer"));
+        let commands = runner.action(action_id("finish"));
+        assert!(
+            !commands.iter().any(|command| matches!(
+                command,
+                kobo_sdk::Command::Cancel(_) | kobo_sdk::Command::Device(DeviceRequest::CancelWake)
+            )),
+            "finishing stopped the timer"
+        );
+        let app = runner.app();
+        assert_eq!(app.view, Some(View::Finished));
+        let timer = app.timer.as_ref().expect("the timer is still running");
+        assert_eq!(timer.step, 1);
+        let screen = drawn(app);
+        assert!(screen.contains("Dinner's ready"), "{screen}");
+        assert!(
+            screen.contains("Timer: 10 min left, set on step 2."),
+            "{screen}"
+        );
+        // Cook again carries it to the first step, where Stop the timer is.
+        runner.action(action_id("again"));
+        let app = runner.app();
+        assert_eq!(app.view, Some(View::Cook));
+        assert!(app.timer.is_some(), "Cook again stopped the timer");
+        let screen = drawn(app);
+        assert!(screen.contains("set on step 2"), "{screen}");
+        assert!(screen.contains("Stop the timer"), "{screen}");
+    }
+
+    /// Dinner's ready with the timer's banner over it, the long one a reader
+    /// that cannot wake itself gives, still fits at every text size.
+    #[test]
+    fn dinners_ready_with_a_running_timer_fits_at_every_text_size() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_sdk::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let runner = kobo_sdk::AppRunner::with_metrics(Kitchen::default(), metrics);
+            let (mut app, mut context, _) = timing(20);
+            app.timer.as_mut().unwrap().wake_refused = true;
+            app.finish(&mut context);
+            let diagnostics = app
+                .screen(&runner.context())
+                .diagnostics(&metrics, &Chrome::measuring(true));
+            assert!(
+                diagnostics.issues.is_empty(),
+                "{text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+        }
+    }
+
     #[test]
     fn a_timer_that_ran_out_while_the_reader_slept_says_how_long_ago() {
         let (mut app, mut context, start) = timing(5);
@@ -1732,6 +1798,42 @@ mod tests {
         assert!(
             text.contains("text_lines: [\"1\"]"),
             "scaled whole amount on screen: {text}"
+        );
+    }
+
+    /// The demo recipe's lines are plain text, as every Mealie line is until
+    /// its parser runs. Serving six from four used to change the heading and
+    /// leave every line as written.
+    #[test]
+    fn serving_more_scales_lines_mealie_has_not_parsed() {
+        let chicken = mealie::parse_detail(include_bytes!(
+            "../fixtures/mealie-detail-lemon-herb-roasted-chicken.json"
+        ))
+        .expect("detail");
+        let mut app = Kitchen {
+            recipes: vec![chicken],
+            tonight: Some("lemon-herb-roasted-chicken".to_owned()),
+            servings: 6,
+            ..cooking()
+        };
+        app.view = Some(View::Ingredients);
+        let titles: Vec<String> = app
+            .ingredient_rows()
+            .into_iter()
+            .map(|(_, title, detail, _, _)| {
+                assert!(detail.is_empty(), "a plain line stays one line: {detail}");
+                title
+            })
+            .collect();
+        assert_eq!(titles[0], "2¼ kg whole chicken, patted dry");
+        assert_eq!(titles[1], "3 lemons, one halved and one sliced");
+        assert_eq!(titles[3], "½ cup olive oil");
+        assert_eq!(titles[5], "9 sprigs fresh thyme");
+        app.servings = 4;
+        assert_eq!(
+            app.ingredient_rows()[0].1,
+            "1 1/2 kg whole chicken, patted dry",
+            "at the recipe's own servings the line is Mealie's own"
         );
     }
 }

@@ -684,3 +684,125 @@ fn a_hidden_bar_stays_drawn_over_the_page_while_a_panel_hangs_from_it() {
         "a touch on the bar while its panel is open is the bar's own"
     );
 }
+
+/// Whether a row of a rendered panel carries any ink.
+fn inked(surface: &Surface, y: usize) -> bool {
+    surface.pixels[y * surface.width..(y + 1) * surface.width]
+        .iter()
+        .any(|&grey| grey != tone::PAPER && grey != tone::SURFACE)
+}
+
+#[test]
+fn a_bar_called_up_over_the_page_leaves_no_line_half_showing_under_it() {
+    // The bar is drawn over the page so the page never moves, and its foot
+    // used to fall through a heading or across a line's descenders, leaving
+    // half of it under the rule. Every line under the bar is now whole or
+    // gone, wherever the page happens to put one.
+    let metrics = &CLARA_BW_METRICS;
+    let chrome = Chrome::with_back(true);
+    let foot = usize::try_from(metrics.top_bar_height() + metrics.rule_thickness())
+        .expect("a bar on the panel");
+    let mut cut = 0;
+    for level in [None, Some(1), Some(2), Some(3)] {
+        let mut nodes = Vec::new();
+        if let Some(level) = level {
+            nodes.push(Node::Heading {
+                id: NodeId(1),
+                text: "Winter socks".into(),
+                level,
+            });
+        }
+        nodes.extend((0..6).map(|index| Node::Text {
+            id: NodeId(index + 2),
+            text: "What the video posted does not show is that the flag is buried deep.".into(),
+            links: Vec::new(),
+        }));
+        let page = Screen::new(1, nodes).with_auto_hidden_top_bar(true);
+        let render = |state| {
+            let shown = ensure_way_back_revealed(page.clone(), &chrome, "Article", state);
+            let mut surface = Surface::new(metrics.width as usize, metrics.height as usize);
+            render_with(&shown, metrics, &chrome, &mut surface, None);
+            surface
+        };
+        let bare = render(TopBarState::Hidden);
+        let barred = render(TopBarState::Shown);
+        // The run of inked rows the bar's foot falls in, if it falls in one.
+        let mut end = foot;
+        while end < bare.height && inked(&bare, end) {
+            end += 1;
+        }
+        if end > foot && inked(&bare, foot - 1) {
+            cut += 1;
+            for y in foot..end {
+                assert!(!inked(&barred, y), "row {y} of a cut line still shows");
+            }
+        } else {
+            // A line that only starts at the foot was not cut, and stays.
+            end = foot;
+        }
+        // A repaint of only the strip under the bar draws what a whole
+        // frame draws there, so the cut line does not come back.
+        let shown = ensure_way_back_revealed(page.clone(), &chrome, "Article", TopBarState::Shown);
+        let mut repainted = barred.clone();
+        let strip = Rect {
+            x: 0,
+            y: i32::try_from(foot).expect("on the panel"),
+            width: metrics.width,
+            height: metrics.space(Space::Large) * 4,
+        };
+        render_with(&shown, metrics, &chrome, &mut repainted, Some(strip));
+        assert!(
+            repainted.pixels == barred.pixels,
+            "a repaint of the strip under the bar differs from the whole frame"
+        );
+        // Everything below the cut line is the page as it was.
+        for y in end..bare.height {
+            let row = y * bare.width..(y + 1) * bare.width;
+            assert_eq!(
+                bare.pixels[row.clone()],
+                barred.pixels[row],
+                "row {y} moved"
+            );
+        }
+    }
+    assert!(cut > 0, "no page here put a line under the bar's foot");
+}
+
+#[test]
+fn a_line_that_starts_at_the_bars_foot_is_left_whole() {
+    // The bar clears a line it cut through. A line whose first inked row is
+    // the first row under the rule was not cut, and clearing it would hide a
+    // whole line of the page for nothing.
+    let mut page = Surface::new(40, 20);
+    let top = 10;
+    for y in 10..16 {
+        for x in 5..30 {
+            page.pixels[y * 40 + x] = tone::INK;
+        }
+    }
+    let whole = Rect {
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 20,
+    };
+    assert!(
+        !bar_cuts_a_line(&page, 10, whole, true),
+        "a line starting at the foot was cut"
+    );
+    // The same line one row higher runs under the rule: that one was cut.
+    for x in 5..30 {
+        page.pixels[9 * 40 + x] = tone::INK;
+    }
+    assert!(bar_cuts_a_line(&page, top, whole, false));
+    // A repaint that did not draw the row above the foot has only the
+    // layout to go by.
+    let strip = Rect {
+        x: 0,
+        y: 10,
+        width: 40,
+        height: 10,
+    };
+    assert!(bar_cuts_a_line(&page, top, strip, true));
+    assert!(!bar_cuts_a_line(&page, top, strip, false));
+}

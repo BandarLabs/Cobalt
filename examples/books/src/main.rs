@@ -1913,20 +1913,15 @@ impl Books {
         self.record = Record::Kept;
     }
 
-    /// Moves the open book to the front of the recent ones, with how far in.
+    /// Moves the open book to the front of the recent ones, with how far in,
+    /// and lets an article read to its end count as read.
     ///
-    /// Written when the book is left rather than when it opens, so the page
-    /// recorded is the one the owner stopped on.
+    /// Run when the book is left, so the page recorded is the one the owner
+    /// stopped on.
     fn note_reading(&mut self, context: &mut Context) {
-        let Some(id) = self.opened.clone() else {
+        let Some((id, page, pages)) = self.open_place() else {
             return;
         };
-        let (page, pages) = self.book.reader_mut().map_or((1, 1), |reader| {
-            (
-                u32::try_from(reader.page_number()).unwrap_or(u32::MAX),
-                u32::try_from(reader.page_count()).unwrap_or(u32::MAX),
-            )
-        });
         if articles::is_article(&id) && pages > 0 && page >= pages {
             // Read to the end: finished, so it moves down among the read.
             if let Some(index) = self.documents.iter().position(|document| document.id == id) {
@@ -1935,12 +1930,43 @@ impl Books {
                 }
             }
         }
-        self.recent.retain(|recent| recent.id != id);
-        self.recent.insert(0, Recent { id, page, pages });
+        self.note_place(context);
+    }
+
+    /// Moves the open book to the front of the recent ones at the page it is
+    /// on, every time the place in it is kept.
+    ///
+    /// Leaving the book used to be the only time this was written, and a
+    /// reader that is switched off or runs flat never leaves: the page came
+    /// back after a restart but home offered Start reading as if no book had
+    /// been opened.
+    ///
+    /// It is written even when the list in memory already says the same: that
+    /// list is what was asked for, not what the store acknowledged, so a save
+    /// refused on a full card would otherwise never be tried again.
+    fn note_place(&mut self, context: &mut Context) {
+        let Some((id, page, pages)) = self.open_place() else {
+            return;
+        };
+        let place = Recent { id, page, pages };
+        self.recent.retain(|recent| recent.id != place.id);
+        self.recent.insert(0, place);
         self.recent.truncate(RECENT_LIMIT);
         context
             .store()
             .save(RECENT, covers::encode_recent(&self.recent));
+    }
+
+    /// The open book, with the page it is on and how many it has.
+    fn open_place(&mut self) -> Option<(String, u32, u32)> {
+        let id = self.opened.clone()?;
+        let (page, pages) = self.book.reader_mut().map_or((1, 1), |reader| {
+            (
+                u32::try_from(reader.page_number()).unwrap_or(u32::MAX),
+                u32::try_from(reader.page_count()).unwrap_or(u32::MAX),
+            )
+        });
+        Some((id, page, pages))
     }
 
     fn open_document(&mut self, context: &mut Context, index: usize) {
@@ -2160,6 +2186,7 @@ impl Books {
         if self.progress.failed {
             self.progress.retry(context);
         }
+        self.note_place(context);
     }
 
     fn read_action(&mut self, context: &mut Context, action: ActionId) -> bool {
@@ -4423,11 +4450,13 @@ mod tests {
         let first = words(&shown(runner.action(action_id("shelf-library"))));
         assert!(!first.contains("Continue reading"), "{first}");
         runner.action(action_id("book-0"));
+        let mut recent = None;
         for _ in 0..3 {
-            runner.page_turn(true);
+            recent = saved(&runner.page_turn(true), RECENT).or(recent);
             runner.store_result(StoreResult::Saved {
                 key: READING.into(),
             });
+            runner.store_result(StoreResult::Saved { key: RECENT.into() });
         }
         let commands = runner.action(ActionId::BACK);
         assert_eq!(
@@ -4435,7 +4464,9 @@ mod tests {
             View::Shelf(super::Shelf::Library),
             "closing a book returns to the shelf it was opened from"
         );
-        let recent = saved(&commands, RECENT).expect("the book was written down as read");
+        let recent = saved(&commands, RECENT)
+            .or(recent)
+            .expect("the book was written down as read");
         let home = shown(runner.action(ActionId::BACK));
         let text = words(&home);
         assert!(text.contains("Continue reading"), "{text}");
@@ -4452,6 +4483,49 @@ mod tests {
     }
 
     #[test]
+    fn a_book_read_until_the_power_went_is_still_offered_to_continue() {
+        let mut runner = started_with(None, None);
+        runner.action(action_id("book-0"));
+        let (mut record, mut recent) = (None, None);
+        for _ in 0..3 {
+            let commands = runner.page_turn(true);
+            record = saved(&commands, READING).or(record);
+            recent = saved(&commands, RECENT).or(recent);
+            runner.store_result(StoreResult::Saved {
+                key: READING.into(),
+            });
+            runner.store_result(StoreResult::Saved { key: RECENT.into() });
+        }
+        // No Back, no background, no exit: the reader stopped where it was,
+        // and only what the page turns wrote is there to start from.
+        let recent = recent.expect("turning a page wrote the book down as being read");
+        let mut runner = started_with(record, Some(recent));
+        runner.action(action_id("shelf-library"));
+        let home = words(&shown(runner.action(ActionId::BACK)));
+        assert!(home.contains("Continue reading"), "{home}");
+        assert!(home.contains("Page 4 of"), "{home}");
+        assert!(!home.contains("Start reading"), "{home}");
+    }
+
+    #[test]
+    fn a_recent_book_the_store_refused_is_written_again_when_the_book_is_left() {
+        let mut runner = started_with(None, None);
+        runner.action(action_id("book-0"));
+        let commands = runner.page_turn(true);
+        assert!(saved(&commands, RECENT).is_some(), "the page turn wrote it");
+        runner.store_result(StoreResult::Saved {
+            key: READING.into(),
+        });
+        runner.store_result(StoreResult::Denied(StoreError::TooFull));
+        // Same page, nothing new in memory: the refused write is still owed.
+        let commands = runner.lifecycle(Lifecycle::Background);
+        assert!(
+            saved(&commands, RECENT).is_some(),
+            "leaving at the same page tried the refused write again"
+        );
+    }
+
+    #[test]
     fn a_book_reopens_at_the_page_and_text_size_it_was_closed_at() {
         let mut runner = started_with(None, None);
         runner.action(action_id("book-0"));
@@ -4462,6 +4536,7 @@ mod tests {
             runner.store_result(StoreResult::Saved {
                 key: READING.into(),
             });
+            runner.store_result(StoreResult::Saved { key: RECENT.into() });
         }
         record = saved(
             &runner.action(action_id(kobo_read::action::LARGER)),
@@ -4519,13 +4594,13 @@ mod tests {
         runner.action(action_id("book-0"));
         runner.page_turn(true);
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Unwritable));
+        // The page turn also wrote down which book is open; that write is kept.
+        runner.store_result(StoreResult::Saved { key: RECENT.into() });
         // Leaving the book tries once more; when that fails too, the shelf
         // is where the owner learns of it.
         runner.action(ActionId::BACK);
         let shelf =
             shown(runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Unwritable)));
-        // Leaving also wrote down which book was open; that write is kept.
-        runner.store_result(StoreResult::Saved { key: RECENT.into() });
         let drawn = words(&shelf);
         assert!(drawn.contains("could not save your place"), "{drawn}");
         assert!(drawn.contains("Retry saving"), "{drawn}");

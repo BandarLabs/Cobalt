@@ -120,9 +120,9 @@ def main():
                 assert played(saved(), 'mini-v1')['position']['letters'].startswith('#PUT#.....')
                 drive('scenario normal', 'tap-id retry-save', 'wait-for-id game-more')
                 assert played(saved(), 'mini-v1')['position']['letters'].startswith('#PUT#MINOR')
-                drive('tap-id cell-10', 'type wrong', 'tap Enter', 'tap-id game-more', 'tap-id check', 'expect incorrect')
+                drive('tap-id cell-10', 'type wrong', 'tap Enter', 'tap-id game-more', 'tap-id check', 'expect wrong')
                 capture('06-check-word')
-                drive('tap-id board', 'tap-id game-more', 'expect New game', 'tap-id reveal')
+                drive('tap-id game-more', 'expect New game', 'tap-id reveal')
                 capture('07-reveal-confirmation')
                 drive('tap-id confirm-reveal', 'wait-idle')
                 assert played(saved(), 'mini-v1')['reveals']==1

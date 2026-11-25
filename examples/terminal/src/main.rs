@@ -190,12 +190,16 @@ impl App {
     /// title. Looking back takes both, because the way forward matters more
     /// than a restart that is one tap away again as soon as the newest output
     /// is showing.
+    ///
+    /// Earlier output is a view inside the terminal, so Back there returns to
+    /// the newest output rather than leaving: it closed the app and dropped
+    /// the reader at the launcher with the shell still running behind it.
     fn bar(&self, title: String) -> ScreenBuilder {
         let mut builder = ScreenBuilder::new("terminal")
             .top_bar(title)
             .top_bar_action(EARLIER, "Earlier");
         if self.terminal.lines_back() > 0 {
-            builder = builder.top_bar_action(LATEST, "Latest");
+            builder = builder.top_bar_action(LATEST, "Latest").owns_back(true);
         }
         builder
     }
@@ -292,6 +296,13 @@ impl KoboApp for App {
         }
         if action == action_id(EARLIER) || action == action_id(LATEST) {
             self.on_page_turn(context, action == action_id(LATEST));
+            return;
+        }
+        if action == ActionId::BACK {
+            if self.terminal.lines_back() > 0 {
+                self.terminal.show_latest();
+                self.repaint(context);
+            }
             return;
         }
         let Some(typed) = self.keys.press(action) else {
@@ -653,6 +664,38 @@ mod tests {
             latest.top_bar.as_ref().map(|bar| bar.title.as_str()),
             Some("Terminal")
         );
+    }
+
+    /// Back from earlier output is a step inside the terminal, not out of
+    /// it: it used to leave the app with the shell still running behind it.
+    /// At the newest output Back is the runtime's again, and leaves.
+    #[test]
+    fn back_from_earlier_output_returns_to_the_newest_rather_than_leaving() {
+        let (mut runner, commands) = started();
+        let live = screens(&commands).pop().expect("a first screen");
+        assert!(!live.owns_back, "Back at the newest output leaves the app");
+        runner.shell_event(ShellEvent::Opened);
+        let lines = (1..=200).fold(String::new(), |mut lines, line| {
+            lines.push_str("line ");
+            lines.push_str(&line.to_string());
+            lines.push_str("\r\n");
+            lines
+        });
+        runner.shell_event(ShellEvent::Output(lines.into_bytes()));
+        let earlier = screens(&runner.action(action_id(EARLIER)))
+            .pop()
+            .expect("looking back redraws");
+        assert!(earlier.owns_back, "Back from earlier output leaves the app");
+
+        let commands = runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().terminal.lines_back(), 0);
+        assert!(sent(&commands).is_empty(), "Back types nothing");
+        let latest = screens(&commands).pop().expect("returning redraws");
+        assert_eq!(
+            latest.top_bar.as_ref().map(|bar| bar.title.as_str()),
+            Some("Terminal")
+        );
+        assert!(!latest.owns_back);
     }
 
     #[test]

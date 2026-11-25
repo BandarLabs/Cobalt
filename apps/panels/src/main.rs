@@ -132,6 +132,10 @@ struct Panels {
     /// Sent comics that could not be added this session, so a damaged one is
     /// not tried again on every return to the shelf.
     add_failed: std::collections::BTreeSet<String>,
+    /// Sent comics arrived while the shelf was not on screen, so they are
+    /// added the next time it is, rather than only after another trip out of
+    /// Panels and back.
+    add_on_shelf: bool,
 }
 
 impl Default for Panels {
@@ -184,6 +188,7 @@ impl Default for Panels {
             sent_cleanup: std::collections::BTreeSet::new(),
             adding: false,
             add_failed: std::collections::BTreeSet::new(),
+            add_on_shelf: false,
         }
     }
 }
@@ -229,6 +234,13 @@ impl Panels {
         }
     }
     fn show(&mut self, context: &mut Context) {
+        // Every way back to the shelf ends here, which is why the deferred
+        // add is picked up here and not on each of them: a comic pushed while
+        // one was open used to sit behind "Choose Add comic" until Panels was
+        // left and opened again.
+        if self.route == Route::Library && self.add_on_shelf {
+            self.add_waiting(context);
+        }
         if self.route == Route::Library && self.loaded && self.pending_open.is_none() {
             let pages = self.library_pages(context);
             let page = self.library_page.min(pages.len().saturating_sub(1));

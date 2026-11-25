@@ -520,3 +520,33 @@ fn a_bird_logged_by_name_stays_in_a_picked_packs_tally() {
     let tally = runner.app().outing_species();
     assert!(!tally.iter().any(|species| species.common == "Old crow"));
 }
+
+/// Today listed the open outing with the same tick as a finished one, under
+/// a Finish outing button that said it was not finished.
+#[test]
+fn today_marks_the_open_outing_as_outstanding_and_finished_ones_as_done() {
+    let mut runner = populated(CLARA_BW_METRICS);
+    runner.app_mut().outings.truncate(2);
+    runner.app_mut().open_outing = Some(1);
+    let leads = |runner: &AppRunner<Fieldbook>| {
+        let drawn = screen(runner);
+        ["outing-0", "outing-1"].map(|name| {
+            drawn
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    kobo_ui::Node::Rows { rows, .. } => rows
+                        .iter()
+                        .find(|row| row.action == action_id(name))
+                        .map(|row| row.lead),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{name} is listed"))
+        })
+    };
+    let check = kobo_ui::RowLead::Icon(Glyph::Check);
+    let circle = kobo_ui::RowLead::Icon(Glyph::Circle);
+    assert_eq!(leads(&runner), [check, circle]);
+    runner.action(action_id("finish"));
+    assert_eq!(leads(&runner), [check, check]);
+}

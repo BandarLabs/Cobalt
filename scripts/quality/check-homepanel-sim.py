@@ -41,9 +41,10 @@ class Home:
 
     def template(self, body):
         if 'for e in states' in body:
-            # Discovery: every entity with its friendly name.
+            # Discovery: every entity with its friendly name and unit.
             return [{'id': eid, 's': e['state'],
-                     'n': e['attributes'].get('friendly_name', eid)}
+                     'n': e['attributes'].get('friendly_name', eid),
+                     'u': e['attributes'].get('unit_of_measurement', '')}
                     for eid, e in sorted(self.entities.items())]
         ids = re.findall(r"'([a-z_]+\.[a-z_0-9]+)'", body)
         answer = []
@@ -55,6 +56,7 @@ class Home:
             answer.append({'id': eid, 's': entity['state'], 'a': {
                 'brightness': attrs.get('brightness'),
                 'unit': attrs.get('unit_of_measurement'),
+                'name': attrs.get('friendly_name'),
                 'ct': attrs.get('current_temperature'),
                 't': attrs.get('temperature')}})
         return answer
@@ -250,15 +252,16 @@ def main():
                 for name in ('Bedroom', 'Desk lamp', 'Fan', 'Outside'):
                     drive('tap Add tile', f'wait-for {name}', f'tap {name}',
                           'wait-for Home Panel')
-                drive('wait-for bedroom · 19.5°')
+                # Tiles go by their friendly names, and a reading carries its unit.
+                drive('wait-for Bedroom · 19.5°', 'expect Outside · 12.3 °C')
                 capture('homepanel-grid')
 
                 # A tile action is acknowledged by name after the next poll.
-                drive('tap desk · on', 'wait-for desk is now off.')
+                drive('tap Desk lamp · on', 'wait-for Desk lamp is now off.')
                 capture('homepanel-ack')
 
                 # Climate: room temperature on the tile, target on the screen.
-                drive('tap bedroom · 19.5°', 'wait-for Target: 21°')
+                drive('tap Bedroom · 19.5°', 'wait-for Target: 21°')
                 capture('homepanel-climate')
                 drive('tap Warmer', 'wait-for Target: 21.5°')
                 capture('homepanel-climate-warmer')
@@ -266,12 +269,12 @@ def main():
 
                 # Edit tiles: move up, then remove.
                 drive('tap Settings', 'wait-for Edit tiles', 'tap Edit tiles',
-                      'wait-for fan')
-                drive('tap fan', 'wait-for Move up', 'tap Move up',
+                      'wait-for Fan')
+                drive('tap Fan', 'wait-for Move up', 'tap Move up',
                       'wait-for Edit tiles')
-                drive('tap fan', 'wait-for Remove', 'tap Remove',
-                      'wait-for fan removed.', 'tap back', 'wait-for Wall panel', 'tap back',
-                      'wait-for Home Panel', 'expect-missing fan · off')
+                drive('tap Fan', 'wait-for Remove', 'tap Remove',
+                      'wait-for Fan removed.', 'tap back', 'wait-for Wall panel', 'tap back',
+                      'wait-for Home Panel', 'expect-missing Fan · off')
                 capture('homepanel-edited')
 
                 # Wall panel: one large tile per row.
@@ -291,7 +294,7 @@ def main():
 
                 # A replaced token on the server: the panel blames the token.
                 home.token = 'rotated-token'
-                drive('wait 12000', 'wait-for did not accept your account')
+                drive('wait 12000', 'wait-for refused your account')
                 capture('homepanel-token-refused')
                 home.token = TOKEN
                 drive('wait 12000', 'wait-for Updated')
@@ -299,7 +302,7 @@ def main():
                 # State survives a restart.
                 stop()
                 address = start()
-                drive('wait-for desk · off')
+                drive('wait-for Desk lamp · off')
                 capture('homepanel-restored')
 
                 toggles = [r for r in home.requests

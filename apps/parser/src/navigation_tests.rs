@@ -274,12 +274,7 @@ fn banner_on(screen: &Screen) -> Option<(BannerLevel, String)> {
 /// Answers every piece of the save being written until it is done.
 fn finish_save(parser: &mut Parser, context: &mut Context) {
     let name = parser.saving.as_ref().expect("a save").name().to_owned();
-    let total = parser
-        .machine
-        .as_ref()
-        .expect("a story")
-        .save_quetzal()
-        .len();
+    let total = parser.save_file().expect("a story").len();
     let mut written = 0;
     while parser.saving.is_some() {
         written = (written + kobo_sdk::MAX_SHELF_CHUNK).min(total);

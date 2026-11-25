@@ -212,6 +212,9 @@ const MAX_RECENT: usize = 6;
 /// How many steps back the application remembers.
 const MAX_TRAIL: usize = 8;
 
+/// Try again on a catalog page that could not be fetched.
+const RETRY_FEED: &str = "retry-feed";
+
 /// The store key the added-catalog registry is written under.
 const REGISTRY_KEY: &str = "catalogs";
 /// The store key naming which catalog was open when the reader last left.
@@ -746,6 +749,9 @@ struct Gutenbird {
     restored: bool,
     problem: Option<String>,
     trouble: Option<Failure>,
+    /// The page that could not be fetched, and what it was for, so that Try
+    /// again asks for that page rather than for something else.
+    failed_feed: Option<(String, FeedPurpose)>,
 
     /// Publications on the current shelf page still to fetch a cover for,
     /// most recently queued first, with attempts already spent.
@@ -854,6 +860,7 @@ impl Default for Gutenbird {
             restored: false,
             problem: None,
             trouble: None,
+            failed_feed: None,
             wanted: Vec::new(),
             covers: Vec::new(),
             looking: Vec::new(),
@@ -1617,6 +1624,7 @@ impl Gutenbird {
     fn spawn_feed(&mut self, context: &mut Context, url: String, purpose: FeedPurpose) {
         self.problem = None;
         self.trouble = None;
+        self.failed_feed = None;
         // The shelf's own work runs in lanes of its own and never holds the
         // slot this needs, but a page the reader has left is not worth
         // finishing, so its pictures are dropped rather than waited for.
@@ -2129,8 +2137,12 @@ impl Gutenbird {
     /// under it, and the page ended there: an owner on a train with three
     /// books downloaded was told the catalog was out of reach and nothing
     /// about the books that were not.
+    ///
+    /// Try again asks for the page that failed. It used to lead to the list
+    /// of catalogs, so the button named for retrying went somewhere else and
+    /// fetched nothing.
     fn failed_shelf(&self, screen: ScreenBuilder, failure: Failure) -> kobo_sdk::Screen {
-        let screen = screen.failure_state(failure, "catalogs");
+        let screen = screen.failure_state(failure, RETRY_FEED);
         if self.device_books().is_empty() {
             screen.build()
         } else {
@@ -4699,6 +4711,17 @@ impl KoboApp for Gutenbird {
             self.show(context);
             return;
         }
+        if action == action_id(RETRY_FEED) {
+            // Nothing left to retry means the page was fetched some other way
+            // since, and the catalog's front page is the honest thing to ask
+            // for again.
+            match self.failed_feed.take() {
+                Some((url, purpose)) => self.spawn_feed(context, url, purpose),
+                None => self.open_catalog(context),
+            }
+            self.show(context);
+            return;
+        }
         if action == action_id("catalogs") {
             self.abandon_feed(context);
             self.stop_federating();
@@ -5013,9 +5036,10 @@ impl KoboApp for Gutenbird {
                 // A row that could not be followed stays a row. It is already
                 // marked as examined, so the next page turn does not spend
                 // the radio asking again.
-                Awaiting::Feed(..) => {
+                Awaiting::Feed(purpose, url) => {
                     let failure = Failure::of(error);
                     self.trouble = Some(failure);
+                    self.failed_feed = Some((url, purpose));
                     self.problem = Some(failure.advice.to_owned());
                     if let Some(cache) = &mut self.cached_feed {
                         cache.failed = true;
@@ -7513,6 +7537,50 @@ Please read this before you distribute or use this work.\n";
             );
             assert!(runner.app().cached_feed.is_none());
         }
+    }
+
+    #[test]
+    fn try_again_on_a_catalog_that_failed_fetches_that_page_again() {
+        let failed = "https://x/catalog/popular";
+        let mut app = Gutenbird::default();
+        app.go(View::Shelf);
+        app.spawn_feed(
+            &mut Context::default(),
+            failed.into(),
+            FeedPurpose::Push { catalog: 0 },
+        );
+        let task = app.task.as_ref().unwrap().0;
+        let key = app.cached_feed.as_ref().unwrap().key.clone();
+        let mut runner = AppRunner::new(app);
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unreachable));
+        runner.store_result(StoreResult::Loaded { key, value: None });
+        let offered = format!("{:?}", runner.app().shelf_screen(&Context::default()));
+        assert!(
+            offered.contains("Try again")
+                && offered.contains(&format!("{:?}", action_id(super::RETRY_FEED))),
+            "the failure offers no way to fetch the page again: {offered}"
+        );
+        let asked: Vec<String> = runner
+            .action(action_id(super::RETRY_FEED))
+            .into_iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } => Some(url),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            asked,
+            vec![failed.to_owned()],
+            "Try again asked for something else"
+        );
+        assert_eq!(
+            runner.app().view,
+            View::Shelf,
+            "Try again left the page it was retrying"
+        );
     }
 
     #[test]

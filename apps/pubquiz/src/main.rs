@@ -577,29 +577,212 @@ fn choice(index: usize) -> String {
     format!("answer-{index}")
 }
 
+/// The Latin-1 names, in code point order from U+00A0, so the table is the
+/// standard's own list rather than a selection. No-break space reads as a
+/// plain one, because a question's spacing is normalised anyway.
+const LATIN1_ENTITIES: [&str; 96] = [
+    "nbsp", "iexcl", "cent", "pound", "curren", "yen", "brvbar", "sect", "uml", "copy", "ordf",
+    "laquo", "not", "shy", "reg", "macr", "deg", "plusmn", "sup2", "sup3", "acute", "micro",
+    "para", "middot", "cedil", "sup1", "ordm", "raquo", "frac14", "frac12", "frac34", "iquest",
+    "Agrave", "Aacute", "Acirc", "Atilde", "Auml", "Aring", "AElig", "Ccedil", "Egrave", "Eacute",
+    "Ecirc", "Euml", "Igrave", "Iacute", "Icirc", "Iuml", "ETH", "Ntilde", "Ograve", "Oacute",
+    "Ocirc", "Otilde", "Ouml", "times", "Oslash", "Ugrave", "Uacute", "Ucirc", "Uuml", "Yacute",
+    "THORN", "szlig", "agrave", "aacute", "acirc", "atilde", "auml", "aring", "aelig", "ccedil",
+    "egrave", "eacute", "ecirc", "euml", "igrave", "iacute", "icirc", "iuml", "eth", "ntilde",
+    "ograve", "oacute", "ocirc", "otilde", "ouml", "divide", "oslash", "ugrave", "uacute", "ucirc",
+    "uuml", "yacute", "thorn", "yuml",
+];
+
+/// The Greek capitals and small letters, in code point order from U+0391
+/// and U+03B1. The capitals have no final sigma, so their slot is empty.
+const GREEK_ENTITIES: [&str; 25] = [
+    "lpha", "eta", "amma", "elta", "psilon", "eta", "ta", "heta", "ota", "appa", "ambda", "u", "u",
+    "i", "micron", "i", "ho", "", "igma", "au", "psilon", "hi", "hi", "si", "mega",
+];
+const GREEK_INITIALS: [char; 25] = [
+    'a', 'b', 'g', 'd', 'e', 'z', 'e', 't', 'i', 'k', 'l', 'm', 'n', 'x', 'o', 'p', 'r', ' ', 's',
+    't', 'u', 'p', 'c', 'p', 'o',
+];
+
+/// The rest of the HTML 4 set by name: markup, typography, arrows, maths
+/// and the card suits. Latin-1 and Greek have tables of their own above.
+const NAMED_ENTITIES: &[(&str, char)] = &[
+    ("amp", '&'),
+    ("quot", '"'),
+    ("apos", '\''),
+    ("#039", '\''),
+    ("#39", '\''),
+    ("lt", '<'),
+    ("gt", '>'),
+    ("OElig", 'Œ'),
+    ("oelig", 'œ'),
+    ("Scaron", 'Š'),
+    ("scaron", 'š'),
+    ("Yuml", 'Ÿ'),
+    ("fnof", 'ƒ'),
+    ("circ", 'ˆ'),
+    ("tilde", '˜'),
+    ("thetasym", 'ϑ'),
+    ("upsih", 'ϒ'),
+    ("piv", 'ϖ'),
+    ("ensp", ' '),
+    ("emsp", ' '),
+    ("thinsp", ' '),
+    ("zwnj", '\u{200C}'),
+    ("zwj", '\u{200D}'),
+    ("lrm", '\u{200E}'),
+    ("rlm", '\u{200F}'),
+    ("ndash", '–'),
+    ("mdash", '—'),
+    ("lsquo", '‘'),
+    ("rsquo", '’'),
+    ("sbquo", '‚'),
+    ("ldquo", '“'),
+    ("rdquo", '”'),
+    ("bdquo", '„'),
+    ("dagger", '†'),
+    ("Dagger", '‡'),
+    ("bull", '•'),
+    ("hellip", '…'),
+    ("permil", '‰'),
+    ("prime", '′'),
+    ("Prime", '″'),
+    ("lsaquo", '‹'),
+    ("rsaquo", '›'),
+    ("oline", '‾'),
+    ("frasl", '⁄'),
+    ("euro", '€'),
+    ("image", 'ℑ'),
+    ("weierp", '℘'),
+    ("real", 'ℜ'),
+    ("trade", '™'),
+    ("alefsym", 'ℵ'),
+    ("larr", '←'),
+    ("uarr", '↑'),
+    ("rarr", '→'),
+    ("darr", '↓'),
+    ("harr", '↔'),
+    ("crarr", '↵'),
+    ("lArr", '⇐'),
+    ("uArr", '⇑'),
+    ("rArr", '⇒'),
+    ("dArr", '⇓'),
+    ("hArr", '⇔'),
+    ("forall", '∀'),
+    ("part", '∂'),
+    ("exist", '∃'),
+    ("empty", '∅'),
+    ("nabla", '∇'),
+    ("isin", '∈'),
+    ("notin", '∉'),
+    ("ni", '∋'),
+    ("prod", '∏'),
+    ("sum", '∑'),
+    ("minus", '−'),
+    ("lowast", '∗'),
+    ("radic", '√'),
+    ("prop", '∝'),
+    ("infin", '∞'),
+    ("ang", '∠'),
+    ("and", '∧'),
+    ("or", '∨'),
+    ("cap", '∩'),
+    ("cup", '∪'),
+    ("int", '∫'),
+    ("there4", '∴'),
+    ("sim", '∼'),
+    ("cong", '≅'),
+    ("asymp", '≈'),
+    ("ne", '≠'),
+    ("equiv", '≡'),
+    ("le", '≤'),
+    ("ge", '≥'),
+    ("sub", '⊂'),
+    ("sup", '⊃'),
+    ("nsub", '⊄'),
+    ("sube", '⊆'),
+    ("supe", '⊇'),
+    ("oplus", '⊕'),
+    ("otimes", '⊗'),
+    ("perp", '⊥'),
+    ("sdot", '⋅'),
+    ("lceil", '⌈'),
+    ("rceil", '⌉'),
+    ("lfloor", '⌊'),
+    ("rfloor", '⌋'),
+    ("lang", '〈'),
+    ("rang", '〉'),
+    ("loz", '◊'),
+    ("spades", '♠'),
+    ("clubs", '♣'),
+    ("hearts", '♥'),
+    ("diams", '♦'),
+];
+
+/// Open Trivia DB escapes its text with the full HTML 4 entity set, so a
+/// question about the Greek alphabet arrives as `&Phi;` and one about money
+/// as `&euro;`. Every name in that set is decoded here; a name outside it is
+/// left as written rather than guessed at.
 fn decode_entity(entity: &str) -> Option<char> {
-    match entity {
-        "amp" => Some('&'),
-        "quot" => Some('"'),
-        "apos" | "#039" | "#39" => Some('\''),
-        "lt" => Some('<'),
-        "gt" => Some('>'),
-        "nbsp" => Some(' '),
-        "eacute" => Some('é'),
-        "ouml" => Some('ö'),
-        "uuml" => Some('ü'),
-        _ => entity
-            .strip_prefix("#x")
-            .or_else(|| entity.strip_prefix("#X"))
-            .and_then(|digits| u32::from_str_radix(digits, 16).ok())
-            .and_then(char::from_u32)
-            .or_else(|| {
-                entity
-                    .strip_prefix('#')
-                    .and_then(|digits| digits.parse::<u32>().ok())
-                    .and_then(char::from_u32)
-            }),
+    if let Some(index) = LATIN1_ENTITIES.iter().position(|name| *name == entity) {
+        return if index == 0 {
+            Some(' ')
+        } else {
+            char::from_u32(0xA0 + u32::try_from(index).ok()?)
+        };
     }
+    if let Some(greek) = greek_entity(entity) {
+        return Some(greek);
+    }
+    NAMED_ENTITIES
+        .iter()
+        .find(|(name, _)| *name == entity)
+        .map(|(_, character)| *character)
+        .or_else(|| numeric_entity(entity))
+}
+
+/// `Alpha` to `Omega` and `alpha` to `omega`, with `sigmaf` for the small
+/// final sigma that sits in the capitals' empty slot.
+fn greek_entity(entity: &str) -> Option<char> {
+    if entity == "sigmaf" {
+        return Some('ς');
+    }
+    let mut chars = entity.chars();
+    let first = chars.next()?;
+    let rest = chars.as_str();
+    let base = if first.is_ascii_uppercase() {
+        0x391
+    } else {
+        0x3B1
+    };
+    let index = GREEK_ENTITIES
+        .iter()
+        .zip(GREEK_INITIALS)
+        .position(|(tail, initial)| {
+            !tail.is_empty() && *tail == rest && initial == first.to_ascii_lowercase()
+        })?;
+    char::from_u32(base + u32::try_from(index).ok()?)
+}
+
+fn numeric_entity(entity: &str) -> Option<char> {
+    entity
+        .strip_prefix("#x")
+        .or_else(|| entity.strip_prefix("#X"))
+        .and_then(|digits| u32::from_str_radix(digits, 16).ok())
+        .and_then(char::from_u32)
+        .or_else(|| {
+            entity
+                .strip_prefix('#')
+                .and_then(|digits| digits.parse::<u32>().ok())
+                .and_then(char::from_u32)
+        })
+}
+
+/// Soft hyphens and the joiner and direction marks steer a browser's layout
+/// and draw nothing; the reader's faces have no glyph for them, so they are
+/// dropped rather than shown as a missing-glyph box.
+fn invisible(c: char) -> bool {
+    matches!(c, '\u{AD}' | '\u{200B}'..='\u{200F}')
 }
 
 fn clean_text(input: &str, limit: usize) -> String {
@@ -614,7 +797,9 @@ fn clean_text(input: &str, limit: usize) -> String {
             continue;
         };
         if let Some(decoded) = decode_entity(&rest[1..end]) {
-            output.push(decoded);
+            if !invisible(decoded) {
+                output.push(decoded);
+            }
             rest = &rest[end + 1..];
         } else {
             output.push('&');
@@ -1058,7 +1243,13 @@ fn home_shaped(quiz: &Quiz, shape: GiveWay) -> Screen {
             } else if lean {
                 String::new()
             } else {
-                format!("{} · Needs Wi-Fi once", quiz.updated_label())
+                // Once a pack is on the reader the questions play offline,
+                // so the Wi-Fi note belongs only to the first download.
+                if quiz.pack_origin.is_some() {
+                    quiz.updated_label()
+                } else {
+                    format!("{} · Needs Wi-Fi once", quiz.updated_label())
+                }
             },
             Glyph::Download,
         ),
@@ -1790,7 +1981,18 @@ impl KoboApp for Quiz {
         self.note = Some(match outcome {
             TaskOutcome::Completed(bytes) => {
                 if let Some(questions) = parse_pack(&bytes) {
-                    let fresh = questions.len();
+                    // Counted against what the reader already had, so the
+                    // banner's number is how far the total grows: a download
+                    // that repeats a bundled question adds nothing for it.
+                    let known: std::collections::HashSet<String> = self
+                        .questions
+                        .iter()
+                        .map(|question| question.text.to_lowercase())
+                        .collect();
+                    let fresh = questions
+                        .iter()
+                        .filter(|question| !known.contains(&question.text.to_lowercase()))
+                        .count();
                     self.questions = with_bundled(questions);
                     self.pack_synced = true;
                     self.packs = 1;
@@ -2000,6 +2202,29 @@ mod tests {
             clean_text("Rock &amp; Roll &#039;A&#039;", 80),
             "Rock & Roll 'A'"
         );
+    }
+    #[test]
+    fn greek_letters_and_symbols_from_open_trivia_db_read_as_characters() {
+        assert_eq!(
+            clean_text(
+                "&Phi; (phi), &pi; (pi), &Psi;, &Tau;, &sigmaf;, &Omega;",
+                80
+            ),
+            "Φ (phi), π (pi), Ψ, Τ, ς, Ω"
+        );
+        assert_eq!(
+            clean_text(
+                "&Eacute;mile &ndash; 5&deg; &euro;10 &frac12; &times; &hellip;",
+                80
+            ),
+            "Émile – 5° €10 ½ × …"
+        );
+        assert_eq!(
+            clean_text("Beta &beta;, Eta &eta;, Zeta &zeta;", 80),
+            "Beta β, Eta η, Zeta ζ"
+        );
+        assert_eq!(clean_text("co&shy;operate", 80), "cooperate");
+        assert_eq!(clean_text("&notaname; stays", 80), "&notaname; stays");
     }
     #[test]
     fn question_controls_fit_clara() {

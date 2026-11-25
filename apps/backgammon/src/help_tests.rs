@@ -22,7 +22,7 @@ fn the_rules_and_their_way_back_fit_with_real_fonts_in_every_size_and_pose() {
             let saved = game.encode();
             let runner = kobo_sdk::AppRunner::with_metrics(Game::default(), metrics);
             let context = runner.context();
-            let pages = rules_pages(&context).len();
+            let pages = rules_pages(&game, &context).len();
             for close in [ActionId::BACK, action_id("close-help")] {
                 assert_eq!(game.apply_action(action_id(game::RULES)), Some(false));
                 assert_eq!(game.view, View::Help);

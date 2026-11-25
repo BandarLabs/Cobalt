@@ -310,8 +310,15 @@ pub fn prepare_for_panel_excluding(
             continue;
         }
         if let Some(old) = old_by_digest.get(digest.as_str()) {
+            // A photo already on the shelf may carry the date its file was
+            // copied, from a push before the camera's own date was read, so
+            // pushing it again puts the camera's date right.
+            let mut photo = (*old).clone();
+            if let Some(taken) = exif_taken(&bytes) {
+                photo.taken = taken;
+            }
             prepared.push(PreparedPhoto {
-                photo: (*old).clone(),
+                photo,
                 png: None,
                 shelf_digest: None,
             });
@@ -326,11 +333,17 @@ pub fn prepare_for_panel_excluding(
             id = format!("{base}-{suffix}");
             suffix = suffix.saturating_add(1);
         }
-        let taken = fs::metadata(&path)
-            .ok()
-            .and_then(|metadata| metadata.modified().ok())
-            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |duration| duration.as_secs());
+        // The reader shows this as the day the photo was taken and orders
+        // the shelf by it, so the camera's date comes first. The file's
+        // modified time is only a last resort: a folder copied off a phone
+        // today has every file modified today.
+        let taken = exif_taken(&bytes).unwrap_or_else(|| {
+            fs::metadata(&path)
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |duration| duration.as_secs())
+        });
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -371,7 +384,12 @@ pub fn prepare_for_panel_excluding(
     } else {
         let mut photos = existing.photos.clone();
         for incoming in &prepared {
-            if !photos.iter().any(|photo| photo.id == incoming.photo.id) {
+            if let Some(photo) = photos
+                .iter_mut()
+                .find(|photo| photo.id == incoming.photo.id)
+            {
+                photo.taken = incoming.photo.taken;
+            } else {
                 photos.push(incoming.photo.clone());
             }
         }
@@ -534,6 +552,147 @@ fn decode(path: &Path, bytes: &[u8]) -> Result<DynamicImage, String> {
         .map_err(|error| format!("decode {}: {error}", path.display()))?;
     image.apply_orientation(orientation);
     Ok(image)
+}
+
+/// When the camera says the photo was taken, as seconds since the epoch.
+///
+/// The image decoder already finds the Exif block in a JPEG's APP1 segment,
+/// a PNG's `eXIf` chunk and a WebP's `EXIF` chunk, reading headers only; the
+/// dates inside are read here by hand rather than with another crate. The
+/// moment the shutter opened wins, then the moment the file was made, then
+/// the last time software saved it. Exif writes the camera's wall clock with
+/// no zone, and it is kept as that wall clock: the reader prints the date of
+/// the stored instant without a zone, so it shows the day on the camera.
+fn exif_taken(bytes: &[u8]) -> Option<u64> {
+    let mut decoder = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_decoder()
+        .ok()?;
+    let exif = decoder.exif_metadata().ok()??;
+    // Some writers keep the APP1 identifier in a PNG's chunk as well.
+    let tiff = exif.strip_prefix(b"Exif\0\0").unwrap_or(&exif);
+    let ifd = Tiff::new(tiff)?;
+    let first = ifd.u32_at(4)?;
+    let sub = ifd
+        .entry(first, EXIF_IFD_POINTER)
+        .and_then(|(kind, _, value)| (kind == 4 || kind == 13).then_some(value));
+    [
+        sub.and_then(|sub| ifd.date(sub, DATE_TIME_ORIGINAL)),
+        sub.and_then(|sub| ifd.date(sub, DATE_TIME_DIGITIZED)),
+        ifd.date(first, DATE_TIME),
+    ]
+    .into_iter()
+    .flatten()
+    .next()
+}
+
+const DATE_TIME: u16 = 0x0132;
+const EXIF_IFD_POINTER: u16 = 0x8769;
+const DATE_TIME_ORIGINAL: u16 = 0x9003;
+const DATE_TIME_DIGITIZED: u16 = 0x9004;
+
+/// A TIFF block's bytes and byte order, read with every offset checked, since
+/// the block comes from whatever file was pushed.
+struct Tiff<'a> {
+    bytes: &'a [u8],
+    little: bool,
+}
+
+impl<'a> Tiff<'a> {
+    fn new(bytes: &'a [u8]) -> Option<Self> {
+        let little = match bytes.get(..4)? {
+            [b'I', b'I', 42, 0] => true,
+            [b'M', b'M', 0, 42] => false,
+            _ => return None,
+        };
+        Some(Self { bytes, little })
+    }
+
+    fn u16_at(&self, offset: usize) -> Option<u16> {
+        let raw: [u8; 2] = self
+            .bytes
+            .get(offset..offset.checked_add(2)?)?
+            .try_into()
+            .ok()?;
+        Some(if self.little {
+            u16::from_le_bytes(raw)
+        } else {
+            u16::from_be_bytes(raw)
+        })
+    }
+
+    fn u32_at(&self, offset: usize) -> Option<usize> {
+        let raw: [u8; 4] = self
+            .bytes
+            .get(offset..offset.checked_add(4)?)?
+            .try_into()
+            .ok()?;
+        let value = if self.little {
+            u32::from_le_bytes(raw)
+        } else {
+            u32::from_be_bytes(raw)
+        };
+        usize::try_from(value).ok()
+    }
+
+    /// The type, count and value-or-offset of a tag in the directory at
+    /// `ifd`.
+    fn entry(&self, ifd: usize, tag: u16) -> Option<(u16, usize, usize)> {
+        let count = self.u16_at(ifd)?;
+        (0..usize::from(count)).find_map(|index| {
+            let at = ifd.checked_add(2)?.checked_add(index.checked_mul(12)?)?;
+            (self.u16_at(at)? == tag).then_some(())?;
+            Some((
+                self.u16_at(at + 2)?,
+                self.u32_at(at + 4)?,
+                self.u32_at(at + 8)?,
+            ))
+        })
+    }
+
+    /// An Exif date tag, `YYYY:MM:DD HH:MM:SS`, as epoch seconds. A camera
+    /// with no clock set writes zeros or blanks, which count as no date.
+    fn date(&self, ifd: usize, tag: u16) -> Option<u64> {
+        let (kind, count, offset) = self.entry(ifd, tag)?;
+        if kind != 2 || count < 19 {
+            return None;
+        }
+        let text = self.bytes.get(offset..offset.checked_add(19)?)?;
+        let number = |range: std::ops::Range<usize>| -> Option<u64> {
+            let digits = text.get(range)?;
+            digits.iter().all(u8::is_ascii_digit).then_some(())?;
+            std::str::from_utf8(digits).ok()?.parse().ok()
+        };
+        let year = number(0..4)?;
+        let month = number(5..7)?;
+        let day = number(8..10)?;
+        let hour = number(11..13)?;
+        let minute = number(14..16)?;
+        let second = number(17..19)?;
+        if !(1970..=9999).contains(&year)
+            || !(1..=12).contains(&month)
+            || !(1..=31).contains(&day)
+            || hour > 23
+            || minute > 59
+            || second > 60
+        {
+            return None;
+        }
+        Some(days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second)
+    }
+}
+
+/// Days from 1970-01-01 to a civil date in or after 1970, by Howard
+/// Hinnant's algorithm, the inverse of the one the reader prints dates with.
+fn days_from_civil(year: u64, month: u64, day: u64) -> u64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year / 400;
+    let year_of_era = year - era * 400;
+    let month_prime = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
 }
 
 /// Fits the photograph to the panel, in colour for a panel that shows it and
@@ -904,6 +1063,124 @@ mod tests {
                 .removed,
             vec![extra]
         );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    /// A TIFF block in either byte order: `DateTime` in the first directory
+    /// and, when given, `DateTimeOriginal` in the Exif directory it points to.
+    fn exif_block(little: bool, modified: &str, original: Option<&str>) -> Vec<u8> {
+        let u16b = |value: u16| {
+            if little {
+                value.to_le_bytes()
+            } else {
+                value.to_be_bytes()
+            }
+        };
+        let u32b = |value: u32| {
+            if little {
+                value.to_le_bytes()
+            } else {
+                value.to_be_bytes()
+            }
+        };
+        let entry = |out: &mut Vec<u8>, tag: u16, kind: u16, count: u32, value: u32| {
+            out.extend(u16b(tag));
+            out.extend(u16b(kind));
+            out.extend(u32b(count));
+            out.extend(u32b(value));
+        };
+        // Header 8, first directory 2 + 2 entries + next 4 = 30, sub
+        // directory 2 + 1 entry + next 4 = 18, then the two strings.
+        let (first, sub, strings) = (8_u32, 38_u32, 56_u32);
+        let mut out = if little {
+            b"II*\0".to_vec()
+        } else {
+            b"MM\0*".to_vec()
+        };
+        out.extend(u32b(first));
+        out.extend(u16b(2));
+        entry(&mut out, 0x0132, 2, 20, strings);
+        entry(&mut out, 0x8769, 4, 1, sub);
+        out.extend(u32b(0));
+        out.extend(u16b(u16::from(original.is_some())));
+        if original.is_some() {
+            entry(&mut out, 0x9003, 2, 20, strings + 20);
+        }
+        out.extend(u32b(0));
+        out.resize(usize::try_from(strings).expect("offset"), 0);
+        for text in [Some(modified), original].into_iter().flatten() {
+            out.extend(text.as_bytes());
+            out.push(0);
+        }
+        out
+    }
+
+    /// A small JPEG carrying `tiff` in an APP1 Exif segment, as a camera
+    /// writes it.
+    fn jpeg_with_exif(path: &Path, tiff: &[u8]) {
+        let mut plain = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut plain)
+            .write_image(&[128; 16 * 16 * 3], 16, 16, image::ExtendedColorType::Rgb8)
+            .expect("jpeg");
+        let payload = [b"Exif\0\0".as_slice(), tiff].concat();
+        let length = u16::try_from(payload.len() + 2).expect("segment");
+        let mut bytes = plain[..2].to_vec();
+        bytes.extend([0xFF, 0xE1]);
+        bytes.extend(length.to_be_bytes());
+        bytes.extend(payload);
+        bytes.extend(&plain[2..]);
+        fs::write(path, bytes).expect("write");
+    }
+
+    #[test]
+    fn a_photo_copied_today_keeps_the_day_the_camera_took_it() {
+        let root = std::env::temp_dir().join(format!("frame-host-exif-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("dir");
+        let input = root.join("IMG_0001.jpg");
+        jpeg_with_exif(
+            &input,
+            &exif_block(true, "2024:01:02 08:00:00", Some("2019:07:14 12:34:56")),
+        );
+        let push = prepare(&input, Fit::Crop, &Manifest::default(), false).expect("prepare");
+        // 14 July 2019 12:34:56, not the moment the file was written above.
+        assert_eq!(push.photos[0].photo.taken, 1_563_107_696);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn the_capture_date_wins_then_the_save_date_then_nothing_in_either_byte_order() {
+        for little in [true, false] {
+            let both = exif_block(little, "2024:01:02 08:00:00", Some("2019:07:14 12:34:56"));
+            let tiff = Tiff::new(&both).expect("tiff");
+            let first = tiff.u32_at(4).expect("first");
+            assert_eq!(tiff.date(38, DATE_TIME_ORIGINAL), Some(1_563_107_696));
+            assert_eq!(tiff.date(first, DATE_TIME), Some(1_704_182_400));
+            let unset = exif_block(little, "0000:00:00 00:00:00", None);
+            let tiff = Tiff::new(&unset).expect("tiff");
+            assert_eq!(tiff.date(first, DATE_TIME), None);
+            assert_eq!(tiff.date(38, DATE_TIME_ORIGINAL), None);
+        }
+        assert!(Tiff::new(b"II*").is_none());
+        assert_eq!(exif_taken(b"not an image"), None);
+    }
+
+    #[test]
+    fn pushing_a_photo_again_replaces_its_copied_date_with_the_cameras() {
+        let root = std::env::temp_dir().join(format!("frame-host-redate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("dir");
+        let input = root.join("IMG_0002.jpg");
+        jpeg_with_exif(&input, &exif_block(false, "2019:07:14 12:34:56", None));
+        let first = prepare(&input, Fit::Crop, &Manifest::default(), false).expect("first");
+        let mut old = first.manifest.clone();
+        old.photos[0].taken = 1_900_000_000;
+        for delete in [false, true] {
+            let again = prepare(&input, Fit::Crop, &old, delete).expect("again");
+            assert!(again.photos[0].png.is_none(), "the photo is not re-sent");
+            assert_eq!(again.manifest.photos[0].taken, 1_563_107_696);
+            assert_eq!(again.manifest.photos[0].id, old.photos[0].id);
+        }
         fs::remove_dir_all(root).expect("cleanup");
     }
 

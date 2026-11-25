@@ -882,8 +882,19 @@ impl Game {
         }
     }
 
+    /// Whether this match has a doubling cube at all.
+    ///
+    /// In a 1-point match the first game decides it, and a game is worth the
+    /// match whatever the cube says, so a double could change nothing. The
+    /// board offered Double and said "either side may double" anyway.
+    const fn doubling_possible(&self) -> bool {
+        self.match_to > 1
+    }
+
     fn offer_double(&mut self) {
-        if self.phase != Phase::Playing || !self.dice.is_empty() {
+        if !self.doubling_possible() {
+            self.message = NO_DOUBLING.into();
+        } else if self.phase != Phase::Playing || !self.dice.is_empty() {
             self.message = "Double before you roll, not after.".into();
         } else if self.opening {
             self.message = "Nobody can double before the opening roll.".into();
@@ -1349,6 +1360,7 @@ fn saved_game_is_safe(game: &Game) -> bool {
         || !game.cube.is_power_of_two()
         || (game.cube == 1 && game.cube_owner.is_some())
         || (game.cube > 1 && game.cube_owner.is_none())
+        || (game.cube > 1 && !game.doubling_possible())
         || (game.crawford_active
             && (game.match_to == 1
                 || !game.crawford_used
@@ -1374,7 +1386,8 @@ fn saved_game_is_safe(game: &Game) -> bool {
         }
         Phase::Playing => !match_finished && !board_is_finished,
         Phase::ConfirmDouble | Phase::Offered(_) | Phase::ConfirmDrop(_) => {
-            !match_finished
+            game.doubling_possible()
+                && !match_finished
                 && !board_is_finished
                 && !game.opening
                 && game.dice.is_empty()
@@ -1840,18 +1853,23 @@ fn facts_for(game: &Game, detail: Detail, dice_drawn: bool) -> Vec<(&'static str
             ("Cube", cube_line(game)),
             ("To win", points(game.match_to)),
         ],
-        Detail::Short => vec![
+        Detail::Short if game.doubling_possible() => vec![
             ("Dice", dice_line(game)),
             (
                 "To win",
                 format!("{} · cube {}", points(game.match_to), game.cube),
             ),
         ],
+        Detail::Short => vec![("Dice", dice_line(game)), ("To win", points(game.match_to))],
         Detail::Dice => vec![("Dice", dice_line(game))],
         Detail::Bare => Vec::new(),
     };
     if dice_drawn || game.dice.is_empty() {
         facts.retain(|(label, _)| *label != "Dice");
+    }
+    // A cube that can never be turned is not a fact about this match.
+    if !game.doubling_possible() {
+        facts.retain(|(label, _)| *label != "Cube");
     }
     facts
 }
@@ -1912,9 +1930,12 @@ fn playing_screen(game: &Game, dice: Option<TilePicture>, detail: Detail) -> Scr
         ),
         None => screen.facts(facts),
     };
-    screen
-        .game_actions(true, [("roll", "Roll"), ("double", "Double")])
-        .build()
+    let actions = if game.doubling_possible() {
+        vec![("roll", "Roll"), ("double", "Double")]
+    } else {
+        vec![("roll", "Roll")]
+    };
+    screen.game_actions(true, actions).build()
 }
 
 /// How wide the dice are on the panel, in tenths of a millimetre.
@@ -2013,6 +2034,9 @@ fn possessive(side: &str) -> String {
     }
 }
 
+/// How the paragraph on doubling starts, to find it among the rules.
+const DOUBLING_RULE: &str = "Before you roll, Double";
+
 /// The rules, one paragraph to a topic.
 const RULES_TEXT: [&str; 6] = [
     "Tap Roll. Then tap one of your checkers to pick it up, and tap a marked point to move it there. Tap the checker again to put it back.",
@@ -2023,14 +2047,29 @@ const RULES_TEXT: [&str; 6] = [
     "Against the computer you play White and the computer plays Black. It rolls and moves as soon as your turn ends.",
 ];
 
-fn rules_pages(context: &Context) -> Vec<Vec<String>> {
-    context.paginate(&RULES_TEXT.join("\n\n"), true)
+/// The paragraph about the cube, in a match where there is none.
+const NO_DOUBLING: &str = "A 1-point match has no doubling: the first game decides it.";
+
+/// The rules for this match. The paragraph on doubling says there is none
+/// in a 1-point match, rather than describing a Double that is not there.
+fn rules_pages(game: &Game, context: &Context) -> Vec<Vec<String>> {
+    let rules = RULES_TEXT
+        .iter()
+        .map(|rule| {
+            if rule.starts_with(DOUBLING_RULE) && !game.doubling_possible() {
+                NO_DOUBLING
+            } else {
+                rule
+            }
+        })
+        .collect::<Vec<_>>();
+    context.paginate(&rules.join("\n\n"), true)
 }
 
 /// The rules, in as many pages as the text size needs. A page that ran off
 /// the bottom of the panel lost its last paragraph without a word.
 fn rules_screen(game: &Game, context: &Context) -> Screen {
-    let pages = rules_pages(context);
+    let pages = rules_pages(game, context);
     let page = game.rules_page.min(pages.len().saturating_sub(1));
     let mut screen = ScreenBuilder::new("backgammon-rules")
         .top_bar(game::RULES_LABEL)
@@ -2178,7 +2217,7 @@ impl KoboApp for Game {
     }
     fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
         if self.view == View::Help {
-            let last = rules_pages(context).len().saturating_sub(1);
+            let last = rules_pages(self, context).len().saturating_sub(1);
             let page = self.rules_page.min(last);
             self.rules_page = if forward {
                 (page + 1).min(last)
@@ -2781,6 +2820,47 @@ mod tests {
         game.offer_double();
         assert_eq!(game.phase, Phase::Playing);
         assert_eq!(game.message, "Nobody may double in the Crawford game.");
+    }
+
+    /// A 1-point match is decided by its first game, so a double could
+    /// change nothing; the board offered one all the same.
+    #[test]
+    fn a_one_point_match_has_no_cube_to_offer_and_its_rules_say_so() {
+        let mut game = Game {
+            opening: false,
+            ..Game::default()
+        };
+        game.set_match_to(1);
+        game.opening = false;
+        let board = test_screen(&game);
+        let layout = board.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
+        assert!(layout.rect_of_action(action_id("double")).is_none());
+        assert!(layout.rect_of_action(action_id("roll")).is_some());
+        let words = drawn(&board);
+        assert!(!words.contains("double"), "{words}");
+        assert!(!words.contains("Cube"), "{words}");
+
+        game_action(&mut game, action_id("double"));
+        assert_eq!(game.phase, Phase::Playing);
+        assert_eq!(game.cube, 1);
+        // A save with a turned cube in a 1-point match is not read back.
+        game.cube = 2;
+        game.cube_owner = Some(Player::Black);
+        assert!(Game::decode(&game.encode()).is_none());
+        game.cube = 1;
+        game.cube_owner = None;
+
+        let context = kobo_sdk::AppRunner::new(Game::default()).context();
+        let rules = rules_pages(&game, &context).concat().join(" ");
+        assert!(rules.contains("A 1-point match has no doubling"), "{rules}");
+        assert!(!rules.contains("Double offers"), "{rules}");
+
+        game.set_match_to(3);
+        game.opening = false;
+        let words = drawn(&test_screen(&game));
+        assert!(words.contains("either side may double"), "{words}");
+        let rules = rules_pages(&game, &context).concat().join(" ");
+        assert!(rules.contains("Double offers to play on"), "{rules}");
     }
 
     #[test]

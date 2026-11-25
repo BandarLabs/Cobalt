@@ -1103,6 +1103,7 @@ name = "kobo-cli"
 version = "0.3.43"
 dependencies = [
  "flate2",
+ "image",
  "kobo-abi",
  "kobo-app-store",
  "kobo-article",
@@ -1133,6 +1134,7 @@ dependencies = [
  "ring",
  "rusqlite",
  "serde_json",
+ "zip",
 ]
 
 [[package]]
@@ -1461,6 +1463,7 @@ name = "kobo-music-host"
 version = "0.3.43"
 dependencies = [
  "blake3",
+ "image",
  "kobo-image",
  "kobo-json",
 ]

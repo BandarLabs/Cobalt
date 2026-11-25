@@ -26,6 +26,9 @@ const PAIRED: &str = "paired";
 /// Every host the paired computer answers at, saved beside [`PAIRED`] so a
 /// Deck older than this one reads that record as it always did.
 const HOSTS: &str = kobo_dial::HOSTS_KEY;
+/// The pairing the computer has answered, saved beside [`PAIRED`] so a
+/// restart does not take the deck back to "Not confirmed yet".
+const CONFIRMED: &str = kobo_dial::CONFIRMED_KEY;
 const CACHE: &str = "deck-cache";
 
 /// The port `kobo sidekick run` listens on for the reader. Filled in when an
@@ -59,6 +62,15 @@ enum Trouble {
 }
 
 impl Trouble {
+    const ALL: [Self; 6] = [
+        Self::Offline,
+        Self::Unreachable,
+        Self::Slow,
+        Self::Refused,
+        Self::NoDeck,
+        Self::Unreadable,
+    ];
+
     const fn of(error: TaskError) -> Self {
         match error {
             TaskError::Offline => Self::Offline,
@@ -109,6 +121,9 @@ enum Pending {
 /// Said when a pad is tapped in the preview a push leaves on an unpaired
 /// reader.
 const PREVIEW_PRESS: &str = "Preview only. Pair with your computer to use these pads.";
+
+/// The way out of the dialogue a press the computer could not place opens.
+const CLOSE_DIALOG: &str = "close-dialog";
 
 /// Said when the runtime has no room for one more request just now.
 const STILL_TALKING: &str = "Deck is still waiting on your computer. Tap again in a moment.";
@@ -163,6 +178,25 @@ struct App {
     /// Kept beside the full result rather than instead of it: this is the one
     /// line the grid can show, and the result screen is where the output is.
     last: Option<String>,
+    /// What the last tap on a pad came to, said in the line above the pads
+    /// in place of the pairing.
+    ///
+    /// It used to be a banner over the pads, so the first tap in a preview
+    /// pushed every pad down under the finger, and a press the computer never
+    /// got said nothing at all when the banner already up said the same.
+    said: Option<String>,
+    /// A press the computer answered and could not place, which needs
+    /// something done on the computer: its title and what to do.
+    dialog: Option<(&'static str, &'static str)>,
+    /// Whether the computer has answered this pairing at least once.
+    ///
+    /// Until it has, the pairing is only an address and a code somebody
+    /// typed, and the deck said "Paired with" a computer that had never
+    /// agreed to anything.
+    confirmed: bool,
+    /// The confirmation record as the store last gave it, kept until the
+    /// pairing it belongs beside has been read.
+    confirmed_record: Option<Vec<u8>>,
 }
 impl Default for App {
     fn default() -> Self {
@@ -187,6 +221,10 @@ impl Default for App {
             previous: None,
             entry_error: None,
             last: None,
+            said: None,
+            dialog: None,
+            confirmed: false,
+            confirmed_record: None,
         }
     }
 }
@@ -303,15 +341,15 @@ impl App {
             .trouble
             .zip(self.notice.as_deref())
             .is_some_and(|(trouble, notice)| notice == trouble.advice());
-        // A tapped preview pad already says it is a preview in the banner,
-        // so the line saying the same thing steps aside.
-        if self.notice.as_deref() != Some(PREVIEW_PRESS) {
-            screen = screen.secondary(if banner_says_why {
+        // What a tap came to takes this line rather than a banner of its
+        // own, so the pads stay where the finger left them.
+        screen = screen.secondary(self.said.clone().unwrap_or_else(|| {
+            if banner_says_why {
                 self.pairing()
             } else {
                 self.connection()
-            });
-        }
+            }
+        }));
         // A five-column board rather than the pads shortcut: the shortcut
         // backfills every unassigned place with a blank key, and a reader
         // with three commands saw a wall of ruled boxes that do nothing.
@@ -320,6 +358,11 @@ impl App {
             // What the last key that finished did. The whole output is on the
             // result screen; this is the line that says there is one.
             screen = screen.secondary(last.clone());
+        }
+        if let Some((title, body)) = self.dialog {
+            screen = screen.dialog(title, CLOSE_DIALOG, |dialog| {
+                dialog.text(body).button(CLOSE_DIALOG, "Close")
+            });
         }
         if let Some(id) = &self.confirming {
             if let Some(key) = page.keys.iter().find(|key| &key.id == id) {
@@ -342,7 +385,20 @@ impl App {
         if self.address.is_empty() {
             return "Not paired with a computer yet.".to_owned();
         }
+        if !self.confirmed {
+            return format!("Pairing with {} · Not confirmed yet", self.address);
+        }
         format!("Paired with {}.", self.address)
+    }
+
+    /// The name a pad goes by, for a line about what pressing it did.
+    fn label_of(&self, id: &str) -> String {
+        self.deck
+            .pages
+            .iter()
+            .flat_map(|page| page.keys.iter())
+            .find(|key| key.id == id)
+            .map_or_else(|| "That pad".to_owned(), |key| key.label.clone())
     }
 
     /// What this deck is connected to, as a sentence.
@@ -484,9 +540,18 @@ impl App {
 
     /// Takes an answer from the host, which is the one to try first from
     /// now on. The pause between looks is not an answer.
+    ///
+    /// The first answer a pairing gets is also what confirms it, and that is
+    /// written down so the deck still knows after a restart.
     fn host_answered(&mut self, cx: &mut Context) {
         if let Some(record) = self.hosts.answered() {
             cx.store().save(HOSTS, record);
+        }
+        if !self.confirmed && !self.address.is_empty() && self.address != "local" {
+            self.confirmed = true;
+            let record = kobo_dial::confirmed_record(&self.address, &self.code);
+            self.confirmed_record = Some(record.clone().into_bytes());
+            cx.store().save(CONFIRMED, record);
         }
     }
 
@@ -554,7 +619,7 @@ impl App {
 
     fn press(&mut self, cx: &mut Context, id: &str, confirmed: bool) {
         if self.address == "local" {
-            self.notice = Some(PREVIEW_PRESS.into());
+            self.said = Some(PREVIEW_PRESS.into());
             return;
         }
         self.drop_outstanding(cx);
@@ -570,7 +635,7 @@ impl App {
         // to "running" and stay that way when the runtime had no room for
         // another request, with nothing sent at all.
         let Some(task) = task else {
-            self.notice = Some(STILL_TALKING.into());
+            self.said = Some(STILL_TALKING.into());
             return;
         };
         if let Some(key) = self
@@ -582,7 +647,7 @@ impl App {
         {
             "running".clone_into(&mut key.state);
         }
-        self.notice = None;
+        self.said = None;
         self.task = Some(task);
         self.pending = Some(Pending::Press(id.to_owned()));
     }
@@ -600,9 +665,10 @@ impl App {
             headers: vec![],
         });
         if task.is_none() {
-            self.notice = Some(STILL_TALKING.into());
+            self.said = Some(STILL_TALKING.into());
             return;
         }
+        self.said = None;
         self.task = task;
         self.pending = Some(Pending::Result(id.to_owned()));
     }
@@ -623,6 +689,8 @@ impl App {
                 if self.view == View::Code {
                     self.view = View::Address;
                 } else if let Some((address, code)) = self.previous.take() {
+                    self.confirmed =
+                        kobo_dial::confirms(self.confirmed_record.as_deref(), &address, &code);
                     self.address = address;
                     self.code = code;
                     self.view = View::Grid;
@@ -682,7 +750,7 @@ impl App {
                     Some(true) => self.confirming = Some(id),
                     Some(false) => self.press(cx, &id, false),
                     None => {
-                        self.notice = Some(
+                        self.said = Some(
                             "That pad changed on your computer. The deck is refreshing.".into(),
                         );
                         self.poll(cx);
@@ -703,6 +771,7 @@ impl App {
         self.entry.close();
         self.entry_error = None;
         self.notice = None;
+        self.said = None;
         self.view = View::Address;
         self.show(cx);
     }
@@ -733,6 +802,11 @@ impl App {
         self.previous = None;
         self.trouble = None;
         self.notice = None;
+        self.said = None;
+        // Confirmed only if the computer has answered this very address and
+        // code before: whatever it said to another pairing does not count.
+        self.confirmed =
+            kobo_dial::confirms(self.confirmed_record.as_deref(), &self.address, &self.code);
         // What the last key did on the old pairing says nothing about this one.
         self.last = None;
         cx.store()
@@ -781,6 +855,64 @@ impl App {
         self.wait(cx);
     }
 
+    /// Puts `trouble`'s advice in the banner if the banner is already
+    /// saying why the computer did not answer, and leaves it alone if not.
+    fn restate_banner(&mut self, trouble: Trouble) {
+        let advising = self
+            .notice
+            .as_deref()
+            .is_some_and(|notice| Trouble::ALL.iter().any(|known| known.advice() == notice));
+        if advising {
+            self.notice = Some(trouble.advice().into());
+        }
+    }
+
+    /// Takes a request the computer did not answer.
+    fn failed(&mut self, cx: &mut Context, pending: Option<Pending>, error: TaskError) {
+        let trouble = Trouble::of(error);
+        self.trouble = Some(trouble);
+        // Still worth looking again, but not immediately: a computer
+        // that is not there answers a request a second just as fast
+        // as it answers none. After a press or a result read too:
+        // the deck used to stop looking there, and its banner stayed
+        // up after the computer came back until Refresh was tapped.
+        self.wait(cx);
+        match pending {
+            // A tap that did not get through says so in the line
+            // above the pads, which the tap does not move. No banner
+            // goes up for it: that is left to the next look, as it is
+            // when the computer goes away between taps. One already up
+            // is brought up to date, so it does not say the computer
+            // was slow beside a line saying it is not answering.
+            Some(Pending::Press(id)) => {
+                self.restate_banner(trouble);
+                if let Some(key) = self
+                    .deck
+                    .pages
+                    .iter_mut()
+                    .flat_map(|page| page.keys.iter_mut())
+                    .find(|key| key.id == id)
+                {
+                    "idle".clone_into(&mut key.state);
+                }
+                self.said = Some(format!(
+                    "{} was not sent. {}",
+                    self.label_of(&id),
+                    self.connection()
+                ));
+            }
+            Some(Pending::Result(id)) => {
+                self.restate_banner(trouble);
+                self.said = Some(format!(
+                    "{}'s output did not arrive. {}",
+                    self.label_of(&id),
+                    self.connection()
+                ));
+            }
+            _ => self.notice = Some(trouble.advice().into()),
+        }
+    }
+
     fn note_landed(&mut self, cx: &mut Context, id: &str, raw: &str) {
         if let Some(result) = decode_result(raw) {
             let label = self
@@ -800,6 +932,7 @@ impl KoboApp for App {
         // The hosts first, so they are in hand when the pairing arrives and
         // its first look goes out.
         cx.store().load(HOSTS);
+        cx.store().load(CONFIRMED);
         cx.store().load(PAIRED);
         cx.store().load_cached(CACHE);
         self.show(cx);
@@ -808,6 +941,10 @@ impl KoboApp for App {
         if let StoreResult::Loaded { key, value } = result {
             if key == HOSTS {
                 self.hosts_record = value;
+                return;
+            }
+            if key == CONFIRMED {
+                self.confirmed_record = value;
                 return;
             }
             if key == PAIRED {
@@ -831,6 +968,8 @@ impl KoboApp for App {
                         self.hosts_record.as_deref(),
                         Self::accept_address,
                     );
+                    self.confirmed =
+                        kobo_dial::confirms(self.confirmed_record.as_deref(), &address, &code);
                     self.address = address;
                     self.code = code;
                     self.view = View::Grid;
@@ -859,6 +998,7 @@ impl KoboApp for App {
             // grid until Deck was restarted.
             View::Address if self.previous.is_none() && !self.entry.is_open() => {
                 cx.store().load(HOSTS);
+                cx.store().load(CONFIRMED);
                 cx.store().load(PAIRED);
                 cx.store().load_cached(CACHE);
             }
@@ -878,6 +1018,9 @@ impl KoboApp for App {
                 }
                 if self.trouble.take().is_some() {
                     self.notice = None;
+                    // A press that did not reach the computer is old news
+                    // once the computer answers again.
+                    self.said = None;
                 }
                 let raw = String::from_utf8_lossy(&bytes).into_owned();
                 match pending {
@@ -897,20 +1040,25 @@ impl KoboApp for App {
                             .unwrap_or_else(|| "gone".to_owned());
                         match outcome.as_str() {
                             "started" => {
-                                self.notice = None;
+                                self.said = None;
                                 self.watching = Some(id);
                             }
                             "needs-confirm" => self.confirming = Some(id),
-                            "busy" => self.notice = Some("That command is still running.".into()),
+                            "busy" => self.said = Some("That command is still running.".into()),
                             "full" => {
-                                self.notice = Some(
+                                self.said = Some(
                                     "Four commands are already running. Tap again when one finishes."
                                         .into(),
                                 );
                             }
-                            "unavailable" => self.notice = Some(NO_DECK.into()),
+                            // Too long for the line, and only fixed on the
+                            // computer, so it is said where it has to be
+                            // closed.
+                            "unavailable" => {
+                                self.dialog = Some(("Your computer has no deck", NO_DECK));
+                            }
                             _ => {
-                                self.notice = Some(
+                                self.said = Some(
                                     "That pad changed on your computer. The deck is refreshing."
                                         .into(),
                                 );
@@ -936,35 +1084,14 @@ impl KoboApp for App {
                             self.result_page = 0;
                             self.view = View::Result;
                         } else {
-                            self.notice = Some("That result is no longer available.".into());
+                            self.said = Some("That result is no longer available.".into());
                         }
                     }
                     None => {}
                 }
             }
             TaskOutcome::Failed(error) if self.looked_elsewhere(cx, pending.as_ref(), error) => {}
-            TaskOutcome::Failed(error) => {
-                let trouble = Trouble::of(error);
-                self.trouble = Some(trouble);
-                // Still worth looking again, but not immediately: a computer
-                // that is not there answers a request a second just as fast
-                // as it answers none. After a press or a result read too:
-                // the deck used to stop looking there, and its banner stayed
-                // up after the computer came back until Refresh was tapped.
-                self.wait(cx);
-                if let Some(Pending::Press(id)) = pending {
-                    if let Some(key) = self
-                        .deck
-                        .pages
-                        .iter_mut()
-                        .flat_map(|page| page.keys.iter_mut())
-                        .find(|key| key.id == id)
-                    {
-                        "idle".clone_into(&mut key.state);
-                    }
-                }
-                self.notice = Some(trouble.advice().into());
-            }
+            TaskOutcome::Failed(error) => self.failed(cx, pending, error),
             TaskOutcome::Cancelled => {}
         }
         self.show(cx);
@@ -973,6 +1100,11 @@ impl KoboApp for App {
         if a == action_id("pair-preview") && self.address == "local" {
             self.view = View::Address;
             self.notice = None;
+            self.show(cx);
+            return;
+        }
+        if a == action_id(CLOSE_DIALOG) {
+            self.dialog = None;
             self.show(cx);
             return;
         }
@@ -993,6 +1125,7 @@ impl KoboApp for App {
         }
         if a == action_id("retry") {
             self.notice = None;
+            self.said = None;
             self.poll(cx);
             self.show(cx);
             return;
@@ -1033,7 +1166,7 @@ impl KoboApp for App {
                         let id = key.id.clone();
                         self.press(cx, &id, false);
                     } else if key.state == "running" {
-                        self.notice = Some("That command is still running.".into());
+                        self.said = Some("That command is still running.".into());
                     } else if key.state == "failed" || key.state == "ok" {
                         // A key that has already run opens what it said. It
                         // used to do that only when it had failed, so the
@@ -1076,7 +1209,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{summarise, App, Pending, View, BETWEEN_LOOKS, HOSTS, PAIRED};
+    use super::{summarise, App, Pending, View, BETWEEN_LOOKS, CONFIRMED, HOSTS, PAIRED};
     use crate::model::{decode, RunResult};
     use kobo_sdk::{
         action_id, ActionId, AppRunner, Command, StoreResult, Task, TaskError, TaskId, TaskOutcome,
@@ -1097,7 +1230,7 @@ mod tests {
         assert!(context.take_commands().is_empty());
         assert!(app.task.is_none());
         assert!(app.pending.is_none());
-        assert!(app.notice.as_deref().unwrap().contains("Preview only"));
+        assert!(app.said.as_deref().unwrap().contains("Preview only"));
     }
 
     /// A deck paired with a computer, with the layout that computer sent.
@@ -1224,11 +1357,12 @@ mod tests {
         runner.action(action_id("press-test"));
         let post = in_flight(&runner).expect("the press went out");
         let commands = runner.task_outcome(post, TaskOutcome::Failed(TaskError::Unreachable));
-        assert!(runner
-            .app()
-            .notice
-            .as_deref()
-            .is_some_and(|notice| notice.starts_with("Your computer is not answering.")));
+        // Said in the line above the pads, which the press does not move.
+        assert_eq!(
+            runner.app().said.as_deref(),
+            Some("Test was not sent. 192.168.1.5:8080 is not answering.")
+        );
+        assert_eq!(runner.app().notice, None, "a banner went up over the pads");
         assert_eq!(
             started(&commands),
             Some(Task::Sleep {
@@ -1243,6 +1377,161 @@ mod tests {
         runner.task_outcome(poll, TaskOutcome::Completed(LAYOUT.as_bytes().to_vec()));
         assert_eq!(runner.app().trouble, None);
         assert_eq!(runner.app().notice, None);
+        assert_eq!(runner.app().said, None);
+    }
+
+    /// Where every pad sits on the panel.
+    fn pad_places(app: &App) -> Vec<kobo_ui::Rect> {
+        let layout = app.screen(&kobo_sdk::Context::default()).layout_with(
+            &kobo_sdk::CLARA_BW_METRICS,
+            &kobo_sdk::Chrome::measuring(true),
+        );
+        ["press-test", "press-deploy"]
+            .iter()
+            .map(|pad| layout.rect_of_action(action_id(pad)).expect("a pad"))
+            .collect()
+    }
+
+    /// A tapped preview pad used to swap the line above the pads for a
+    /// banner, which pushed every pad down under the finger.
+    #[test]
+    fn a_tapped_preview_pad_answers_in_the_line_and_moves_nothing() {
+        let mut runner = AppRunner::new(App {
+            address: "local".into(),
+            view: View::Grid,
+            deck: decode(LAYOUT).expect("a layout"),
+            ..App::default()
+        });
+        let before = pad_places(runner.app());
+        runner.action(action_id("press-test"));
+        assert_eq!(runner.app().said.as_deref(), Some(super::PREVIEW_PRESS));
+        assert_eq!(runner.app().notice, None);
+        assert_eq!(pad_places(runner.app()), before);
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert!(drawn.contains(super::PREVIEW_PRESS), "{drawn}");
+    }
+
+    /// With the banner already saying the computer is not answering, a press
+    /// that could not be sent used to change nothing on the panel at all.
+    #[test]
+    fn a_press_that_did_not_get_through_says_so_with_the_pads_still() {
+        let (mut runner, _) = paired();
+        runner.action(action_id("retry"));
+        let look = in_flight(&runner).expect("a look");
+        runner.task_outcome(look, TaskOutcome::Failed(TaskError::Unreachable));
+        let before = pad_places(runner.app());
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert!(drawn.contains("Your computer is not answering."), "{drawn}");
+        runner.action(action_id("press-test"));
+        let post = in_flight(&runner).expect("the press went out");
+        runner.task_outcome(post, TaskOutcome::Failed(TaskError::Unreachable));
+        assert_eq!(pad_places(runner.app()), before);
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert!(
+            drawn.contains("Test was not sent. 192.168.1.5:8080 is not answering."),
+            "{drawn}"
+        );
+        // A banner already up is brought up to date with the press, so it
+        // never says the computer was slow beside a line saying it is gone.
+        runner.action(action_id("retry"));
+        let look = in_flight(&runner).expect("a look");
+        runner.task_outcome(look, TaskOutcome::Failed(TaskError::TimedOut));
+        runner.action(action_id("press-test"));
+        let post = in_flight(&runner).expect("the press went out");
+        runner.task_outcome(post, TaskOutcome::Failed(TaskError::Unreachable));
+        assert!(runner
+            .app()
+            .notice
+            .as_deref()
+            .is_some_and(|notice| notice.starts_with("Your computer is not answering.")));
+    }
+
+    /// A press the computer has no deck for needs something done on the
+    /// computer, so it is said in a dialogue that is closed, not a banner.
+    #[test]
+    fn a_press_the_computer_has_no_deck_for_opens_a_dialogue_with_one_way_out() {
+        let (mut runner, _) = paired();
+        let before = pad_places(runner.app());
+        runner.action(action_id("press-test"));
+        let post = in_flight(&runner).expect("the press went out");
+        runner.task_outcome(
+            post,
+            TaskOutcome::Completed(br#"{"outcome":"unavailable"}"#.to_vec()),
+        );
+        assert_eq!(runner.app().notice, None);
+        let screen = runner.app().screen(&kobo_sdk::Context::default());
+        let overlay = screen.overlay.as_ref().expect("a dialogue");
+        assert_eq!(overlay.title, "Your computer has no deck");
+        assert_eq!(pad_places(runner.app()), before);
+        runner.action(action_id(super::CLOSE_DIALOG));
+        assert!(runner
+            .app()
+            .screen(&kobo_sdk::Context::default())
+            .overlay
+            .is_none());
+    }
+
+    /// A pairing the computer has never answered is not called paired, and
+    /// the first answer is written down so a restart still knows.
+    #[test]
+    fn a_pairing_is_not_confirmed_until_the_computer_answers_and_stays_confirmed() {
+        let mut runner = AppRunner::new(App::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: PAIRED.into(),
+            value: Some(b"127.0.0.1:9331|abc234".to_vec()),
+        });
+        assert_eq!(
+            runner.app().pairing(),
+            "Pairing with 127.0.0.1:9331 · Not confirmed yet"
+        );
+        let look = in_flight(&runner).expect("a look");
+        runner.task_outcome(look, TaskOutcome::Failed(TaskError::Unreachable));
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert!(drawn.contains("Not confirmed yet"), "{drawn}");
+        assert!(!drawn.contains("Paired with"), "{drawn}");
+        let waiting = in_flight(&runner).expect("waiting to look again");
+        runner.task_outcome(waiting, TaskOutcome::Completed(Vec::new()));
+        assert!(!runner.app().confirmed, "a pause is not an answer");
+        let look = in_flight(&runner).expect("a look");
+        let commands =
+            runner.task_outcome(look, TaskOutcome::Completed(LAYOUT.as_bytes().to_vec()));
+        assert_eq!(runner.app().pairing(), "Paired with 127.0.0.1:9331.");
+        let saved = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Store(kobo_sdk::StoreRequest::Save { key, value }) if key == CONFIRMED => {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .expect("the confirmation was written down");
+
+        // After a restart the record is read before the pairing.
+        let mut runner = AppRunner::new(App::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: CONFIRMED.into(),
+            value: Some(saved.clone()),
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: PAIRED.into(),
+            value: Some(b"127.0.0.1:9331|abc234".to_vec()),
+        });
+        assert_eq!(runner.app().pairing(), "Paired with 127.0.0.1:9331.");
+
+        // A new code for the same computer is a new pairing.
+        let mut runner = AppRunner::new(App::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: CONFIRMED.into(),
+            value: Some(saved),
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: PAIRED.into(),
+            value: Some(b"127.0.0.1:9331|xyz789".to_vec()),
+        });
+        assert!(runner.app().pairing().ends_with("Not confirmed yet"));
     }
 
     #[test]
@@ -1617,8 +1906,8 @@ mod tests {
             post,
             TaskOutcome::Completed(br#"{"outcome":"full"}"#.to_vec()),
         );
-        let notice = runner.app().notice.clone().unwrap_or_default();
-        assert!(notice.contains("Four commands"), "{notice}");
+        let said = runner.app().said.clone().unwrap_or_default();
+        assert!(said.contains("Four commands"), "{said}");
     }
 
     #[test]

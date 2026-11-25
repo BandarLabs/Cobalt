@@ -887,25 +887,37 @@ impl Parlor {
         // Undo and the record, and nothing that leaves the game: that is the
         // chevron in the bar, the same as everywhere else on the reader. A
         // "Games" button beside these wrapped onto a second row at the larger
-        // text settings and was drawn off the bottom of the panel.
-        let next_round = position.terminal().is_some() && !self.match_score.contains(&2);
+        // text settings and was drawn off the bottom of the panel. Undo goes
+        // once the round is over, as it does in Backgammon: a finished round
+        // has nothing left to take back.
+        let over = position.terminal().is_some();
+        let next_round = over && !self.match_score.contains(&2);
         let verbs = std::iter::once(("record", "Moves"))
             .chain(next_round.then_some((NEXT_ROUND, "Next round")))
             .collect::<Vec<_>>();
         let words = |screen: ScreenBuilder| {
             let status = self.status(position);
-            let screen = if shape == Shape::Stacked {
-                screen.section_with_value(status, self.score(title))
+            let note = self.board_note(title, mover, &steps);
+            if shape == Shape::Stacked {
+                screen
+                    .section_with_value(status, self.score(title))
+                    .secondary(fixed_note(&note, metrics))
             } else {
                 // A column is too narrow at the larger sizes for whose move
                 // it is and the score on one line, so the score goes under.
-                screen.section(status).secondary(self.score(title))
-            };
-            self.board_notes(screen, title, mover, &steps, rotated)
+                // Beside the board the words cannot move it, so the note is
+                // set whole.
+                let screen = screen.section(status).secondary(self.score(title));
+                if note.is_empty() {
+                    screen
+                } else {
+                    screen.secondary(note)
+                }
+            }
         };
         if shape == Shape::Stacked {
             return board(words(head()))
-                .game_actions(true, verbs.iter().copied())
+                .game_actions(!over, verbs.iter().copied())
                 .build();
         }
         // A square board is as wide as the height beside the words lets it
@@ -915,7 +927,7 @@ impl Parlor {
         let slot = if matches!(position, Position::Kalah(_)) {
             SlotWidth::Fill
         } else {
-            let alone = board(head()).game_actions(true, verbs.iter().copied());
+            let alone = board(head()).game_actions(!over, verbs.iter().copied());
             SlotWidth::Fixed(tenths_for(
                 metrics,
                 board_width(&alone.build(), metrics, chrome),
@@ -929,7 +941,7 @@ impl Parlor {
                     (SlotWidth::Fill, Box::new(words)),
                 ],
             )
-            .game_actions(true, verbs.iter().copied())
+            .game_actions(!over, verbs.iter().copied())
             .build()
     }
 
@@ -937,30 +949,22 @@ impl Parlor {
     /// on the board. Nobody can see the computer's tap, and a board of
     /// identical discs does not say which one moved.
     ///
-    /// A refused save takes the place of both lines rather than joining
-    /// them: at the largest text sizes three paragraphs above a board that
-    /// cannot shrink below a fingertip push Undo off the panel, and the
-    /// mark on the board still shows the move.
-    fn board_notes(
-        &self,
-        screen: ScreenBuilder,
-        title: Title,
-        mover: i8,
-        steps: &[Step],
-        rotated: bool,
-    ) -> ScreenBuilder {
+    /// The answer to the last tap comes first and the other side's move
+    /// after it, in one paragraph. A refused save takes the place of both:
+    /// the mark on the board still shows the move.
+    fn board_note(&self, title: Title, mover: i8, steps: &[Step]) -> String {
         if self.save_failed {
-            return screen.secondary(SAVE_FAILED);
+            return SAVE_FAILED.to_owned();
         }
-        let screen = if self.notice.is_empty() {
-            screen
-        } else {
-            screen.secondary(self.notice.as_str())
-        };
-        match self.last_line(title, mover, steps, rotated) {
-            Some(line) => screen.secondary(line),
-            None => screen,
-        }
+        [
+            Some(self.notice.clone()),
+            self.last_line(title, mover, steps),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
     }
 
     fn reversi_board(
@@ -1151,7 +1155,7 @@ impl Parlor {
 
     /// The other side's last turn in plain words, naming what the marks on
     /// the board show.
-    fn last_line(&self, title: Title, mover: i8, steps: &[Step], rotated: bool) -> Option<String> {
+    fn last_line(&self, title: Title, mover: i8, steps: &[Step]) -> Option<String> {
         let who = self.name(title, mover);
         let other = -mover;
         let mine = steps.iter().filter(|step| step.side() == mover);
@@ -1201,18 +1205,22 @@ impl Parlor {
                 }
                 line
             }
-            Step::Morris(..) => self.morris_line(title, mover, steps, rotated)?,
+            Step::Morris(..) => self.morris_line(title, mover, steps)?,
             Step::Kalah(..) => self.kalah_line(title, mover, steps)?,
         })
     }
 
-    fn morris_line(
-        &self,
-        title: Title,
-        mover: i8,
-        steps: &[Step],
-        rotated: bool,
-    ) -> Option<String> {
+    /// A Morris turn in the words the other games use: the board marks the
+    /// points, so the line points at the marks rather than naming them.
+    ///
+    /// It used to name every point as the side of a square, which took
+    /// three lines for a move and a removal ("from the outer square's top
+    /// left corner to the middle of the outer square's top side, and
+    /// removed one of your pieces from the middle square's top right
+    /// corner") and pushed the board down while it was there. The moved
+    /// piece is the marked one with a piece on it, and the one taken is the
+    /// reader's own, missing from a marked point.
+    fn morris_line(&self, title: Title, mover: i8, steps: &[Step]) -> Option<String> {
         let who = self.name(title, mover);
         let mut line = String::new();
         for step in steps.iter().filter(|step| step.side() == mover) {
@@ -1220,26 +1228,14 @@ impl Parlor {
                 continue;
             };
             match *mv {
-                MorrisMove::Place(to) => {
-                    line = format!("{who} placed a piece on {}", morris_point(to, rotated));
-                }
-                MorrisMove::Slide(from, to) => {
-                    line = format!(
-                        "{who} moved a piece from {} to {}",
-                        morris_point(from, rotated),
-                        morris_point(to, rotated)
-                    );
-                }
-                MorrisMove::Remove(at) => {
-                    let removed = format!(
-                        "removed {} from {}",
-                        self.pieces_of(title, -mover, 1, "piece", "pieces"),
-                        morris_point(at, rotated)
-                    );
+                MorrisMove::Place(_) => line = format!("{who} placed the marked piece"),
+                MorrisMove::Slide(..) => line = format!("{who} moved the marked piece"),
+                MorrisMove::Remove(_) => {
+                    let taken = self.pieces_of(title, -mover, 1, "piece", "pieces");
                     line = if line.is_empty() {
-                        format!("{who} {removed}")
+                        format!("{who} took {taken}")
                     } else {
-                        format!("{line}, and {removed}")
+                        format!("{line} and took {taken}")
                     };
                 }
             }
@@ -1360,6 +1356,16 @@ impl Parlor {
         }
         self.record.push(description);
         self.undo_pending = false;
+        // Whatever the note said about the last tap, a refusal or a hint, no
+        // longer applies once a move is made; the move sets its own.
+        self.notice.clear();
+    }
+
+    /// Whether the round on the board has ended.
+    fn round_over(&self) -> bool {
+        self.position
+            .as_ref()
+            .is_some_and(|position| position.terminal().is_some())
     }
 
     fn tap_cell(&mut self, at: usize) {
@@ -1664,6 +1670,13 @@ impl Parlor {
     }
 
     fn undo(&mut self) {
+        // A finished round is not taken back. Undo here reopened the lost
+        // game and took its point off the score, so a match could be won by
+        // undoing every round that went the other way. The bar no longer
+        // offers it then; this holds for a tap already on its way.
+        if self.round_over() {
+            return;
+        }
         let Some(target) = self.undo_target() else {
             self.undo_pending = false;
             self.notice = chrome::NOTHING_TO_UNDO.into();
@@ -1678,20 +1691,6 @@ impl Parlor {
             self.notice =
                 "Undo asked for. The other player taps Undo to agree, or plays on.".into();
             return;
-        }
-        if self.scored {
-            if let Some(score) = self.position.as_ref().and_then(Position::terminal) {
-                match score.cmp(&0) {
-                    Ordering::Greater => {
-                        self.match_score[0] = self.match_score[0].saturating_sub(1);
-                    }
-                    Ordering::Less => {
-                        self.match_score[1] = self.match_score[1].saturating_sub(1);
-                    }
-                    Ordering::Equal => {}
-                }
-            }
-            self.scored = false;
         }
         self.position = Some(self.history[target].clone());
         self.history.truncate(target);
@@ -1916,6 +1915,41 @@ enum Shape {
 
 impl Shape {
     const IN_ORDER: [Self; 2] = [Self::Stacked, Self::Beside];
+}
+
+/// How many lines the note above an upright board always takes.
+///
+/// The note came and went between turns, one line and then two and then
+/// three, and the board under it shrank and grew by a line each time, so
+/// the squares moved under the finger between one move and the next. Two
+/// lines hold the answer to a tap and the other side's move together on
+/// this panel at the usual sizes.
+const NOTE_LINES: usize = 2;
+
+/// `note` set in exactly [`NOTE_LINES`] lines at this panel's width and text
+/// size: cut short with an ellipsis when it runs longer, and closed with an
+/// empty line when it is shorter, so the board below it never moves.
+///
+/// The lines are broken here and joined with hard breaks, where the layout
+/// breaks them the same way. A break at the very end of a paragraph is not a
+/// line of its own, so an empty last line takes a second one.
+fn fixed_note(note: &str, metrics: &DisplayMetrics) -> String {
+    kobo_ui::with_text_scale(metrics.text_scale, || {
+        let width = metrics.readable_width();
+        let size = kobo_ui::FontSize::Note;
+        let clamped = kobo_ui::clamp_lines(note, width, size, NOTE_LINES);
+        let mut lines = if clamped.is_empty() {
+            Vec::new()
+        } else {
+            kobo_ui::wrap_text(&clamped, width, size)
+        };
+        lines.resize(NOTE_LINES, String::new());
+        let mut text = lines.join("\n");
+        if lines.last().is_some_and(String::is_empty) {
+            text.push('\n');
+        }
+        text
+    })
 }
 
 /// The first of a screen's shapes that fits the panel, built one at a time
@@ -2880,6 +2914,132 @@ mod tests {
         true
     }
 
+    /// Where the board's top left square is drawn, which is where every
+    /// other square is measured from.
+    fn board_corner(screen: &Screen, metrics: &kobo_ui::DisplayMetrics) -> (i32, i32, i32) {
+        let layout = screen.layout_with(metrics, &Chrome::measuring(true));
+        (0..100)
+            .filter_map(|at| layout.rect_of_action(action_id(&cell_name(at))))
+            .map(|rect| (rect.y, rect.x, rect.width))
+            .min()
+            .expect("a board")
+    }
+
+    /// The board used to move by a line whenever the note above it grew:
+    /// a refused tap, the computer's reply and the end of a round each added
+    /// one, so the squares were not where the finger had just been.
+    #[test]
+    fn the_board_stays_put_through_a_refused_tap_every_turn_and_the_end_of_the_round() {
+        // A tap each game refuses at the start: a square that brackets
+        // nothing, an empty square, a place that is not a point, a store.
+        let refused = [
+            (Title::Reversi, 0),
+            (Title::Draughts, 0),
+            (Title::Morris, 1),
+            (Title::Kalah, 6),
+        ];
+        for scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            let context = kobo_sdk::AppRunner::with_metrics(Parlor::default(), metrics).context();
+            for (title, tap) in refused {
+                let mut app = Parlor::default();
+                app.start(title);
+                let at_start = board_corner(&app.screen_for(&context), &metrics);
+                app.handle_action(action_id(&cell_name(tap)));
+                assert!(!app.notice.is_empty(), "{} took the tap", title.name());
+                let corner = board_corner(&app.screen_for(&context), &metrics);
+                assert_eq!(corner, at_start, "{} {scale:?} refused tap", title.name());
+                let mut moves = 0;
+                while play_one_move(&mut app) && moves < 400 {
+                    moves += 1;
+                    let corner = board_corner(&app.screen_for(&context), &metrics);
+                    assert_eq!(corner, at_start, "{} {scale:?} move {moves}", title.name());
+                }
+                assert!(app.round_over(), "{} did not finish", title.name());
+                // A tap on the finished board answers in the same lines.
+                app.handle_action(action_id(&cell_name(tap)));
+                let corner = board_corner(&app.screen_for(&context), &metrics);
+                assert_eq!(corner, at_start, "{} {scale:?} after the end", title.name());
+            }
+        }
+    }
+
+    #[test]
+    fn the_note_above_the_board_is_always_two_lines_whatever_it_says() {
+        let height = |note: &str| {
+            let screen = ScreenBuilder::new("note")
+                .secondary(fixed_note(note, &CLARA_BW_METRICS))
+                .build();
+            screen
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, kobo_ui::LayoutKind::Secondary))
+                .map(|node| (node.rect.height, node.text_lines.len()))
+                .expect("a note")
+        };
+        let two_lines = (2 * kobo_ui::FontSize::Note.line_height(), NOTE_LINES);
+        assert_eq!(height(""), two_lines);
+        assert_eq!(height("Your move."), two_lines);
+        assert_eq!(height(SAVE_FAILED), two_lines);
+        assert_eq!(height(&SAVE_FAILED.repeat(3)), two_lines);
+        assert!(fixed_note(&SAVE_FAILED.repeat(3), &CLARA_BW_METRICS).ends_with('\u{2026}'));
+    }
+
+    /// Undo after the last move of a round reopened it and took the point
+    /// back off the score, so a lost round could simply be undone.
+    #[test]
+    fn a_finished_round_offers_no_undo_and_keeps_its_result_and_score() {
+        for title in GAMES {
+            let mut app = Parlor::default();
+            app.start(title);
+            assert!(app
+                .screen()
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+                .rect_of_action(action_id(chrome::UNDO))
+                .is_some());
+            let mut moves = 0;
+            while play_one_move(&mut app) && moves < 400 {
+                moves += 1;
+            }
+            assert!(app.round_over(), "{} did not finish", title.name());
+            let score = app.match_score;
+            let record = app.record.len();
+            let ended = app.screen();
+            let layout = ended.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+            assert!(
+                layout.rect_of_action(action_id(chrome::UNDO)).is_none(),
+                "{} still offers Undo",
+                title.name()
+            );
+            assert!(layout.rect_of_action(action_id("record")).is_some());
+            app.handle_action(action_id(chrome::UNDO));
+            assert!(app.round_over(), "{} was reopened", title.name());
+            assert_eq!(app.match_score, score);
+            assert_eq!(app.record.len(), record);
+        }
+    }
+
+    /// A Morris move used to name each point as the side of a square, which
+    /// took three lines for a move with a removal.
+    #[test]
+    fn a_morris_turn_points_at_the_marked_points_rather_than_naming_them() {
+        let mut app = Parlor::default();
+        app.start(Title::Morris);
+        let mut moves = 0;
+        let mut seen_take = false;
+        while play_one_move(&mut app) && moves < 400 {
+            moves += 1;
+            let line = shown(&app.screen()).join(" ");
+            assert!(!line.contains("square's"), "{line}");
+            seen_take |= line.contains("and took one of your pieces.");
+        }
+        assert!(seen_take, "the computer never took a piece");
+    }
+
     #[test]
     fn every_game_can_be_played_to_its_end_and_picked_up_again() {
         // Through the application's own taps rather than the engine, because
@@ -3102,8 +3262,8 @@ mod tests {
     #[test]
     fn each_game_marks_what_the_computer_moved_in_its_own_terms() {
         // Draughts: where the piece came from and where it went, and what it
-        // jumped. Kalah: the pit it sowed. Morris draws no chosen state, so
-        // the line under the status names the points in words.
+        // jumped. Kalah: the pit it sowed. Morris: the point it placed on,
+        // which the line under the status points at rather than names.
         let mut draughts = Parlor::default();
         draughts.start(Title::Draughts);
         assert!(play_one_move(&mut draughts));
@@ -3143,10 +3303,10 @@ mod tests {
         morris.handle_action(action_id(&cell_name(MORRIS_GRID[0])));
         let words = shown(&morris.screen()).join(" ");
         assert!(
-            words.contains("The computer placed a piece on the "),
+            words.contains("The computer placed the marked piece."),
             "{words}"
         );
-        assert!(words.contains(" square's "), "{words}");
+        assert_eq!(marked_on(&morris.screen()).len(), 1);
     }
 
     #[test]

@@ -178,6 +178,103 @@ impl Push {
     }
 }
 
+/// The most pixels a page may decode to on the computer.
+///
+/// The reader's own ceiling, [`kobo_image::MAX_PIXELS`], is sized for a
+/// single core and half a gigabyte, and a letter page scanned at 300 dpi is
+/// already a third over it. The computer has the memory, so it reads the page
+/// whole and sends the reader something that fits. Fifty million is an A3
+/// page at 400 dpi, with room to spare, and still refuses a header claiming
+/// a picture no score is.
+pub const MAX_SOURCE_PIXELS: u64 = 50_000_000;
+
+/// Reads one page image on the computer and fits it for the shelf.
+///
+/// Pages the reader could decode itself take the reader's own path, so what
+/// it receives for them is what it always did. A page past the reader's limit,
+/// a 300 dpi scan or a large PDF page, is read here at full size and scaled
+/// in one step to the width [`fit_page`] would give it, and inside the
+/// reader's pixel budget, then handed to [`fit_page`] like any other.
+///
+/// # Errors
+///
+/// The reason the page could not be used, in words for the person pushing.
+pub fn decode_page(bytes: &[u8], panel: Panel) -> Result<Picture, String> {
+    match kobo_image::decode(bytes) {
+        Ok(picture) => return fit_page(&picture, panel),
+        Err(
+            kobo_image::ImageError::TooManyPixels { .. }
+            | kobo_image::ImageError::TooManyBytes { .. },
+        ) => {}
+        Err(error) => return Err(format!("could not be decoded: {error}")),
+    }
+    if panel.width == 0 || panel.height == 0 {
+        return Err("Music Stand received unsupported panel dimensions".to_owned());
+    }
+    let undecodable = |error: image::ImageError| format!("could not be decoded: {error}");
+    let mut decoder = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| format!("could not be decoded: {error}"))?
+        .into_decoder()
+        .map_err(undecodable)?;
+    let (width, height) = image::ImageDecoder::dimensions(&decoder);
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels == 0 || pixels > MAX_SOURCE_PIXELS {
+        return Err(format!(
+            "could not be decoded: the page claims {pixels} pixels, and {MAX_SOURCE_PIXELS} is the most read"
+        ));
+    }
+    let orientation = image::ImageDecoder::orientation(&mut decoder).map_err(undecodable)?;
+    let mut image = image::DynamicImage::from_decoder(decoder).map_err(undecodable)?;
+    image.apply_orientation(orientation);
+    // Transparency onto white paper and colour to luminance, the way the
+    // reader's own decode does it, so a big page and a small one from the
+    // same scanner come out the same grey.
+    let luma = image.to_luma_alpha8();
+    drop(image);
+    let (width, height) = luma.dimensions();
+    let paper = image::GrayImage::from_fn(width, height, |x, y| {
+        let pixel = luma.get_pixel(x, y);
+        let alpha = u32::from(pixel[1]);
+        let on_paper = (u32::from(pixel[0]) * alpha + 255 * (255 - alpha) + 127) / 255;
+        image::Luma([u8::try_from(on_paper).unwrap_or(255)])
+    });
+    drop(luma);
+    let (target_width, target_height) = within_budget(width, height, panel);
+    let scaled = image::imageops::resize(
+        &paper,
+        target_width,
+        target_height,
+        image::imageops::FilterType::Lanczos3,
+    );
+    let picture = Picture::from_grey(target_width, target_height, scaled.into_raw())
+        .map_err(|error| format!("could not scale a score page: {error}"))?;
+    fit_page(&picture, panel)
+}
+
+/// The size a page too big for the reader is scaled to: no wider than
+/// [`fit_page`] makes a page, and no more pixels than the reader decodes.
+fn within_budget(width: u32, height: u32, panel: Panel) -> (u32, u32) {
+    let widest = panel.width.saturating_mul(PAGE_SCALE_NUMERATOR);
+    let mut target = width.min(widest).max(1);
+    let tall = |across: u32| {
+        u32::try_from(u64::from(height) * u64::from(across) / u64::from(width))
+            .unwrap_or(u32::MAX)
+            .max(1)
+    };
+    let pixels = u64::from(target) * u64::from(tall(target));
+    if pixels > kobo_image::MAX_PIXELS {
+        // Never crop; a cropped staff loses music. Rounded down, so the
+        // page lands inside the budget rather than a row over it.
+        let scale = (kobo_image::MAX_PIXELS as f64 / pixels as f64).sqrt();
+        target = ((f64::from(target) * scale) as u32).max(1);
+        while u64::from(target) * u64::from(tall(target)) > kobo_image::MAX_PIXELS && target > 1 {
+            target -= 1;
+        }
+    }
+    (target, tall(target))
+}
+
 /// Fit a raw page for the shelf: grayscale, between one and two panel widths
 /// wide so full-page view is crisp and zoom keeps detail, height capped.
 pub fn fit_page(page: &Picture, panel: Panel) -> Result<Picture, String> {
@@ -370,6 +467,64 @@ mod tests {
         assert_eq!(narrow.width(), 1072);
         let inside = fit_page(&grey_page(1500, 2000, 200), panel()).expect("fit");
         assert_eq!(inside.width(), 1500);
+    }
+
+    /// A page as a scanner writes it: grey PNG, a dark staff line across a
+    /// white page, so scaling has something to keep.
+    fn scanned_png(width: u32, height: u32) -> Vec<u8> {
+        let page = image::GrayImage::from_fn(width, height, |_, y| {
+            image::Luma([if y % 40 < 3 { 20 } else { 250 }])
+        });
+        let mut png = Vec::new();
+        image::DynamicImage::ImageLuma8(page)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .expect("png");
+        png
+    }
+
+    #[test]
+    fn a_letter_page_scanned_at_300_dpi_is_scaled_to_fit_the_reader_rather_than_refused() {
+        let png = scanned_png(2550, 3300);
+        assert!(
+            kobo_image::decode(&png).is_err(),
+            "the reader's own limit refuses it"
+        );
+        let page = decode_page(&png, panel()).expect("the computer reads it");
+        assert_eq!(page.width(), 2144, "as wide as any other prepared page");
+        assert_eq!(page.height(), 2774);
+        assert!(u64::from(page.width()) * u64::from(page.height()) <= kobo_image::MAX_PIXELS);
+        assert!(kobo_image::decode(
+            &kobo_image::encode_png_grey(page.width(), page.height(), page.grey()).expect("png")
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn a_tall_large_page_lands_inside_the_readers_pixel_budget_without_cropping() {
+        // An A3 page rendered at 200 dpi, then one far taller than it is wide.
+        for (width, height) in [(2339, 3308), (2400, 9000)] {
+            let page = decode_page(&scanned_png(width, height), panel()).expect("page");
+            assert!(u64::from(page.width()) * u64::from(page.height()) <= kobo_image::MAX_PIXELS);
+            let source = f64::from(height) / f64::from(width);
+            let kept = f64::from(page.height()) / f64::from(page.width());
+            assert!(
+                (source - kept).abs() < 0.01,
+                "{width}x{height} kept its shape"
+            );
+        }
+    }
+
+    #[test]
+    fn a_page_the_reader_could_decode_is_prepared_exactly_as_before() {
+        let png = scanned_png(1700, 2200);
+        let before = fit_page(&kobo_image::decode(&png).expect("decode"), panel()).expect("fit");
+        assert_eq!(decode_page(&png, panel()).expect("page"), before);
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_picture_says_so() {
+        let reason = decode_page(b"not a page", panel()).unwrap_err();
+        assert!(reason.starts_with("could not be decoded"), "{reason}");
     }
 
     #[test]

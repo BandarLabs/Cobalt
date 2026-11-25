@@ -520,7 +520,7 @@ struct Row {
 impl State {
     fn new(stylesheet: StyleSheet, allowance: Allowance) -> Self {
         Self {
-            builder: Builder::new(),
+            builder: Builder::keeping_line_breaks(),
             equation: None,
             formulae: BTreeMap::new(),
             formulae_as_text: false,
@@ -711,10 +711,22 @@ impl State {
             return;
         }
         match name {
-            // A `<br>` is a soft break. One column, and the paginator wraps:
-            // honouring it would give a ragged short line in the middle of a
-            // paragraph.
-            "br" => self.synthetic(" "),
+            // A `<br>` is where the author ended a line: verse, a letter's
+            // closing, an address. Read as a space, the opening poem of a
+            // novel came out as one run-on paragraph. Only prose keeps it.
+            // A heading or a title is also a line in the contents and a name
+            // on the shelf, a cell is measured as one line of its column, and
+            // a footnote or a link's words are matched against the text again
+            // later, so in those it is still the space it always was.
+            "br" => {
+                let one_line = self.heading.is_some()
+                    || self.titling
+                    || self.note.is_some()
+                    || self.link.is_some()
+                    || self.equation.is_some()
+                    || self.row.as_ref().is_some_and(|row| row.open);
+                self.synthetic(if one_line { " " } else { LINE_BREAK });
+            }
             // A picture cannot be drawn inside a run of text, so what it was
             // described as is the only part that can survive. An `<img>` with
             // no description says nothing, and brackets around nothing would
@@ -1251,6 +1263,7 @@ impl State {
         if text.trim().is_empty() {
             return;
         }
+        let text = as_broken(&text);
         let heading = self.heading.take();
         let item = std::mem::replace(&mut self.item, false);
         let caption = std::mem::replace(&mut self.caption, false);
@@ -1589,19 +1602,42 @@ fn selector_matches(selector: &str, name: &str, id: &str, classes: &str) -> bool
     true
 }
 
+/// What a `<br>` is written as while a block is being collected.
+///
+/// Not `\n`, because the source's own newlines are indentation and fold into
+/// spaces; this is the one character that says the author broke the line.
+/// [`as_broken`] turns it into the `\n` the block is kept with.
+const LINE_BREAK: &str = "\u{2028}";
+
+/// A block's collected words as they are kept: the source's whitespace as
+/// spaces and each `<br>` as a `\n`, for the builder to fold into one of each.
+fn as_broken(text: &str) -> String {
+    text.chars()
+        .map(|character| match character {
+            '\u{2028}' => '\n',
+            character if character.is_whitespace() => ' ',
+            character => character,
+        })
+        .collect()
+}
+
 fn normalise_spans(spans: Vec<InlineSpan>) -> Vec<InlineSpan> {
     let mut out: Vec<InlineSpan> = Vec::new();
-    let mut pending_space = false;
+    // The gap waiting to be written before the next word: a space, or the
+    // line break a `<br>` in it asked for, folded the same way as the block's
+    // own text so the runs still spell it out.
+    let mut pending: Option<char> = None;
     for span in spans {
         let mut text = String::new();
         for character in span.text.chars() {
             if character.is_whitespace() {
-                pending_space = !out.is_empty() || !text.is_empty();
+                if (!out.is_empty() || !text.is_empty()) && pending != Some('\n') {
+                    pending = Some(if character == '\u{2028}' { '\n' } else { ' ' });
+                }
                 continue;
             }
-            if pending_space {
-                text.push(' ');
-                pending_space = false;
+            if let Some(gap) = pending.take() {
+                text.push(gap);
             }
             if !character.is_control() {
                 text.push(character);
@@ -2344,13 +2380,13 @@ mod tests {
 
     #[test]
     fn emphasis_survives_a_line_break_inside_a_paragraph() {
-        // `<br>` writes a space the source never held. When it reached only
+        // `<br>` writes a break the source never held. When it reached only
         // the block text, the runs stopped matching it and every emphasis in
         // the paragraph was thrown away -- which is most EPUB verse.
         let document = parse("<p><b>One line</b><br>and its <i>continuation</i>.</p>");
         assert_eq!(
             document.blocks[0].text(),
-            Some("One line and its continuation.")
+            Some("One line\nand its continuation.")
         );
         let rich = document.rich.get(&0).expect("retained emphasis");
         assert!(rich.spans.iter().any(|span| span.style.strong));
@@ -2713,12 +2749,61 @@ mod tests {
     }
 
     #[test]
-    fn a_soft_break_does_not_start_a_new_paragraph() {
+    fn a_line_break_ends_the_line_without_starting_a_new_paragraph() {
         let document = parse("<p>One line<br>and its continuation.</p>");
         assert_eq!(
             document.blocks,
             vec![Block::Paragraph(
-                "One line and its continuation.".to_owned()
+                "One line\nand its continuation.".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn a_poem_set_with_line_breaks_keeps_its_lines() {
+        // The opening of a novel, as its EPUB writes it: indented source,
+        // breaks doubled between stanzas, one at the very end.
+        let document = parse(
+            "<p class=\"verse\">\n  <br/>Not in the waters\n  <br/>of the <i>sea</i>,<br/><br/>\n  \
+             but in the stars.<br/>\n</p>",
+        );
+        assert_eq!(
+            document.blocks,
+            vec![Block::Paragraph(
+                "Not in the waters\nof the sea,\nbut in the stars.".to_owned()
+            )]
+        );
+        let rich = &document.rich[&0];
+        let joined: String = rich.spans.iter().map(|span| span.text.as_str()).collect();
+        assert_eq!(joined, "Not in the waters\nof the sea,\nbut in the stars.");
+        assert!(
+            rich.spans
+                .iter()
+                .any(|span| span.text.trim() == "sea" && span.style.emphasis),
+            "the italics were lost with the breaks: {:?}",
+            rich.spans
+        );
+    }
+
+    #[test]
+    fn a_heading_broken_over_two_lines_is_still_one_line_in_the_contents() {
+        let document = parse("<h2>Chapter One<br/>The Beginning</h2><p>Text.</p>");
+        assert_eq!(
+            document.blocks[0],
+            Block::Heading {
+                level: 2,
+                text: "Chapter One The Beginning".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn the_source_files_own_newlines_are_still_spaces() {
+        let document = parse("<p>Hard wrapped\nby the editor<br>\nthen broken.</p>");
+        assert_eq!(
+            document.blocks,
+            vec![Block::Paragraph(
+                "Hard wrapped by the editor\nthen broken.".to_owned()
             )]
         );
     }

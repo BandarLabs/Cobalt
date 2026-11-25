@@ -734,7 +734,15 @@ impl Fieldbook {
                     format!("outing-{}", outing.id),
                     context.clamped_row(&format!("{} · {}", outing.location, outing.date), 2, true),
                     format!("{species} species"),
-                    Glyph::Check,
+                    // The tick is for a finished outing. The open one is
+                    // still being counted, so it leads with the empty ring
+                    // the platform draws for something outstanding; with the
+                    // tick it read as filed while Finish outing sat above it.
+                    if self.open_outing == Some(outing.id) {
+                        Glyph::Circle
+                    } else {
+                        Glyph::Check
+                    },
                 )
             })
             .collect::<Vec<_>>();

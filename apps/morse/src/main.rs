@@ -107,10 +107,9 @@ struct Beat {
     lit: bool,
     /// Which [`Signal`] this second belongs to.
     ///
-    /// The silence after a letter is charged to the letter that just finished,
-    /// so that the count in the top bar says a letter has gone out once it
-    /// actually has. What the panel *draws* is chosen separately, by
-    /// [`letter_at`], and looks the other way.
+    /// The silence after a letter is charged to the letter that just finished.
+    /// What the panel *draws*, and so what the count in the top bar names, is
+    /// chosen separately, by [`letter_at`], which looks the other way.
     signal: usize,
 }
 
@@ -548,11 +547,8 @@ impl Morse {
         // In learning mode the code is drawn under the letter as dots and
         // dashes, so the bar only counts the letters off.
         let title = if self.running {
-            format!(
-                "Letter {} of {}",
-                self.sent().min(self.signals.len().max(1)),
-                self.signals.len()
-            )
+            let (letter, letters) = self.counted();
+            format!("Letter {letter} of {letters}")
         } else {
             "Morse".to_owned()
         };
@@ -694,11 +690,27 @@ impl Morse {
             .build()
     }
 
-    /// How many letters have gone out, counting the one in flight.
-    fn sent(&self) -> usize {
-        self.beats
-            .get(self.at.min(self.beats.len().saturating_sub(1)))
-            .map_or(0, |beat| beat.signal + 1)
+    /// Where the letter on the panel falls in the message, and how many
+    /// letters the message has, for the count in the top bar.
+    ///
+    /// Counted from the letter that is drawn rather than from the beat in
+    /// flight. The panel moves on to the next letter during the silence
+    /// before it, and the bar is only redrawn with the panel, so a count
+    /// taken from the beat was always a letter behind: "ab" showed a large
+    /// B under "Letter 1 of 2" and never reached 2. Word gaps are not
+    /// letters and are never drawn, so they are left out of both numbers;
+    /// counted, "hi there" ran to 8 and skipped from 2 to 4.
+    fn counted(&self) -> (usize, usize) {
+        let letter = |signal: &Signal| !signal.code.is_empty();
+        let total = self.signals.iter().filter(|signal| letter(signal)).count();
+        let at = self.showing.map_or(1, |showing| {
+            self.signals
+                .iter()
+                .take(showing + 1)
+                .filter(|signal| letter(signal))
+                .count()
+        });
+        (at.clamp(1, total.max(1)), total)
     }
 
     fn show(&mut self, context: &mut Context) {
@@ -1359,6 +1371,80 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Walks a message to its end, pairing every count the top bar shows while
+    /// sending with the letter on the panel when that bar was drawn.
+    fn counted_off(message: &str) -> Vec<(char, String)> {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.app_mut().compose(message);
+        let mut commands = runner.action(action_id(AGAIN));
+        let mut panel = None;
+        let mut seen = Vec::new();
+        loop {
+            for command in &commands {
+                match command {
+                    Command::PutPicture {
+                        width,
+                        height,
+                        pixels,
+                        ..
+                    } => panel = letter_in(pixels, *width, *height),
+                    Command::SetScreen(screen) => {
+                        let drawn = format!("{screen:?}");
+                        if let (Some(letter), Some(start)) = (panel, drawn.find("Letter ")) {
+                            let count: String = drawn[start..]
+                                .chars()
+                                .take_while(|character| *character != '"')
+                                .collect();
+                            if count.contains(" of ") {
+                                seen.push((letter, count));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(task) = commands.iter().rev().find_map(|command| match command {
+                Command::Spawn { task, .. } => Some(*task),
+                _ => None,
+            }) else {
+                break;
+            };
+            commands = runner.task_outcome(task, TaskOutcome::Completed(Vec::new()));
+        }
+        seen
+    }
+
+    /// The bar is redrawn only when the panel changes letter, and the panel
+    /// changes during the silence before the letter. Counted from the beat
+    /// in flight, the bar was a letter behind for the whole run: "ab" put a
+    /// large B under "Letter 1 of 2" and never reached 2.
+    #[test]
+    fn the_count_in_the_bar_names_the_letter_on_the_panel() {
+        let pairs = |list: &[(char, &str)]| -> Vec<(char, String)> {
+            list.iter()
+                .map(|(letter, count)| (*letter, (*count).to_owned()))
+                .collect()
+        };
+        assert_eq!(
+            counted_off("ab"),
+            pairs(&[('A', "Letter 1 of 2"), ('B', "Letter 2 of 2")])
+        );
+    }
+
+    /// A word gap is a silence that is never drawn, so it is no letter of
+    /// the count either: "hi there" counted it, ran to 8, and stepped from
+    /// 2 straight to 4.
+    #[test]
+    fn the_gap_between_words_is_not_counted_as_a_letter() {
+        let counts: Vec<String> = counted_off("hi there")
+            .into_iter()
+            .map(|(_, count)| count)
+            .collect();
+        let expected: Vec<String> = (1..=7).map(|at| format!("Letter {at} of 7")).collect();
+        assert_eq!(counts, expected);
     }
 
     /// Send starts the beacon there and then, so the screen the Send key is on

@@ -1200,7 +1200,7 @@ const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-/// A photo's file date in words, from its epoch seconds. Days-to-civil by
+/// A photo's date in words, from its epoch seconds. Days-to-civil by
 /// Howard Hinnant's algorithm, so no date library rides along.
 fn format_taken(epoch: u64) -> String {
     let days = i64::try_from(epoch / 86_400).unwrap_or(i64::MAX);
