@@ -498,7 +498,7 @@ impl Sudoku {
 
 Tap Notes, then numbers to add or remove notes; a tick over Notes shows they are on. Each note sits in its own place in the square, and the selected square's notes have outlined keys. Tap Notes again to enter answers, which are grey beside the printed numbers. Erase clears the selected square, so notes can go where an answer was.
 
-Mistakes are hidden at first. Show mistakes in More strikes through every wrong answer on the board without removing it, and Hide mistakes turns that off again. A stroke goes when you change or erase the answer. Reveal square in More fills the selected square after asking, and counts as a hint.
+Mistakes are hidden at first. Show mistakes in More strikes through each wrong answer on the board, and Hide mistakes turns that off again. Reveal square in More fills the selected square after asking, and counts as a hint.
 
 Your game saves after every edit. Undo takes back the last 64 edits, even after reopening. A full correct grid completes the puzzle. New game in More replaces the current game and its history.
 
