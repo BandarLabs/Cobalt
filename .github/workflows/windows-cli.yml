@@ -1,8 +1,11 @@
 name: Windows
 
+# The Windows build and test takes most of an hour, so it runs on the pull
+# request that cuts a beta release (a `release/` branch) and when started by
+# hand, not on every pull request and every merge. Each change still meets
+# Windows before it reaches anyone, at the cut that ships it; a change that
+# worries you can be checked earlier by starting this workflow on its branch.
 on:
-  push:
-    branches: [beta]
   pull_request:
     branches: [beta]
   workflow_dispatch:
@@ -12,8 +15,11 @@ permissions:
 
 jobs:
   windows-build-test:
+    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release/')
     runs-on: windows-2022
-    timeout-minutes: 60
+    # Setup alone takes about twenty minutes, and the whole job has finished
+    # between 46 and 59 minutes, so an hour cut off slow runners mid-test.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
