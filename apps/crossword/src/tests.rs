@@ -950,3 +950,113 @@ fn each_answer_opens_on_the_letters_even_after_the_last_one_went_to_the_symbols(
     r.action(action_id("cell-1"));
     assert_eq!(r.app().keyboard.layer(), Keyboard::new().layer());
 }
+
+/// The squares of the puzzle on the board drawn struck through.
+fn struck_squares(r: &AppRunner<Crossword>) -> Vec<usize> {
+    let screen = r.app().screen(&r.context());
+    screen
+        .nodes
+        .iter()
+        .find_map(|node| match node {
+            kobo_sdk::Node::Grid { cells, .. } if cells.len() == 25 => Some(
+                cells
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, cell)| cell.tone == kobo_sdk::CellTone::Struck)
+                    .map(|(index, _)| index)
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .expect("the grid")
+}
+
+#[test]
+fn check_word_strikes_through_the_wrong_letters_of_the_word_and_not_its_empty_squares() {
+    // A count said how many letters were wrong and left the reader to find
+    // which; the grid now shows them where they stand.
+    let mut r = on_board(3);
+    r.action(action_id("cell-5"));
+    r.app_mut().keyboard = Keyboard::with_text("MANOX");
+    r.action(action_id("kb.enter"));
+    // A wrong letter in the Down word through the first square, which the
+    // Across check is not about.
+    r.app_mut().game_mut().position.letters[1] = b'Q';
+    assert!(
+        struck_squares(&r).is_empty(),
+        "nothing is struck before a check"
+    );
+    r.action(action_id(chrome::MORE));
+    r.action(action_id("check"));
+    assert_eq!(notice_line(&r), "2 wrong, 0 empty.");
+    assert_eq!(struck_squares(&r), vec![6, 9]);
+    // The strokes stay when the count gives way to the clue again.
+    r.action(action_id("direction"));
+    assert_eq!(struck_squares(&r), vec![6, 9]);
+    // Emptying a square and checking again counts it as empty, unstruck.
+    r.app_mut().game_mut().position.letters[9] = b'.';
+    r.action(action_id("direction"));
+    r.action(action_id(chrome::MORE));
+    r.action(action_id("check"));
+    assert_eq!(notice_line(&r), "1 wrong, 1 empty.");
+    assert_eq!(struck_squares(&r), vec![6]);
+}
+
+#[test]
+fn a_stroke_goes_with_its_letter_and_comes_back_with_it_on_undo() {
+    let mut r = on_board(3);
+    r.action(action_id("cell-5"));
+    r.app_mut().keyboard = Keyboard::with_text("MINOX");
+    r.action(action_id("kb.enter"));
+    r.action(action_id(chrome::MORE));
+    r.action(action_id("check"));
+    assert_eq!(struck_squares(&r), vec![9]);
+    // Typing over the wrong letter takes its stroke away, right or not.
+    r.action(action_id("cell-9"));
+    r.app_mut().keyboard = Keyboard::with_text("S");
+    r.action(action_id("kb.enter"));
+    r.action(action_id("board"));
+    assert_eq!(r.app().game().position.letters[9], b'S');
+    assert!(struck_squares(&r).is_empty());
+    // Undo puts the checked letter back, and it is still the wrong one.
+    r.action(action_id(chrome::UNDO));
+    assert_eq!(r.app().game().position.letters[9], b'X');
+    assert_eq!(struck_squares(&r), vec![9]);
+    // A restart is a fresh attempt: the same wrong letter typed again is
+    // not one this attempt has checked.
+    r.app_mut().game_mut().restart(&PUZZLES[3]);
+    r.app_mut().game_mut().position.letters[9] = b'X';
+    assert!(struck_squares(&r).is_empty());
+}
+
+#[test]
+fn strokes_are_saved_with_the_letters_and_a_save_from_before_them_has_none() {
+    let p = &PUZZLES[3];
+    let mut games = PUZZLES.iter().map(Progress::new).collect::<Vec<_>>();
+    let untouched = saved::encode(&games, 3);
+    assert!(
+        !String::from_utf8_lossy(&untouched).contains("struck"),
+        "a game with nothing struck writes the record it always did"
+    );
+    let g = &mut games[3];
+    g.position.selected = 5;
+    g.enter(p, "MINOX").unwrap();
+    assert_eq!(g.check(p), "1 wrong, 0 empty.");
+    assert!(g.is_struck(9));
+    let bytes = saved::encode(&games, 3);
+    let (restored, _) = saved::decode(&bytes).unwrap();
+    assert_eq!(restored, games);
+    assert!(restored[3].is_struck(9));
+    // The record before strokes existed opens with nothing struck.
+    let text = String::from_utf8(bytes).unwrap();
+    let start = text.find(",\"struck\"").expect("strokes are written");
+    let end = start + text[start + 1..].find(['}', ',']).unwrap() + 1;
+    let older = format!("{}{}", &text[..start], &text[end..]);
+    let (older, _) = saved::decode(older.as_bytes()).unwrap();
+    assert!(!older[3].is_struck(9));
+    assert_eq!(older[3].position, games[3].position);
+    // A stroke on a block, or a record of the wrong length, is refused.
+    let broken = text.replacen("\"struck\":\"#", "\"struck\":\"X", 1);
+    assert_ne!(broken, text);
+    assert!(saved::decode(broken.as_bytes()).is_err());
+}

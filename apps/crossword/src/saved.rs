@@ -28,7 +28,7 @@ fn record(g: &Progress, p: &crate::game::Puzzle, undo: bool) -> Value {
     } else {
         Vec::new()
     };
-    ObjectBuilder::new()
+    let record = ObjectBuilder::new()
         .set("id", p.id)
         .set(
             "answer",
@@ -38,8 +38,19 @@ fn record(g: &Progress, p: &crate::game::Puzzle, undo: bool) -> Value {
         .set("undo", Value::Array(steps))
         .set("reveals", g.reveals)
         .set("checks", g.checks)
-        .set("solved", g.solved_once)
-        .build()
+        .set("solved", g.solved_once);
+    // Written only once something has been struck, so a record from a game
+    // that never checked a wrong letter is the record it always was.
+    if g.struck.iter().any(u8::is_ascii_uppercase) {
+        record
+            .set(
+                "struck",
+                String::from_utf8(g.struck.clone()).expect("ASCII strokes"),
+            )
+            .build()
+    } else {
+        record.build()
+    }
 }
 /// The record for every puzzle that has been touched.
 ///
@@ -125,6 +136,29 @@ fn read_position(v: &Value, answer: &[u8]) -> Result<Position, Error> {
         down: flag(v, "down")?,
     })
 }
+/// The strokes a game was saved with. A record from before strokes has none,
+/// and reads as a game in which nothing has been struck.
+fn read_struck(v: &Value, answer: &[u8]) -> Result<Vec<u8>, Error> {
+    let Some(struck) = v.get("struck") else {
+        return Ok(answer
+            .iter()
+            .map(|b| if *b == b'#' { b'#' } else { b'.' })
+            .collect());
+    };
+    let struck = struck.as_str().ok_or(Error::Corrupt)?.as_bytes().to_vec();
+    if struck.len() != answer.len()
+        || !struck.iter().zip(answer).all(|(b, a)| {
+            if *a == b'#' {
+                *b == b'#'
+            } else {
+                *b == b'.' || b.is_ascii_uppercase()
+            }
+        })
+    {
+        return Err(Error::Corrupt);
+    }
+    Ok(struck)
+}
 pub fn decode(bytes: &[u8]) -> Result<(Vec<Progress>, usize), Error> {
     if bytes.len() > LIMIT {
         return Err(Error::TooLarge);
@@ -198,6 +232,7 @@ pub fn decode(bytes: &[u8]) -> Result<(Vec<Progress>, usize), Error> {
             checks: number(v, "checks")?,
             reveals: number(v, "reveals")?,
             solved_once: flag(v, "solved")?,
+            struck: read_struck(v, p.answer)?,
         };
         if g.solved(p) && !g.solved_once {
             return Err(Error::Corrupt);

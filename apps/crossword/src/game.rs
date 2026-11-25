@@ -283,6 +283,15 @@ pub struct Progress {
     pub reveals: u32,
     pub checks: u32,
     pub solved_once: bool,
+    /// The letter Check word last found wrong in each square, `.` where it
+    /// found none, and `#` on a block, as the letters are written.
+    ///
+    /// The letter is kept rather than a yes or no, so the stroke belongs to
+    /// the letter it was drawn through: change the letter and the stroke
+    /// goes, undo the change and the same wrong letter comes back with its
+    /// stroke, as a pen mark on paper would. Undo and a typed letter need no
+    /// rule of their own for it, which a flag would have needed both.
+    pub struck: Vec<u8>,
 }
 impl Progress {
     pub fn new(p: &Puzzle) -> Self {
@@ -308,7 +317,27 @@ impl Progress {
             reveals: 0,
             checks: 0,
             solved_once: false,
+            struck: p
+                .answer
+                .iter()
+                .map(|b| if *b == b'#' { b'#' } else { b'.' })
+                .collect(),
         }
+    }
+    /// Whether the letter in a square is one Check word found wrong, and so
+    /// is drawn struck through.
+    pub fn is_struck(&self, cell: usize) -> bool {
+        let letter = self.position.letters[cell];
+        letter.is_ascii_uppercase() && self.struck.get(cell) == Some(&letter)
+    }
+    /// Empties the grid, and forgets every stroke with it: a stroke belongs
+    /// to a letter checked in this attempt, not to the same letter typed into
+    /// the square again after a fresh start.
+    pub fn restart(&mut self, p: &Puzzle) {
+        self.remember();
+        let fresh = Self::new(p);
+        self.position.letters = fresh.position.letters;
+        self.struck = fresh.struck;
     }
     pub fn solved(&self, p: &Puzzle) -> bool {
         self.position.letters == p.answer
@@ -352,6 +381,10 @@ impl Progress {
     /// What checking the shaded word found, short enough for the line over
     /// the grid, where it now appears. It had a page to itself, so the reader
     /// left the grid to learn a count and tapped back to act on it.
+    ///
+    /// Each wrong letter is also struck through on the grid, since a count
+    /// said how many but left the reader to find which. An empty square has
+    /// no letter to strike, and stays counted only.
     pub fn check(&mut self, p: &Puzzle) -> String {
         self.checks = self.checks.saturating_add(1);
         let word = p.word(self.position.selected, self.position.down);
@@ -359,12 +392,17 @@ impl Progress {
             .iter()
             .filter(|c| self.position.letters[**c] == b'.')
             .count();
-        let wrong = word
+        let wrong: Vec<usize> = word
             .iter()
+            .copied()
             .filter(|c| {
-                self.position.letters[**c] != b'.' && self.position.letters[**c] != p.answer[**c]
+                self.position.letters[*c] != b'.' && self.position.letters[*c] != p.answer[*c]
             })
-            .count();
+            .collect();
+        for cell in &wrong {
+            self.struck[*cell] = self.position.letters[*cell];
+        }
+        let wrong = wrong.len();
         if wrong == 0 && empty == 0 {
             "This word is correct.".into()
         } else {

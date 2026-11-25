@@ -45,8 +45,9 @@ you type. **Rules** is in the top bar. **More** holds:
 
 - **New game** opens the next puzzle you have not started. Every puzzle keeps
   its own letters, so nothing is lost.
-- **Check word** counts the wrong and empty letters in the active word, in
-  the line over the grid, without changing them.
+- **Check word** strikes through each wrong letter in the active word, and
+  counts the wrong and empty squares in the line over the grid. A letter
+  keeps its stroke until you change it.
 - **Reveal square** fills one square, after confirmation.
 - **Clear square** empties the selected square.
 - **Restart puzzle** asks first. Reveal and Restart can both be undone.

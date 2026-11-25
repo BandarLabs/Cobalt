@@ -39,7 +39,7 @@ struct ClueRow {
     number: u16,
 }
 
-const RULES: &str = "Fill the white squares\n\nRead a clue and fill in its answer. Small corner numbers match the clue list. The shaded row or column is the word you are solving, and its clue is above the grid. Some squares belong to one word only.\n\nTap a square to type in it. Enter one letter to move along the word, or the whole word to fill it from its first square. Tap another square in the word to move. Across or Down, at the foot of the grid and at the top while you type, switches direction.\n\nUndo, at the foot of the grid, takes back your last change, up to 32 steps per puzzle. Clues lists every clue; tap one to answer it.\n\nMore holds New game, which opens the next puzzle you have not started, then Check word, Reveal square, Clear square, Restart puzzle and Puzzles. Checking reports wrong and empty letters without changing them. Reveal and Restart ask first and can be undone.\n\nEach puzzle keeps its own letters, and stays marked Completed once solved, even after a restart.\n\nYour letters are saved as you go. If saving fails, keep the app open, make room on your reader and tap Retry saving.";
+const RULES: &str = "Fill the white squares\n\nRead a clue and fill in its answer. Small corner numbers match the clue list. The shaded row or column is the word you are solving, and its clue is above the grid. Some squares belong to one word only.\n\nTap a square to type in it. Enter one letter to move along the word, or the whole word to fill it from its first square. Tap another square in the word to move. Across or Down, at the foot of the grid and at the top while you type, switches direction.\n\nUndo, at the foot of the grid, takes back your last change, up to 32 steps per puzzle. Clues lists every clue; tap one to answer it.\n\nMore holds New game, which opens the next puzzle you have not started, then Check word, Reveal square, Clear square, Restart puzzle and Puzzles. Check word strikes through each wrong letter in the shaded word, until you change it, and counts the wrong and empty squares above the grid. Reveal and Restart ask first and can be undone.\n\nEach puzzle keeps its own letters, and stays marked Completed once solved, even after a restart.\n\nYour letters are saved as you go. If saving fails, keep the app open, make room on your reader and tap Retry saving.";
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 enum View {
     #[default]
@@ -363,7 +363,10 @@ impl Crossword {
             b.text(line)
         };
         // Footer controls reserve their band before the square grid is measured.
-        let b = b.crossword_board(
+        // A letter Check word found wrong is struck through where it stands,
+        // so the count over the grid and the squares it counted are seen
+        // together.
+        let b = b.crossword_board_with_struck(
             u8::try_from(p.side).expect("small puzzle"),
             (0..p.answer.len()).map(|cell| {
                 (
@@ -375,6 +378,7 @@ impl Crossword {
                     },
                     p.number(cell).and_then(|n| u8::try_from(n).ok()),
                     !g.solved(p) && word.contains(&cell),
+                    g.is_struck(cell),
                 )
             }),
         );
@@ -896,9 +900,7 @@ impl KoboApp for Crossword {
                     self.view = View::Board;
                 }
                 View::Restart if is("confirm-restart") => {
-                    let g = self.game_mut();
-                    g.remember();
-                    g.position.letters = Progress::new(p).position.letters;
+                    self.game_mut().restart(p);
                     self.view = View::Board;
                 }
                 View::Rules => {
