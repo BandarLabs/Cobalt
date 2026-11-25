@@ -8,7 +8,8 @@
 # drops changes from the end. Rewrite the whole file when the version is
 # bumped (docs/RELEASE-TRAIN.md). `cargo test -p kobo-launcher` checks it.
 
-0.3.43
-Articles in Feeds: each opens with its title, its writer and the day it was published.
-Newsletter pictures: Feeds shows the pictures a newsletter keeps on its own image host.
-Feed search: a newsletter is listed before its podcast.
+0.3.44
+Marked mistakes: Crossword and Sudoku strike through the letters and digits they find wrong.
+Chapters: a new chapter starts on a new page.
+Line breaks: poems and addresses in a book keep their lines.
+Continue reading: Books keeps your place through a power loss.
