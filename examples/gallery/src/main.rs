@@ -3654,7 +3654,7 @@ mod tests {
         const BUILDER: &str = include_str!("../../../crates/kobo-sdk/src/builder.rs");
         // Not controls: they build, inspect or arrange, and there is nothing
         // for an eye to check.
-        const NOT_DRAWN: [(&str, &str); 9] = [
+        const NOT_DRAWN: [(&str, &str); 10] = [
             ("new", "starts a screen"),
             ("build", "ends one"),
             (
@@ -3673,6 +3673,12 @@ mod tests {
                 "modal",
                 "shown as the dialog on the overlays page, the same frame with its own Close \
                  in place of the cross",
+            ),
+            (
+                "crossword_board_with_struck",
+                "the crossword on the boards page with a stroke through a letter, which a \
+                 runtime before 0.3.44 refuses, and this reference has to open on every \
+                 runtime it is installed on",
             ),
         ];
         let drawn: String = SOURCE
