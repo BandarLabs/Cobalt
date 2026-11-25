@@ -13,14 +13,25 @@ fn schema() -> Schema {
     Schema::new("crossword.games", 2, LIMIT).expect("fixed schema")
 }
 fn position(p: &Position) -> Value {
-    ObjectBuilder::new()
+    let position = ObjectBuilder::new()
         .set(
             "letters",
             String::from_utf8(p.letters.clone()).expect("ASCII board"),
         )
         .set("selected", p.selected.to_string())
-        .set("down", p.down)
-        .build()
+        .set("down", p.down);
+    // Written only once something has been struck, so a step from a game
+    // that never checked a wrong letter is the step it always was.
+    if p.struck.iter().any(u8::is_ascii_uppercase) {
+        position
+            .set(
+                "struck",
+                String::from_utf8(p.struck.clone()).expect("ASCII strokes"),
+            )
+            .build()
+    } else {
+        position.build()
+    }
 }
 fn record(g: &Progress, p: &crate::game::Puzzle, undo: bool) -> Value {
     let steps = if undo {
@@ -123,7 +134,31 @@ fn read_position(v: &Value, answer: &[u8]) -> Result<Position, Error> {
         letters,
         selected,
         down: flag(v, "down")?,
+        struck: read_struck(v, answer)?,
     })
+}
+/// The strokes a step was saved with. A record from before strokes has none,
+/// and reads as a game in which nothing has been struck.
+fn read_struck(v: &Value, answer: &[u8]) -> Result<Vec<u8>, Error> {
+    let Some(struck) = v.get("struck") else {
+        return Ok(answer
+            .iter()
+            .map(|b| if *b == b'#' { b'#' } else { b'.' })
+            .collect());
+    };
+    let struck = struck.as_str().ok_or(Error::Corrupt)?.as_bytes().to_vec();
+    if struck.len() != answer.len()
+        || !struck.iter().zip(answer).all(|(b, a)| {
+            if *a == b'#' {
+                *b == b'#'
+            } else {
+                *b == b'.' || b.is_ascii_uppercase()
+            }
+        })
+    {
+        return Err(Error::Corrupt);
+    }
+    Ok(struck)
 }
 pub fn decode(bytes: &[u8]) -> Result<(Vec<Progress>, usize), Error> {
     if bytes.len() > LIMIT {

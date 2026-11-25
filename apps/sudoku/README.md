@@ -29,9 +29,10 @@ offline.
 - **Rules** in the top bar opens the rules in one tap.
 - The three dots beside it open **More**: **New game**, **Restart puzzle**,
   **Show mistakes**, **Reveal square** and **Use landscape**.
-- Mistakes are hidden by default. **Show mistakes** makes a wrong answer in
-  the selected square say "Wrong answer" without changing it, and **Hide
-  mistakes** turns that off again.
+- Mistakes are hidden by default. **Show mistakes** strikes through every
+  wrong answer on the board without changing it, and the selected square
+  says "Wrong answer" over the board. **Hide mistakes** turns that off again.
+  A stroke goes when you change or erase the answer.
 - **Reveal square** fills the selected square after asking, and can be
   undone. It counts as a hint, and the hint count shows when the puzzle is
   complete.

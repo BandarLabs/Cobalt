@@ -574,8 +574,10 @@ fn a_word_game_tile_carries_its_tone_and_an_older_reader_refuses_it() {
         other => panic!("expected a screen, got {other:?}"),
     }
     // A tone with no meaning is refused, as is any tone before tones existed.
+    // Four is the struck letter now, so the first number with no meaning is
+    // five.
     let mut unknown = on.clone();
-    unknown[flag] = 0b1000;
+    unknown[flag] = 0b1010;
     assert!(
         decode(&unknown).is_err(),
         "a tone with no meaning was accepted"
@@ -586,6 +588,68 @@ fn a_word_game_tile_carries_its_tone_and_an_older_reader_refuses_it() {
         message: Message::SetScreen(screen),
     };
     assert!(encode(&frame).is_err());
+}
+
+#[test]
+fn a_struck_crossword_letter_crosses_the_wire_and_a_runtime_before_it_refuses_it() {
+    let crossword = |struck: bool| {
+        let mut wrong = Cell::new(ActionId(21), "Q").with_selected(true);
+        wrong.corner = Some(1);
+        if struck {
+            wrong = wrong.with_tone(kobo_ui::CellTone::Struck);
+        }
+        let mut right = Cell::new(ActionId(22), "A");
+        right.corner = Some(2);
+        Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 2,
+                square: true,
+                cells: vec![wrong, right],
+            }],
+        )
+    };
+    let screen = crossword(true);
+    match round_trip(screen.clone()).nodes.first() {
+        Some(Node::Grid { cells, .. }) => {
+            assert_eq!(cells[0].tone, kobo_ui::CellTone::Struck);
+            assert!(cells[0].selected, "the stroke cost the square its shading");
+            assert_eq!(cells[0].corner, Some(1));
+            assert_eq!(cells[1].tone, kobo_ui::CellTone::Plain);
+        }
+        other => panic!("expected a grid, got {other:?}"),
+    }
+    let bytes = |screen: Screen, version: u8| {
+        encode(&Frame {
+            version,
+            request_id: 1,
+            message: Message::SetScreen(screen),
+        })
+    };
+    // The stroke is the one byte that differs, the selection flag with the
+    // tone above it, so a grid with nothing struck is the frame it always was.
+    let (plain, struck) = (
+        bytes(crossword(false), VERSION).unwrap(),
+        bytes(crossword(true), VERSION).unwrap(),
+    );
+    let differing = (0..plain.len())
+        .filter(|index| plain[*index] != struck[*index])
+        .collect::<Vec<_>>();
+    assert_eq!(differing.len(), 1);
+    assert_eq!((plain[differing[0]], struck[differing[0]]), (0b1, 0b1001));
+    // An application speaking the protocol of the tones, but not of the
+    // stroke, may not send it, and a frame at that protocol carrying one is
+    // refused rather than drawn as an ordinary letter.
+    let before = STRUCK_MARK_VERSION - 1;
+    assert!(bytes(crossword(true), before).is_err());
+    let mut old = bytes(crossword(false), before).unwrap();
+    assert_eq!(old.len(), plain.len(), "a grid is laid out alike at both");
+    old[differing[0]] = 0b1001;
+    assert!(
+        decode(&old).is_err(),
+        "a struck letter was read at protocol {before}"
+    );
 }
 
 #[test]

@@ -171,7 +171,15 @@ impl Sudoku {
                 let n = self.game.position.board[cell];
                 let notes = self.game.position.notes[cell];
                 let given = spec.clues[cell] != 0;
-                let kind = if n != 0 {
+                // With mistakes shown, every wrong answer on the board is
+                // struck through, not only the one in the selected square,
+                // so a reader can see where the grid went wrong at a glance.
+                // Worked out from the board each time it is drawn, so a
+                // changed or erased digit loses its stroke with nothing to
+                // forget.
+                let kind = if n != 0 && !given && self.game.checking && n != spec.solution[cell] {
+                    PencilMarkKind::WrongDigit(n)
+                } else if n != 0 {
                     PencilMarkKind::Digit { value: n, given }
                 } else if notes != 0 {
                     PencilMarkKind::Candidates(notes)
@@ -490,7 +498,7 @@ impl Sudoku {
 
 Tap Notes, then numbers to add or remove notes; a tick over Notes shows they are on. Each note sits in its own place in the square, and the selected square's notes have outlined keys. Tap Notes again to enter answers, which are grey beside the printed numbers. Erase clears the selected square, so notes can go where an answer was.
 
-Mistakes are hidden at first. Show mistakes in More marks a wrong answer in the selected square without removing it, and Hide mistakes turns that off again. Reveal square in More fills the selected square after asking, and counts as a hint.
+Mistakes are hidden at first. Show mistakes in More strikes through each wrong answer on the board, and Hide mistakes turns that off again. Reveal square in More fills the selected square after asking, and counts as a hint.
 
 Your game saves after every edit. Undo takes back the last 64 edits, even after reopening. A full correct grid completes the puzzle. New game in More replaces the current game and its history.
 

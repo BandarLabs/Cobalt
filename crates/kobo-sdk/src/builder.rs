@@ -2496,19 +2496,45 @@ impl ScreenBuilder {
     /// A newspaper-style grid: joined squares, corner numbers and centered letters.
     /// Requires the protocol-14 beta runtime's numbered-board node.
     #[must_use]
-    pub fn crossword_board<I, N>(mut self, columns: u8, cells: I) -> Self
+    pub fn crossword_board<I, N>(self, columns: u8, cells: I) -> Self
     where
         I: IntoIterator<Item = (N, char, Option<u8>, bool)>,
+        N: AsRef<str>,
+    {
+        self.crossword_board_with_struck(
+            columns,
+            cells
+                .into_iter()
+                .map(|(name, letter, corner, selected)| (name, letter, corner, selected, false)),
+        )
+    }
+
+    /// The same grid, where the last of each square's values says its letter
+    /// was checked and is wrong: the letter stays, with a stroke of ink from
+    /// corner to corner across the square, as a checked grid is marked in
+    /// pen.
+    ///
+    /// Laid out exactly as [`Self::crossword_board`] lays out the same
+    /// squares; only the ink changes. The stroke needs the release that
+    /// draws it, so an application using it names that release as its
+    /// minimum.
+    #[must_use]
+    pub fn crossword_board_with_struck<I, N>(mut self, columns: u8, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, char, Option<u8>, bool, bool)>,
         N: AsRef<str>,
     {
         let id = self.next_id();
         let cells = cells
             .into_iter()
             .take(MAX_CELLS)
-            .map(|(name, letter, corner, selected)| {
+            .map(|(name, letter, corner, selected, struck)| {
                 let mut cell = Cell::new(self.register(name.as_ref()), letter.to_string())
                     .with_selected(selected);
                 cell.corner = corner.filter(|n| (1..=99).contains(n));
+                if struck {
+                    cell = cell.with_tone(crate::CellTone::Struck);
+                }
                 cell
             })
             .collect();

@@ -617,12 +617,16 @@ test("no drive script in this tree counts as a release input", () => {
 // protocol 14 dates from 0.3.12, while the numbered board and the pencil board
 // arrived with 0.3.14. Crossword and Logic Pack were installable on 0.3.12 and
 // failed when their first board screen was encoded, which is a blank refusal
-// on a reader rather than a message anybody can act on.
+// on a reader rather than a message anybody can act on. The strokes through
+// a checked, wrong letter or digit travel at protocol 18 too, but are drawn
+// from 0.3.44, and a runtime before that refuses them.
 test("an app drawing a board the runtime learned late says which release it needs", () => {
   const LATE_NODES = [
     ["crossword_board", "0.3.14"],
     ["pencil_board", "0.3.14"],
-    ["PencilMarkKind::Candidates", "0.3.18"]
+    ["PencilMarkKind::Candidates", "0.3.18"],
+    ["crossword_board_with_struck", "0.3.44"],
+    ["PencilMarkKind::WrongDigit", "0.3.44"]
   ];
   const packages = [
     ...readdirSync("apps", { withFileTypes: true }).map(e => ["apps", e]),

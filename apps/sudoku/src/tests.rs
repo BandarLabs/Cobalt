@@ -990,3 +990,66 @@ fn a_failed_copy_replaces_nothing_and_says_so() {
     assert!(says(&r, "Try again"));
     assert!(says(&r, "Start over"));
 }
+/// The squares the board draws struck through as wrong.
+fn struck_squares(r: &AppRunner<Sudoku>) -> Vec<usize> {
+    shown(r)
+        .nodes
+        .iter()
+        .find_map(|node| match node {
+            kobo_sdk::Node::PencilBoard { board, .. } => Some(
+                board
+                    .marks
+                    .iter()
+                    .filter(|mark| matches!(mark.kind, PencilMarkKind::WrongDigit(_)))
+                    .map(|mark| usize::from(mark.row) * 9 + usize::from(mark.column))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .expect("the board")
+}
+#[test]
+fn shown_mistakes_strike_every_wrong_answer_on_the_board_until_it_changes() {
+    // "Wrong answer" was said only for the selected square, so finding the
+    // mistakes meant tapping every answer on the board in turn.
+    let mut r = ready();
+    let blanks: Vec<usize> = (0..CELLS)
+        .filter(|c| r.app().puzzles[r.app().game.puzzle].clues[*c] == 0)
+        .collect();
+    let (first, second, right) = (blanks[0], blanks[1], blanks[2]);
+    let wrong = |cell: usize| puzzle_solution(&r, cell) % 9 + 1;
+    let (first_wrong, second_wrong, right_digit) =
+        (wrong(first), wrong(second), puzzle_solution(&r, right));
+    for (cell, digit) in [
+        (first, first_wrong),
+        (second, second_wrong),
+        (right, right_digit),
+    ] {
+        tap(&mut r, &cell_name(cell));
+        tap(&mut r, &digit_name(digit));
+    }
+    assert!(struck_squares(&r).is_empty(), "mistakes start hidden");
+    tap(&mut r, chrome::MORE);
+    tap(&mut r, "checking");
+    assert_eq!(struck_squares(&r), vec![first, second]);
+    // A right answer in place of a wrong one takes the stroke away, and so
+    // does erasing one.
+    tap(&mut r, &cell_name(first));
+    let first_right = puzzle_solution(&r, first);
+    tap(&mut r, &digit_name(first_right));
+    assert_eq!(struck_squares(&r), vec![second]);
+    tap(&mut r, &cell_name(second));
+    tap(&mut r, "erase");
+    assert!(struck_squares(&r).is_empty());
+    // Undo brings the wrong answer back, struck again.
+    tap(&mut r, chrome::UNDO);
+    assert_eq!(struck_squares(&r), vec![second]);
+    // Hidden again, nothing is struck, and the answer is kept.
+    tap(&mut r, chrome::MORE);
+    tap(&mut r, "checking");
+    assert!(struck_squares(&r).is_empty());
+    assert_eq!(r.app().game.position.board[second], second_wrong);
+}
+fn puzzle_solution(r: &AppRunner<Sudoku>, cell: usize) -> u8 {
+    r.app().puzzles[r.app().game.puzzle].solution[cell]
+}
