@@ -1940,14 +1940,15 @@ impl Books {
     /// reader that is switched off or runs flat never leaves: the page came
     /// back after a restart but home offered Start reading as if no book had
     /// been opened.
+    ///
+    /// It is written even when the list in memory already says the same: that
+    /// list is what was asked for, not what the store acknowledged, so a save
+    /// refused on a full card would otherwise never be tried again.
     fn note_place(&mut self, context: &mut Context) {
         let Some((id, page, pages)) = self.open_place() else {
             return;
         };
         let place = Recent { id, page, pages };
-        if self.recent.first() == Some(&place) {
-            return;
-        }
         self.recent.retain(|recent| recent.id != place.id);
         self.recent.insert(0, place);
         self.recent.truncate(RECENT_LIMIT);
@@ -4504,6 +4505,24 @@ mod tests {
         assert!(home.contains("Continue reading"), "{home}");
         assert!(home.contains("Page 4 of"), "{home}");
         assert!(!home.contains("Start reading"), "{home}");
+    }
+
+    #[test]
+    fn a_recent_book_the_store_refused_is_written_again_when_the_book_is_left() {
+        let mut runner = started_with(None, None);
+        runner.action(action_id("book-0"));
+        let commands = runner.page_turn(true);
+        assert!(saved(&commands, RECENT).is_some(), "the page turn wrote it");
+        runner.store_result(StoreResult::Saved {
+            key: READING.into(),
+        });
+        runner.store_result(StoreResult::Denied(StoreError::TooFull));
+        // Same page, nothing new in memory: the refused write is still owed.
+        let commands = runner.lifecycle(Lifecycle::Background);
+        assert!(
+            saved(&commands, RECENT).is_some(),
+            "leaving at the same page tried the refused write again"
+        );
     }
 
     #[test]
