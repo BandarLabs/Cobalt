@@ -7,6 +7,6 @@
   "glyph": "cell-grid",
   "capabilities": [],
   "release_notes": "Use landscape now works on every Kobo, with Undo, Notes and Erase beside the digits. A saved game that cannot be read can be set aside to start over, and Erase no longer reopens a finished puzzle.",
-  "minimum_cobalt_version": "0.3.18",
+  "minimum_cobalt_version": "0.3.44",
   "page_description": "Play 600 original Sudoku puzzles, 200 at each of three difficulties, each with exactly one solution. Pencil notes, undo, an optional mistakes check, and saved games survive reopening."
 }
