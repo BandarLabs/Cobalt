@@ -290,6 +290,26 @@ impl Default for Grimoire {
         }
     }
 }
+/// How a name answers a search, if it does: `Some(0)` when it begins with
+/// what was typed, `Some(1)` when every typed word begins a word somewhere in
+/// it. `query` is already lower case.
+///
+/// Matching only the start of the whole name found Dragon Turtle for
+/// "dragon" and none of the adult, ancient or young dragons.
+fn name_match(name: &str, query: &str) -> Option<u8> {
+    let name = name.to_lowercase();
+    if name.starts_with(query) {
+        return Some(0);
+    }
+    let words: Vec<&str> = name
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|word| !word.is_empty())
+        .collect();
+    query
+        .split_whitespace()
+        .all(|typed| words.iter().any(|word| word.starts_with(typed)))
+        .then_some(1)
+}
 fn tag<'a>(entry: &'a Entry, key: &str) -> Option<&'a str> {
     entry.tags.split(';').find_map(|pair| {
         pair.split_once('=')
@@ -363,24 +383,31 @@ impl Grimoire {
         type_ok && cr_ok
     }
     fn entries(&self) -> Vec<(usize, &Entry)> {
-        let query = self.query.to_lowercase();
+        let query = self.query.trim().to_lowercase();
         let classes = options(self, "class");
         let schools = options(self, "school");
         let types = options(self, "type");
         let class = classes.get(self.spell_class).map(String::as_str);
         let school = schools.get(self.spell_school).map(String::as_str);
         let kind = types.get(self.monster_type).map(String::as_str);
-        self.corpus
+        let mut entries = self
+            .corpus
             .iter()
             .enumerate()
             .filter(|(_, e)| {
                 e.edition == self.edition
                     && self.kind.holds(&e.kind)
-                    && (query.is_empty() || e.name.to_lowercase().starts_with(&query))
+                    && (query.is_empty() || name_match(&e.name, &query).is_some())
                     && (self.kind != Kind::Spell || self.spell_match_values(e, class, school))
                     && (self.kind != Kind::Monster || self.monster_match_value(e, kind))
             })
-            .collect()
+            .collect::<Vec<_>>();
+        // Names that begin with what was typed come first, the rest in the
+        // compendium's own order: stable, so both halves keep that order.
+        if !query.is_empty() {
+            entries.sort_by_key(|(_, e)| name_match(&e.name, &query));
+        }
+        entries
     }
     fn title(&self) -> &'static str {
         match self.view {
@@ -419,7 +446,7 @@ impl Grimoire {
             View::Filters | View::FilterChoice => self.filter_screen(context),
             View::Bookmarks => self.bookmarks(s, context),
             View::Search => s
-                .text_entry(&self.entry, "Type the start of a name.", "Search")
+                .text_entry(&self.entry, "Type a name or part of one.", "Search")
                 .build(),
             View::Dice => self.dice(s),
             View::Initiative => self.initiative(s, context),
@@ -515,7 +542,7 @@ impl Grimoire {
         let filters = self.active_filters();
         let mut parts = Vec::new();
         if !self.query.is_empty() {
-            parts.push(format!("Names starting \"{}\"", self.query));
+            parts.push(format!("Names with \"{}\"", self.query));
         }
         match filters {
             0 => {}
@@ -2523,6 +2550,30 @@ mod tests {
     }
 
     #[test]
+    fn a_search_finds_a_word_anywhere_in_a_name_and_lists_names_that_begin_with_it_first() {
+        let app = Grimoire {
+            kind: Kind::Monster,
+            query: "dragon".into(),
+            ..Grimoire::default()
+        };
+        let names: Vec<&str> = app.entries().iter().map(|(_, e)| e.name.as_str()).collect();
+        assert!(names.contains(&"Adult Red Dragon"), "{names:?}");
+        assert!(names.contains(&"Dragon Turtle"), "{names:?}");
+        let first_inner = names
+            .iter()
+            .position(|name| !name.to_lowercase().starts_with("dragon"))
+            .expect("a dragon whose name does not begin with the word");
+        assert!(
+            names[first_inner..]
+                .iter()
+                .all(|name| !name.to_lowercase().starts_with("dragon")),
+            "names that begin with the search are not all first: {names:?}"
+        );
+        // A word is matched from its start, not from inside another word.
+        assert_eq!(name_match("Pseudodragon", "dragon"), None);
+        assert_eq!(name_match("Adult Red Dragon", "red drag"), Some(1));
+    }
+    #[test]
     fn a_narrowed_list_says_what_narrows_it_and_an_empty_edition_offers_no_filters() {
         let mut app = Grimoire {
             kind: Kind::Monster,
@@ -2534,7 +2585,7 @@ mod tests {
         app.cr = 2;
         assert_eq!(
             app.narrowed().as_deref(),
-            Some("Names starting \"gob\" · 1 filter on")
+            Some("Names with \"gob\" · 1 filter on")
         );
         let text = format!("{:?}", app.screen(&Context::default()).nodes);
         assert!(text.contains("1 filter on"), "{text}");

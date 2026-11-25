@@ -21,7 +21,7 @@ built from the SRD.
 
 - 1,349 SRD records: spells, monsters, conditions, rules, rule sections and
   magic items. **About** shows exactly what the build contains.
-- Search by the start of a name, bookmarks and an edition switch between the
+- Search by any word in a name, bookmarks and an edition switch between the
   2014 and 2024 SRD.
 - Filter spells by class, level, school, ritual and concentration. Filter
   monsters by challenge rating and type.

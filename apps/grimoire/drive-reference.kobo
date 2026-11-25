@@ -29,9 +29,9 @@ tap Clear filters
 tap View results
 expect Acid Arrow
 expect 1 of 64
-# A search narrows by the start of a name, and Back lets go of it first.
+# A search narrows by any word in a name, and Back lets go of it first.
 tap Search
-expect Type the start of a name.
+expect Type a name or part of one.
 type fire
 tap-id kb.enter
 expect Fire Bolt
@@ -126,7 +126,7 @@ tap Search
 type gob
 tap-id kb.enter
 expect Goblin
-expect Names starting "gob" · 2 filters on
+expect Names with "gob" · 2 filters on
 tap-id entry-menu-800
 expect Add to initiative
 tap Add to initiative
