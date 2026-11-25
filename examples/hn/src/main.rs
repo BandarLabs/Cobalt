@@ -1112,12 +1112,17 @@ impl Hn {
             .then_some(id)
     }
 
-    /// How much of an article is worth carrying onto this device.
+    /// How much of an article is worth carrying onto this device: as much as
+    /// keeping one fetches, so a story that can be saved can also be read.
     ///
-    /// Half a megabyte of markup is a long feature with its pictures still to
-    /// come. Past that is a page that is mostly somebody else's javascript,
-    /// and the reader is told rather than made to wait for it.
-    const ARTICLE_BYTES: u32 = 512 * 1024;
+    /// Past that is a page that is mostly somebody else's javascript, and the
+    /// reader is told rather than made to wait for it. This was half a
+    /// megabyte while keeping took three quarters, and a post on Less Wrong that
+    /// sends 600 kilobytes of markup said it was too large to open here while
+    /// Daily Brief, which opens stories through its keeper, read it. The page
+    /// is cut to its article as soon as it lands, so the larger ceiling is
+    /// held for a moment, not for as long as the story is open.
+    const ARTICLE_BYTES: u32 = kobo_bookview::offline::PAGE_BYTES;
 
     /// Opens the article behind the story, from the device if it is there.
     ///
@@ -3950,6 +3955,30 @@ mod tests {
             "it did not try again"
         );
         let _ = index;
+    }
+
+    #[test]
+    fn an_article_is_read_up_to_the_size_a_saved_one_is_kept_at() {
+        let mut device = Device::default();
+        let mut runner = loaded_on(&mut device);
+        let (_, link) = open_linked(&mut runner, &mut device);
+        let commands = runner.action(action_id("read-article"));
+        let commands = device.settle(&mut runner, commands);
+        let asked = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Fetch { url, max_bytes, .. },
+                    ..
+                } if *url == link => Some(*max_bytes),
+                _ => None,
+            })
+            .expect("an unsaved article is fetched");
+        assert!(
+            asked >= kobo_bookview::offline::PAGE_BYTES,
+            "an article is read up to {asked} bytes and kept up to {}",
+            kobo_bookview::offline::PAGE_BYTES
+        );
     }
 
     #[test]

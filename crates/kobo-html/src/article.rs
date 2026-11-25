@@ -172,7 +172,8 @@ pub fn main_content(html: &str) -> String {
             continue;
         }
         if !tag.closing && tag.name == "img" {
-            if let Some(rewritten) = lazy_image(&html[tag.start..tag.end]) {
+            let markup = &html[tag.start..tag.end];
+            if let Some(rewritten) = fitted_image(markup).or_else(|| lazy_image(markup)) {
                 out.push_str(&html[cursor..tag.start]);
                 out.push_str(&rewritten);
                 cursor = tag.end;
@@ -540,9 +541,109 @@ fn lazy_image(tag: &str) -> Option<String> {
     ))
 }
 
+/// The widest picture worth asking a site for, in pixels.
+///
+/// A picture in an article is fitted to eighty millimetres of panel, which is
+/// 945 pixels at the 300 pixels to the inch of the sharpest Kobo. Anything
+/// wider is thrown away in the fitting, after it has been carried over the
+/// radio and counted against the ceiling on one picture.
+const PICTURE_WIDTH: u32 = 1024;
+
+/// An image offered at several widths, written to ask for the one this
+/// device can use.
+///
+/// A page names one picture in `src` and its other sizes in `srcset`, and the
+/// one in `src` is often the largest: NASA's lead photographs are 1440 pixels
+/// and 600 kilobytes there, over the ceiling on one picture, and were left out
+/// while a 1024 pixel copy a little over half the size was on offer beside
+/// them. The widest copy no wider than [`PICTURE_WIDTH`] is taken, or the
+/// narrowest if every copy is wider. A `src` whose width is not known is left
+/// alone: nothing says a smaller copy is smaller than it.
+fn fitted_image(tag: &str) -> Option<String> {
+    let inside = tag.strip_prefix('<')?.strip_suffix('>')?;
+    let offered = attribute(inside, "srcset")
+        .or_else(|| attribute(inside, "data-srcset"))
+        .map(srcset_widths)?;
+    let (chosen, width) = offered
+        .iter()
+        .filter(|(_, width)| *width <= PICTURE_WIDTH)
+        .max_by_key(|(_, width)| *width)
+        .or_else(|| offered.iter().min_by_key(|(_, width)| *width))?;
+    let source = ["src", "data-src", "data-lazy-src", "data-original"]
+        .iter()
+        .find_map(|name| attribute(inside, name))
+        .filter(|source| !source.is_empty() && !source.starts_with("data:"));
+    if let Some(source) = source {
+        let known = offered
+            .iter()
+            .find(|(url, _)| *url == source)
+            .map(|(_, width)| *width)
+            .or_else(|| attribute(inside, "width").and_then(|width| width.parse().ok()));
+        if known.is_none_or(|known| known <= *width) {
+            return None;
+        }
+    }
+    let alt = attribute(inside, "alt").unwrap_or_default();
+    Some(format!(
+        "<img src=\"{}\" alt=\"{}\">",
+        chosen.replace('"', "&quot;"),
+        alt.replace('"', "&quot;")
+    ))
+}
+
+/// The copies a `srcset` offers with their widths in pixels. Copies given
+/// by density rather than width say nothing about their size and are left
+/// out.
+fn srcset_widths(set: &str) -> Vec<(&str, u32)> {
+    set.split(',')
+        .filter_map(|candidate| {
+            let mut parts = candidate.split_whitespace();
+            let url = parts.next()?;
+            let width = parts.next()?.strip_suffix('w')?.parse().ok()?;
+            Some((url, width))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_picture_offered_at_several_widths_is_asked_for_at_one_the_panel_can_use() {
+        let lead = "<article><h1>Pecans</h1><p>The fields around Albany.</p>\
+            <img width=\"1440\" height=\"1199\" src=\"https://a.test/p.jpg?w=1440&amp;h=1199\" \
+            alt=\"Fields\" srcset=\"https://a.test/p.jpg?w=1440&amp;h=1199 1440w, \
+            https://a.test/p.jpg?w=150&amp;h=150 150w, https://a.test/p.jpg?w=768&amp;h=1199 768w, \
+            https://a.test/p.jpg?w=1024&amp;h=853 1024w\"></article>";
+        let cut = main_content(lead);
+        assert_eq!(
+            picture_sources(&cut),
+            ["https://a.test/p.jpg?w=1024&h=853"],
+            "{cut}"
+        );
+        assert!(cut.contains("alt=\"Fields\""), "{cut}");
+
+        // Only srcset names the picture: one copy is still asked for.
+        let only = "<article><p>Delta.</p><img alt=\"Delta\" \
+            srcset=\"https://a.test/d.jpg?w=50 50w, https://a.test/d.jpg?w=600 600w, \
+            https://a.test/d.jpg?w=2048 2048w\"></article>";
+        assert_eq!(
+            picture_sources(&main_content(only)),
+            ["https://a.test/d.jpg?w=600"]
+        );
+
+        // A picture already narrow enough, or of no known width, is left be.
+        for kept in [
+            "<img src=\"https://a.test/s.jpg\" srcset=\"https://a.test/s.jpg 300w, https://a.test/l.jpg 900w\">",
+            "<img src=\"https://a.test/u.jpg\" srcset=\"https://a.test/m.jpg 900w\">",
+            "<img src=\"https://a.test/x.jpg\" srcset=\"https://a.test/x2.jpg 2x\">",
+        ] {
+            let page = format!("<article><p>Words.</p>{kept}</article>");
+            let source = attribute(&kept[1..kept.len() - 1], "src").unwrap_or_default();
+            assert_eq!(picture_sources(&main_content(&page)), [source], "{kept}");
+        }
+    }
 
     #[test]
     fn the_article_is_kept_and_the_menus_and_footer_around_it_are_not() {
