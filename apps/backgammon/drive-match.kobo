@@ -113,18 +113,63 @@ tap Match settings
 tap-id length-1
 tap Play
 expect This match now plays to 1 point. Tap Roll to begin.
+# The first game decides a 1-point match, so there is no cube to turn:
+# no Double at the foot, no cube line, and the rules say so.
+expect-missing Double
+expect-missing either side may double
+tap Rules
+expect A 1-point match has no doubling: the first game decides it.
+expect-missing Double offers
+tap Play
+clean
+shot one-point-no-cube
+tap-id game-more
+tap Match settings
+tap-id length-3
+tap Play
+expect This match now plays to 3 points. Tap Roll to begin.
 tap Roll
 expect White opened with 3 and 2.
 tap-id point-12
 tap-id point-9
 tap-id point-12
 tap-id point-10
+# Black doubles and White takes; White redoubles and Black takes; Black
+# redoubles to 8 and White drops: four points win a 3-point match.
 tap Double
 tap Offer double
+tap Take
+expect White takes. Black to roll.
+tap Roll
+expect Black rolled double 1s.
+tap-id point-18
+tap-id point-19
+tap-id point-18
+tap-id point-19
+tap-id point-16
+tap-id point-17
+tap-id point-16
+tap-id point-17
+expect Pass the reader to White.
+tap Double
+tap Offer double
+expect White offers the cube at 4
+tap Take
+expect Black takes. White to roll.
+tap Roll
+expect White rolled 6 and 2.
+tap-id point-7
+tap-id point-1
+tap-id point-5
+tap-id point-3
+expect Pass the reader to Black.
+tap Double
+tap Offer double
+expect Black offers the cube at 8
 tap Drop
 tap Drop cube
-expect Black won the match 1–0.
-expect White 0 · Black 1 · first to 1
+expect Black won the match 4–0.
+expect White 0 · Black 4 · first to 3
 expect New game
 clean
 shot match-won

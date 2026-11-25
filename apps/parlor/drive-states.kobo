@@ -26,6 +26,6 @@ tap Back
 tap Nine Men's Morris
 tap Start game
 tap-id cell-0
-expect The computer placed a piece on the
+expect The computer placed the marked piece.
 clean
 shot morris-computer-named

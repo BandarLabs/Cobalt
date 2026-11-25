@@ -125,13 +125,10 @@ clean
 shot kalah-match-won
 tap-id cell-0
 expect The match is over. New game, in the menu at the top, starts another.
-# Undo reopens the deciding round and takes the point back with it.
-tap Undo
-expect Your last move and the computer's reply are taken back.
-expect You 1 · Computer 0
-tap-id cell-2
+# A finished round stays finished: Undo is not offered, so neither the
+# result nor the point it scored can be taken back.
+expect-missing Undo
 expect You 2 · Computer 0
-expect Match over, 2–0.
 restart
 wait-for Resume Kalah
 tap Resume Kalah
