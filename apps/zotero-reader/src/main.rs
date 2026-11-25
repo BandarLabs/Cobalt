@@ -432,7 +432,15 @@ impl ReadingList {
         self.opened_title.clone_from(&paper.title);
         self.opened_creators.clone_from(&paper.creators);
         self.detail = None;
-        self.detail_body.clear();
+        // A kept paper is shown from what the reader already holds, and the
+        // fuller details replace it if the network answers. Waiting on the
+        // fetch instead left a page that opens offline blank for the ten
+        // seconds it took to fail, and blank after.
+        self.detail_body = if self.is_kept(&paper.key) {
+            kept_detail_text(&paper.creators, &paper.year)
+        } else {
+            String::new()
+        };
         self.detail_page = 0;
         self.from_library = false;
         self.view = View::Detail;
@@ -1205,9 +1213,13 @@ impl ReadingList {
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
-        if self.task.is_some_and(|(_, awaiting)| {
-            matches!(awaiting, Awaiting::Detail | Awaiting::DetailChildren)
-        }) {
+        // Only a page with nothing to show waits on the fetch; a kept paper
+        // already has its details and its actions.
+        if self.detail_body.is_empty()
+            && self.task.is_some_and(|(_, awaiting)| {
+                matches!(awaiting, Awaiting::Detail | Awaiting::DetailChildren)
+            })
+        {
             return screen.activity("Fetching paper details", None).build();
         }
         let has_pdf = self
@@ -1710,7 +1722,14 @@ impl KoboApp for ReadingList {
                 self.from_library = true;
                 self.detail = None;
                 self.detail_page = 0;
-                "This paper text is kept for offline reading.".clone_into(&mut self.detail_body);
+                let year = self
+                    .snapshot
+                    .papers
+                    .iter()
+                    .find(|paper| paper.key == kept.key)
+                    .map(|paper| paper.year.as_str())
+                    .unwrap_or_default();
+                self.detail_body = kept_detail_text(&self.opened_creators, year);
                 self.view = View::Detail;
                 self.show(context);
                 return;
@@ -2078,6 +2097,21 @@ fn detail_text(detail: &Detail) -> String {
         paragraphs.push(detail.abstract_text.clone());
     }
     paragraphs.join("\n\n")
+}
+
+/// What the detail page says of a kept paper before, or without, the network:
+/// the authors and year the reader already holds, laid out as [`detail_text`]
+/// lays them out, and that the text is here.
+fn kept_detail_text(creators: &str, year: &str) -> String {
+    [
+        creators,
+        year,
+        "This paper text is kept for offline reading.",
+    ]
+    .into_iter()
+    .filter(|paragraph| !paragraph.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
 }
 
 fn encode_selection(collection: &Collection) -> Vec<u8> {
@@ -2732,6 +2766,57 @@ mod tests {
                 .iter()
                 .any(|action| action.action == action_id(super::TOGGLE_READ))
         }));
+    }
+
+    #[test]
+    fn a_kept_paper_opened_offline_shows_what_the_reader_holds_without_waiting() {
+        let paper = Paper {
+            key: "PAPER001".to_owned(),
+            title: "Synthetic paper".to_owned(),
+            creators: "Ada Lovelace".to_owned(),
+            year: "1843".to_owned(),
+            ..Paper::default()
+        };
+        let mut runner = AppRunner::new(super::ReadingList {
+            user_id: Some("12345".to_owned()),
+            view: super::View::Feed,
+            snapshot: Snapshot {
+                papers: vec![paper.clone()],
+                ..Snapshot::default()
+            },
+            library: vec![super::Kept {
+                key: paper.key.clone(),
+                title: paper.title.clone(),
+                creators: paper.creators.clone(),
+                bytes: 1,
+            }],
+            ..super::ReadingList::default()
+        });
+        let opened = runner.action(action_id(&format!("{}0", super::PAPER)));
+        let text = |commands: Vec<Command>| {
+            commands
+                .into_iter()
+                .rev()
+                .find_map(|command| match command {
+                    Command::SetScreen(screen) => Some(format!("{screen:?}")),
+                    _ => None,
+                })
+                .expect("a screen")
+        };
+        let opened = text(opened);
+        assert!(!opened.contains("Fetching paper details"), "{opened}");
+        for shown in ["Ada Lovelace", "1843", "kept for offline reading"] {
+            assert!(opened.contains(shown), "{shown} is missing: {opened}");
+        }
+        let task = runner
+            .app()
+            .task
+            .expect("the details are still asked for")
+            .0;
+        // However the fetch ends, the page keeps what it showed.
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Offline));
+        let failed = format!("{:?}", runner.app().detail_screen(&runner.context()));
+        assert!(failed.contains("Ada Lovelace"), "{failed}");
     }
 
     #[test]
