@@ -3,11 +3,11 @@
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
   "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "glyph": "sunrise",
   "capabilities": [
     "network",
     "scheduled-wake"
   ],
-  "release_notes": "Find words in a story and go to any page from the reading controls. Stories on newsletter sites open as the article instead of an empty page."
+  "release_notes": "The brief no longer promises to refresh itself each morning. It refreshes when you open it, at most every six hours."
 }

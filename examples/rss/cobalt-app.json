@@ -3,7 +3,7 @@
   "display_name": "Feeds",
   "short_label": "Feeds",
   "summary": "Follow feeds, search saved articles and read offline with images.",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "glyph": "rss",
   "capabilities": [
     "network"
@@ -27,5 +27,5 @@
       }
     ]
   },
-  "release_notes": "Pictures in a followed feed now appear when the site keeps them on an image host of its own, as Substack newsletters do. Pictures are never fetched from a home network address."
+  "release_notes": "An image problem in one feed is no longer reported on the others, and more lead photos load."
 }

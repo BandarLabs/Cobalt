@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.26",
-  "release_notes": "A game against the computer now names you as You on the board, rather than showing your Lichess username.",
+  "version": "1.0.27",
+  "release_notes": "The computer only accepts a draw when the game is level, and a wrong tap is answered without moving the board.",
   "glyph": "chess-white-knight",
   "capabilities": [
     "network",

@@ -4,8 +4,8 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Play text adventures offline. Parser runs Z-machine stories you send from your computer, with tap shortcuts for common commands and an original tutorial story.",
-  "version": "0.1.21",
-  "release_notes": "Things named anywhere on a page can be tapped, opening the keyboard stays on the newest reply, and a failed save no longer breaks the page or outlives the next good save. A saved slot now shows as saved.",
+  "version": "0.1.22",
+  "release_notes": "A reopened story keeps its earlier pages and offers the things you carry, and commands after the end no longer show an error.",
   "glyph": "map",
   "capabilities": [],
   "setup": {

@@ -4,8 +4,8 @@
   "short_label": "Grimoire",
   "summary": "Browse offline SRD references and manage tabletop combat.",
   "page_description": "Offline SRD reference and table tools for spell lookups, monster stat blocks, dice, initiative, and party HP.",
-  "version": "0.1.14",
-  "release_notes": "Find words in a reference page and go to any page from the reading controls.",
+  "version": "0.1.15",
+  "release_notes": "Search finds a word anywhere in a name, so \"dragon\" finds every dragon.",
   "glyph": "swords",
   "capabilities": []
 }
