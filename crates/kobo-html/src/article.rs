@@ -594,15 +594,37 @@ fn fitted_image(tag: &str) -> Option<String> {
 /// The copies a `srcset` offers with their widths in pixels. Copies given
 /// by density rather than width say nothing about their size and are left
 /// out.
+///
+/// A candidate's address runs to the next whitespace, as the HTML standard
+/// reads it, and only then do commas separate candidates: an image service's
+/// address such as `.../c_scale,w_1024/photo.jpg` carries commas of its own,
+/// and splitting the whole attribute on them asked for half an address.
 fn srcset_widths(set: &str) -> Vec<(&str, u32)> {
-    set.split(',')
-        .filter_map(|candidate| {
-            let mut parts = candidate.split_whitespace();
-            let url = parts.next()?;
-            let width = parts.next()?.strip_suffix('w')?.parse().ok()?;
-            Some((url, width))
-        })
-        .collect()
+    let mut offered = Vec::new();
+    let mut rest = set;
+    loop {
+        rest = rest.trim_start_matches(|c: char| c.is_whitespace() || c == ',');
+        if rest.is_empty() {
+            return offered;
+        }
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let (address, after) = rest.split_at(end);
+        // An address that ends in a comma has no descriptors, and that comma
+        // ends the candidate.
+        if address.ends_with(',') {
+            rest = after;
+            continue;
+        }
+        let descriptors_end = after.find(',').unwrap_or(after.len());
+        let (descriptors, after) = after.split_at(descriptors_end);
+        rest = after;
+        let width = descriptors
+            .split_whitespace()
+            .find_map(|descriptor| descriptor.strip_suffix('w')?.parse().ok());
+        if let Some(width) = width {
+            offered.push((address, width));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -643,6 +665,30 @@ mod tests {
             let source = attribute(&kept[1..kept.len() - 1], "src").unwrap_or_default();
             assert_eq!(picture_sources(&main_content(&page)), [source], "{kept}");
         }
+    }
+
+    #[test]
+    fn an_address_with_commas_in_it_is_read_whole() {
+        assert_eq!(
+            srcset_widths(
+                "https://img.test/c_scale,w_480/p.jpg 480w, \
+                 https://img.test/c_scale,w_1024/p.jpg 1024w,https://img.test/x.jpg 2x, \
+                 https://img.test/bare.jpg, https://img.test/c_fill,w_2000/p.jpg 2000w"
+            ),
+            [
+                ("https://img.test/c_scale,w_480/p.jpg", 480),
+                ("https://img.test/c_scale,w_1024/p.jpg", 1024),
+                ("https://img.test/c_fill,w_2000/p.jpg", 2000),
+            ]
+        );
+        let page = "<article><p>Words.</p><img width=\"2000\" \
+            src=\"https://img.test/c_fill,w_2000/p.jpg\" srcset=\"\
+            https://img.test/c_scale,w_1024/p.jpg 1024w, https://img.test/c_fill,w_2000/p.jpg 2000w\">\
+            </article>";
+        assert_eq!(
+            picture_sources(&main_content(page)),
+            ["https://img.test/c_scale,w_1024/p.jpg"]
+        );
     }
 
     #[test]
