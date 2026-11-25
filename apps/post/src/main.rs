@@ -252,11 +252,17 @@ impl Post {
         .build()
     }
 
-    fn letter_prefix(&self, letter: &Letter) -> ScreenBuilder {
-        let mut screen = ScreenBuilder::new("post-letter")
+    /// A page of a letter before anything is set on it.
+    fn letter_head(letter: &Letter) -> ScreenBuilder {
+        ScreenBuilder::new("post-letter")
             .top_bar(&letter.title)
             .reading(true)
-            .owns_back(true);
+            .owns_back(true)
+    }
+
+    /// The head of a letter's first page: the reply's status and the notice.
+    fn letter_prefix(&self, letter: &Letter) -> ScreenBuilder {
+        let mut screen = Self::letter_head(letter);
         if let Some(reply) = self
             .outbox
             .iter()
@@ -267,6 +273,12 @@ impl Post {
         Self::banner(screen, self.notice.as_ref())
     }
 
+    /// The letter's pages. The reply's status and the last notice head the
+    /// first page only, so only the first page gives up room for them.
+    ///
+    /// They were measured off every page and drawn at the head of every
+    /// page, so a sent reply repeated "Your reply: Delivered." and its banner
+    /// over each page of a long letter, and its seven pages became eight.
     fn letter_pages(&self, context: &Context, letter: &Letter) -> Vec<Vec<String>> {
         let metrics = context.metrics();
         kobo_ui::with_text_scale(metrics.text_scale, || {
@@ -275,14 +287,21 @@ impl Post {
                 let chrome = kobo_sdk::Chrome::for_screen(&prefix, false, None);
                 let used = prefix.layout_with(&metrics, &chrome).content_used();
                 let mut area = metrics.prose_area_in(true, true, kobo_ui::Face::Reading);
-                // The reply action has a reserved bottom band. Status text and
-                // errors above the letter take their measured space, too.
+                // The reply action has a reserved bottom band.
                 area.height = area
                     .height
                     .saturating_sub(metrics.page_position_band())
-                    .saturating_sub(used.saturating_add(area.gap))
+                    .saturating_sub(area.gap)
                     .max(1);
-                kobo_ui::paginate(&letter.body, area)
+                let body = kobo_ui::normalise_breaks(&letter.body);
+                let paragraphs: Vec<_> = body
+                    .split("\n\n")
+                    .map(|paragraph| (0, 0, kobo_ui::QuoteRole::Body, paragraph))
+                    .collect();
+                kobo_ui::paginate_tagged_below(&paragraphs, &metrics, area, used)
+                    .into_iter()
+                    .map(|page| page.into_iter().map(|(_, _, _, text)| text).collect())
+                    .collect()
             })
         })
     }
@@ -293,7 +312,11 @@ impl Post {
         };
         let pages = self.letter_pages(context, letter);
         let index = letter_page(&pages, self.place(&letter.id));
-        let mut screen = self.letter_prefix(letter);
+        let mut screen = if index == 0 {
+            self.letter_prefix(letter)
+        } else {
+            Self::letter_head(letter)
+        };
         if let Some(paragraphs) = pages.get(index) {
             for paragraph in paragraphs {
                 screen = screen.text(paragraph);
@@ -547,6 +570,10 @@ impl Post {
             self.outbox.push(reply);
             self.save_outbox(c);
             self.keyboard.clear();
+            // Back on the letter's first page, which is where the reply's
+            // status and what became of it are said.
+            self.set_place(letter_id, 0);
+            self.save_cache(c);
             self.view = View::Letter;
             self.notice = Some((
                 BannerLevel::Info,
@@ -775,6 +802,12 @@ impl KoboApp for Post {
 
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
         if a == ActionId::BACK || a == action_id("back") {
+            // What was said about a letter or its reply stays with it. The
+            // inbox drew "Sent to Hermes." over the list it had nothing to
+            // do with.
+            if matches!(self.view, View::Letter | View::Compose) {
+                self.notice = None;
+            }
             self.view = View::Inbox;
             self.show(c);
             return;
@@ -930,6 +963,58 @@ mod tests {
         let start: usize = changed.iter().take(target).map(|p| page_words(p)).sum();
         assert!(start <= offset && start + page_words(&changed[target]) > offset);
         assert_eq!(letter_page(&pages, place), 1);
+    }
+
+    #[test]
+    fn a_sent_reply_is_said_once_at_the_head_of_the_letter_and_not_carried_to_the_inbox() {
+        let mut c = Context::default();
+        let letter = Letter {
+            id: "long".into(),
+            title: "A long letter".into(),
+            body: "Steam rises from the spout while the street outside is still.\n\n".repeat(60),
+        };
+        let mut app = Post {
+            view: View::Letter,
+            gateway: "https://gateway.example".into(),
+            letters: vec![letter.clone()],
+            ..Default::default()
+        };
+        let quiet = app.letter_pages(&c, &letter).len();
+        let mut reply = Reply::new("https://gateway.example", "long", "Thanks.").unwrap();
+        reply.state = ReplyState::Delivered;
+        app.outbox.push(reply);
+        app.notice = Some((BannerLevel::Success, "Sent to Hermes.".into()));
+        let pages = app.letter_pages(&c, &letter);
+        assert!(
+            pages.len() <= quiet + 1,
+            "{quiet} pages became {}: the status took room on every page",
+            pages.len()
+        );
+        assert_eq!(
+            pages.iter().map(|page| page_words(page)).sum::<usize>(),
+            page_words(&[letter.body.clone()]),
+            "words were lost"
+        );
+        let first = format!("{:?}", app.letter(&mut c));
+        assert!(first.contains("Your reply: Delivered."), "{first}");
+        assert!(first.contains("Sent to Hermes."), "{first}");
+        app.on_action(&mut c, action_id("next-page"));
+        let second = format!("{:?}", app.letter(&mut c));
+        assert!(
+            !second.contains("Your reply:"),
+            "the status is on page two too"
+        );
+        assert!(
+            !second.contains("Sent to Hermes."),
+            "the banner is on page two too"
+        );
+
+        app.on_action(&mut c, ActionId::BACK);
+        assert!(app.view == View::Inbox);
+        assert_eq!(
+            app.notice, None,
+            "the letter's banner followed it to the inbox"
+        );
     }
 
     #[test]
