@@ -179,8 +179,9 @@ fn discover_touch_path(input_devices_path: &str) -> Option<PathBuf> {
 /// The controllers every measured Kobo uses, picked by name before anything
 /// else so that a reader somebody has tested keeps the node it was tested on.
 /// The Nia's Elan controller names itself `elan-touch`, not the Libra 2's
-/// `Elan Touchscreen`.
-const NAMED_TOUCH_CONTROLLERS: [&str; 3] = ["cyttsp5_mt", "Elan Touchscreen", "elan-touch"];
+/// `Elan Touchscreen`, and the Clara 2E's `FocalTech` controller is `fts_ts`.
+const NAMED_TOUCH_CONTROLLERS: [&str; 4] =
+    ["cyttsp5_mt", "Elan Touchscreen", "elan-touch", "fts_ts"];
 
 /// Name fragments of nodes that are never the touch panel, whatever axes
 /// they declare. Buttons, the power key and the cover sensor live on these,
@@ -408,6 +409,30 @@ H: Handlers=event0\n";
         assert_eq!(
             discover_touch_path_from(fixture, 32).as_deref(),
             Some(Path::new("/dev/input/event2"))
+        );
+    }
+
+    /// The Clara 2E's devices in the order its kernel lists them, with the
+    /// `FocalTech` controller between two key devices.
+    #[test]
+    fn finds_focaltech_touch_handler() {
+        let fixture = "I: Bus=0019 Vendor=0001 Product=0001 Version=0100\n\
+N: Name=\"gpio-keys\"\n\
+H: Handlers=event0 \n\
+B: EV=100013\n\n\
+I: Bus=0018 Vendor=0000 Product=0000 Version=0000\n\
+N: Name=\"fts_ts\"\n\
+S: Sysfs=/devices/platform/soc/2100000.aips-bus/21a4000.i2c/i2c-1/1-0038/input/input1\n\
+H: Handlers=event1 \n\
+B: EV=b\n\
+B: ABS=6618000 0\n\n\
+I: Bus=0019 Vendor=0001 Product=0001 Version=0100\n\
+N: Name=\"bd71828-pwrkey\"\n\
+H: Handlers=kbd event2 \n\
+B: EV=13\n";
+        assert_eq!(
+            discover_touch_path_from(fixture, 32).as_deref(),
+            Some(Path::new("/dev/input/event1"))
         );
     }
 
