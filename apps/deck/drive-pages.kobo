@@ -20,7 +20,8 @@ wait-for Deploy
 # A pad tapped in the preview says it is a preview instead of running.
 tap Test
 wait-for Preview only. Pair with your computer to use these pads.
-# Said once: the line under the tabs steps aside while the banner says it.
+# Said in the line under the tabs, in place of what it said before, so the
+# pads do not move under the finger.
 expect-missing Pair to run commands.
 clean
 shot pages-preview-press
