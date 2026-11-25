@@ -17347,6 +17347,22 @@ fn paint_layout(
     // each paragraph's edge came out as a dashed line down the page, broken at
     // every byline. Never across more than the space between two blocks, so a
     // thread split by anything else stays split.
+    // A bar called up over the page is drawn over it, and clears what it
+    // leaves showing of a line it cut (see `cover_cut_line`). Whether a line
+    // runs across its foot is read from the layout as well as the pixels: a
+    // repaint of only the strip under the bar has no page left above that
+    // row to look at.
+    let covers_page = screen.auto_hide_top_bar && chrome.status.is_none();
+    let cut_top = bar_foot.map(|foot| foot.saturating_add(metrics.rule_thickness()));
+    let straddled = cut_top.is_some_and(|top| {
+        layout.nodes.iter().any(|node| {
+            !matches!(
+                node.kind,
+                LayoutKind::TopBar | LayoutKind::BarRule | LayoutKind::Scrim { .. }
+            ) && node.rect.y < top
+                && node.rect.y.saturating_add(node.rect.height) > top
+        })
+    });
     let mut quote_join = vec![None; layout.nodes.len()];
     let mut last_quote: Option<(i32, u8)> = None;
     for (index, node) in layout.nodes.iter().enumerate() {
@@ -17378,6 +17394,17 @@ fn paint_layout(
                         .saturating_sub(top),
                 }
             }
+            // The paper it may lay over a cut line lies below its rectangle,
+            // and a repaint of only that strip redraws the line, so the bar
+            // has to be painted with it to clear the line again.
+            LayoutKind::TopBar if covers_page => Rect {
+                height: node
+                    .rect
+                    .height
+                    .saturating_add(metrics.rule_thickness())
+                    .saturating_add(cover_reach(prose)),
+                ..node.rect
+            },
             _ => node.rect,
         };
         if reach.intersection(clip).is_none() {
@@ -18595,10 +18622,16 @@ fn paint_layout(
             // screen in the same colour and the content between them would
             // be the quietest thing on the panel.
             LayoutKind::TopBar => {
-                fill_clipped(surface, node.rect, palette.bar(), clip);
                 // Only a bar called up over the page can cut through a line:
-                // everywhere else the page starts below it.
-                if screen.auto_hide_top_bar && chrome.status.is_none() {
+                // everywhere else the page starts below it. A line that
+                // merely starts at its foot was not cut, and is left whole.
+                // The row above the foot is still the page's here, since the
+                // page is painted before the bar; when this repaint did not
+                // draw that row, the layout says instead.
+                let cut = covers_page
+                    && cut_top.is_some_and(|top| bar_cuts_a_line(surface, top, clip, straddled));
+                fill_clipped(surface, node.rect, palette.bar(), clip);
+                if cut {
                     cover_cut_line(surface, node.rect, metrics, prose, clip);
                 }
             }
@@ -20574,10 +20607,7 @@ fn cover_cut_line(
         .y
         .saturating_add(bar.height)
         .saturating_add(metrics.rule_thickness());
-    let reach = FontSize::Heading
-        .line_height()
-        .max(FontSize::Heading.line_height_in(prose))
-        .saturating_mul(2);
+    let reach = cover_reach(prose);
     let width = surface.width;
     let height = i32::try_from(surface.height).unwrap_or(i32::MAX);
     // Paper, or the tint under a marked passage: anything else is ink.
@@ -20610,6 +20640,52 @@ fn cover_cut_line(
             clip,
         );
     }
+}
+
+/// How far below its rule a bar over the page may clear a cut line: two
+/// heading lines, so a picture under it is never cut into.
+fn cover_reach(prose: Face) -> i32 {
+    FontSize::Heading
+        .line_height()
+        .max(FontSize::Heading.line_height_in(prose))
+        .saturating_mul(2)
+}
+
+/// Whether a line of the page runs across `top`, the first row under a bar
+/// called up over it, so the bar cut it.
+///
+/// Read from the row above `top` while it is still the page's, before the
+/// bar is painted over it. A repaint that did not draw that row has stale
+/// pixels there, and goes by `straddled`: whether a node of the layout spans
+/// the row.
+fn bar_cuts_a_line(surface: &Surface, top: i32, clip: Rect, straddled: bool) -> bool {
+    let above = top.saturating_sub(1);
+    if above >= clip.y && above < clip.y.saturating_add(clip.height) {
+        !row_is_paper(surface, above, clip)
+    } else {
+        straddled
+    }
+}
+
+/// Whether row `y` holds only paper, or the tint under a marked passage,
+/// across the columns `clip` covers.
+fn row_is_paper(surface: &Surface, y: i32, clip: Rect) -> bool {
+    let Ok(row) = usize::try_from(y) else {
+        return true;
+    };
+    let left = usize::try_from(clip.x.max(0)).unwrap_or(0);
+    let right = usize::try_from(clip.x.saturating_add(clip.width).max(0))
+        .unwrap_or(0)
+        .min(surface.width);
+    let start = row.saturating_mul(surface.width);
+    surface
+        .pixels
+        .get(start.saturating_add(left)..start.saturating_add(right))
+        .is_none_or(|pixels| {
+            pixels
+                .iter()
+                .all(|&grey| grey == tone::PAPER || grey == tone::SURFACE)
+        })
 }
 
 fn fill_clipped(surface: &mut Surface, rect: Rect, paint: impl Into<Paint>, clip: Rect) {

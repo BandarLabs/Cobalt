@@ -736,7 +736,25 @@ fn a_bar_called_up_over_the_page_leaves_no_line_half_showing_under_it() {
             for y in foot..end {
                 assert!(!inked(&barred, y), "row {y} of a cut line still shows");
             }
+        } else {
+            // A line that only starts at the foot was not cut, and stays.
+            end = foot;
         }
+        // A repaint of only the strip under the bar draws what a whole
+        // frame draws there, so the cut line does not come back.
+        let shown = ensure_way_back_revealed(page.clone(), &chrome, "Article", TopBarState::Shown);
+        let mut repainted = barred.clone();
+        let strip = Rect {
+            x: 0,
+            y: i32::try_from(foot).expect("on the panel"),
+            width: metrics.width,
+            height: metrics.space(Space::Large) * 4,
+        };
+        render_with(&shown, metrics, &chrome, &mut repainted, Some(strip));
+        assert!(
+            repainted.pixels == barred.pixels,
+            "a repaint of the strip under the bar differs from the whole frame"
+        );
         // Everything below the cut line is the page as it was.
         for y in end..bare.height {
             let row = y * bare.width..(y + 1) * bare.width;
@@ -748,4 +766,43 @@ fn a_bar_called_up_over_the_page_leaves_no_line_half_showing_under_it() {
         }
     }
     assert!(cut > 0, "no page here put a line under the bar's foot");
+}
+
+#[test]
+fn a_line_that_starts_at_the_bars_foot_is_left_whole() {
+    // The bar clears a line it cut through. A line whose first inked row is
+    // the first row under the rule was not cut, and clearing it would hide a
+    // whole line of the page for nothing.
+    let mut page = Surface::new(40, 20);
+    let top = 10;
+    for y in 10..16 {
+        for x in 5..30 {
+            page.pixels[y * 40 + x] = tone::INK;
+        }
+    }
+    let whole = Rect {
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 20,
+    };
+    assert!(
+        !bar_cuts_a_line(&page, 10, whole, true),
+        "a line starting at the foot was cut"
+    );
+    // The same line one row higher runs under the rule: that one was cut.
+    for x in 5..30 {
+        page.pixels[9 * 40 + x] = tone::INK;
+    }
+    assert!(bar_cuts_a_line(&page, top, whole, false));
+    // A repaint that did not draw the row above the foot has only the
+    // layout to go by.
+    let strip = Rect {
+        x: 0,
+        y: 10,
+        width: 40,
+        height: 10,
+    };
+    assert!(bar_cuts_a_line(&page, top, strip, true));
+    assert!(!bar_cuts_a_line(&page, top, strip, false));
 }
