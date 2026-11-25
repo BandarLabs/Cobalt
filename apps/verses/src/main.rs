@@ -2352,12 +2352,29 @@ impl Verses {
         // Grouped by poet, the way an anthology's contents are, so a search
         // for a word that several poets used reads as who used it rather than
         // as a list where the poet is the small print under every title.
+        //
+        // The poet whose poem is called what was searched for comes first,
+        // and that poem first among theirs. In the order of poets' names, a
+        // search for "the raven" opened on three poems by Christopher Smart
+        // that mention a raven, and Poe's was fourth.
+        let rank: Vec<u8> = self
+            .results
+            .iter()
+            .map(|poem| title_rank(&poem.title, &self.query))
+            .collect();
+        let mut best: std::collections::HashMap<&str, u8> = std::collections::HashMap::new();
+        for (poem, rank) in self.results.iter().zip(&rank) {
+            let kept = best.entry(poem.author.as_str()).or_insert(*rank);
+            *kept = (*kept).min(*rank);
+        }
         let mut order: Vec<usize> = (0..self.results.len()).collect();
         order.sort_by(|&a, &b| {
-            let (a, b) = (&self.results[a], &self.results[b]);
-            a.author
-                .cmp(&b.author)
-                .then_with(|| natural_order(&a.title, &b.title))
+            let (poem_a, poem_b) = (&self.results[a], &self.results[b]);
+            best[poem_a.author.as_str()]
+                .cmp(&best[poem_b.author.as_str()])
+                .then_with(|| poem_a.author.cmp(&poem_b.author))
+                .then_with(|| rank[a].cmp(&rank[b]))
+                .then_with(|| natural_order(&poem_a.title, &poem_b.title))
         });
         let mut previous: Option<&str> = None;
         let rows = order
@@ -2495,6 +2512,13 @@ impl Verses {
     /// of. Everything here is public domain and says which edition it was
     /// taken from, so a card can be passed on without stripping the poem of
     /// its provenance on the way.
+    ///
+    /// The title sits above the verse rather than over it. A reading page
+    /// draws its bar over the page because the shell puts the bar away, but a
+    /// card is drawn whole into a picture, bar and all: set that way, a card
+    /// hid its first line under its own title and opened on the wrapped end
+    /// of it. What no longer fits under the title comes off the foot of the
+    /// card, a whole line of verse at a time.
     fn quote_card(&self, context: &Context) -> Screen {
         if let Some(poem) = self.current_online().filter(|_| self.card_from_online()) {
             let pages = self.online_pages(context, poem);
@@ -2508,7 +2532,6 @@ impl Verses {
                     .secondary(context.clamped_row(&poem.author, 1, false))
                     .secondary("From PoetryDB")
                     .build()
-                    .with_auto_hidden_top_bar(true)
             };
             return Self::fitted_card(context, lines.len(), card);
         }
@@ -2531,9 +2554,6 @@ impl Verses {
                 .secondary(format!("{} · {}", poem.author, poem.year))
                 .secondary(poem.source.to_owned())
                 .build()
-                // The card is set on the poem's own pages, which are the whole
-                // panel, and it is the card that is shown, not the bar.
-                .with_auto_hidden_top_bar(true)
         };
         Self::fitted_card(context, total, card)
     }
@@ -2771,6 +2791,32 @@ fn search_results(bytes: &[u8]) -> Option<Vec<OnlinePoem>> {
     }
     let answer = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
     (answer.get("status").and_then(serde_json::Value::as_u64) == Some(404)).then(Vec::new)
+}
+
+/// A title folded for comparing: lower case, with punctuation and runs of
+/// space taken out, so "The Raven." and "the  raven" are the same title.
+fn title_words(title: &str) -> String {
+    title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// How closely a title answers a search: 0 when it is what was searched for,
+/// 1 when it begins with it, 2 otherwise.
+fn title_rank(title: &str, query: &str) -> u8 {
+    let (title, query) = (title_words(title), title_words(query));
+    if query.is_empty() {
+        2
+    } else if title == query {
+        0
+    } else if title.starts_with(&query) {
+        1
+    } else {
+        2
+    }
 }
 
 impl KoboApp for Verses {
@@ -3890,6 +3936,97 @@ mod tests {
         assert!(picture.source.0 <= CARD_PREVIEW_WIDTH && picture.source.1 <= CARD_PREVIEW_HEIGHT);
         runner.action(ActionId::BACK);
         assert!(runner.app().card.is_none());
+    }
+
+    #[test]
+    fn a_poem_titled_what_was_searched_for_comes_before_poems_that_only_mention_it() {
+        let poem = |title: &str, author: &str| OnlinePoem {
+            title: title.into(),
+            author: author.into(),
+            lines: Vec::new(),
+            linecount: "1".into(),
+        };
+        let mut app = Verses {
+            view: View::Results,
+            task: Some(TaskId(1)),
+            pending: Some(Pending::Search),
+            query: "the raven".into(),
+            ..Verses::default()
+        };
+        let answer = serde_json::to_vec(&[
+            poem("Jubilate Agno", "Christopher Smart"),
+            poem("Ravens Nest", "A Poet"),
+            poem("The Raven's Nest", "John Clare"),
+            poem("The Raven", "Edgar Allan Poe"),
+        ])
+        .expect("an answer");
+        let runner = AppRunner::new(Verses::default());
+        app.on_task(
+            &mut runner.context(),
+            TaskId(1),
+            TaskOutcome::Completed(answer),
+        );
+        let drawn = format!("{:?}", app.results(&runner.context()).0);
+        let at = |text: &str| {
+            drawn
+                .find(text)
+                .unwrap_or_else(|| panic!("{text} is missing: {drawn}"))
+        };
+        assert!(at("Edgar Allan Poe") < at("John Clare"), "{drawn}");
+        assert!(at("John Clare") < at("A Poet"), "{drawn}");
+        assert!(at("A Poet") < at("Christopher Smart"), "{drawn}");
+    }
+
+    /// Where the first line of verse on a card is drawn, laid out the way the
+    /// card is rendered into its picture: with no shell around it.
+    fn first_verse_top(card: &Screen, metrics: &kobo_ui::DisplayMetrics, first: &str) -> i32 {
+        card.layout_with(metrics, &Chrome::default())
+            .nodes
+            .iter()
+            .find(|node| {
+                node.text_lines
+                    .first()
+                    .is_some_and(|line| first.starts_with(line.trim()))
+            })
+            .map(|node| node.rect.y)
+            .expect("the card draws the page's first line")
+    }
+
+    #[test]
+    fn a_quote_card_starts_with_the_first_whole_line_of_its_page_below_the_title() {
+        // The card's title bar was drawn over the page, which hides a bar the
+        // shell would put away but is always there in the picture, so a card
+        // of the Raven's third page opened on "curtain", the end of a line
+        // whose beginning was under the title.
+        let (runner, _) = a_searched_poem_on_its_second_page();
+        let context = runner.context();
+        let metrics = context.metrics();
+        let card = runner.app().quote_card(&context);
+        let pages = runner
+            .app()
+            .online_pages(&context, runner.app().current_online().expect("a poem"));
+        let first = &pages[1][0].text;
+        assert!(
+            first_verse_top(&card, &metrics, first) >= metrics.top_bar_height(),
+            "{first:?} is drawn under the card's title"
+        );
+
+        let mut app = Verses {
+            view: View::Reading,
+            poem: CORPUS
+                .iter()
+                .position(|poem| poem.id == "shelley-ozymandias")
+                .expect("a poem"),
+            ..Verses::default()
+        };
+        app.poem_page = 0;
+        let context = AppRunner::new(Verses::default()).context();
+        let card = app.quote_card(&context);
+        assert!(
+            first_verse_top(&card, &metrics, "I met a traveller from an antique land")
+                >= metrics.top_bar_height(),
+            "a bundled poem's card hides its first line too"
+        );
     }
 
     /// A reader on the second page of a long poem opened from a search, with
