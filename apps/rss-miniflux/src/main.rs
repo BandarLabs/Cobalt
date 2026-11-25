@@ -7,8 +7,8 @@ use kobo_bookview::BookView;
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, FieldKind, Glyph, KoboApp, Position, Screen,
-    ScreenBuilder, StoreResult, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, DeviceRequest, DeviceResult, FieldKind, Glyph,
+    KoboApp, Position, Screen, ScreenBuilder, StoreResult, TaskId, TaskOutcome,
 };
 use miniflux::{Article, Status};
 use pending::{Change, Pending};
@@ -162,6 +162,28 @@ struct Reader {
     editing: Option<Setting>,
     /// A Check again is waiting for the saved address to come back.
     checking: bool,
+    /// Whether an account that arrived from the computer still has its first
+    /// sync to come.
+    first_sync: FirstSync,
+}
+
+/// The first sync of an account `kobo connect` has just put on the reader.
+///
+/// Connecting used to land on "No unread articles. Sync to check for new
+/// ones.", which no sync had said. The sync now starts by itself, but only
+/// once the key is known to be on the reader as well as the address: an
+/// address typed on the reader before the key arrives is half an account,
+/// and syncing it said "No Miniflux account is on this reader" in the middle
+/// of setting one up.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum FirstSync {
+    /// Nothing to start: no account has arrived, it has synced before, or
+    /// its first sync has begun.
+    #[default]
+    Idle,
+    /// Waiting for the saved articles to open and the runtime to say
+    /// whether the key is installed.
+    Due { key: Option<bool> },
 }
 
 impl Reader {
@@ -189,6 +211,55 @@ impl Reader {
         .at_most(miniflux::MAX_RESPONSE);
         snapshot.start(context);
         self.snapshot = Some(snapshot);
+    }
+
+    /// Starts the first sync of a newly connected account once everything
+    /// it needs is known: the account has nothing saved on this reader yet,
+    /// and the key `kobo connect` checked against the server is installed.
+    /// A key that is missing, or a runtime that cannot say, leaves the shelf
+    /// waiting for Sync as before, so setup never ends on an account error.
+    fn start_first_sync(&mut self, context: &mut Context) {
+        let FirstSync::Due { key } = self.first_sync else {
+            return;
+        };
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        if snapshot.busy() {
+            return;
+        }
+        let never_synced =
+            snapshot.bytes.is_none() && !snapshot.retryable() && self.articles.is_empty();
+        if !never_synced || self.task.is_some() || key == Some(false) {
+            self.first_sync = FirstSync::Idle;
+            return;
+        }
+        if key == Some(true) {
+            self.first_sync = FirstSync::Idle;
+            self.sync(context);
+        }
+    }
+
+    /// Whether the shelf is empty only because the first articles are still
+    /// on their way, so it says when they come rather than that there are
+    /// none.
+    ///
+    /// Not while the saved articles are still opening: on every launch they
+    /// are, and most of the time they are there.
+    fn first_articles_coming(&self) -> bool {
+        let opened_empty = self
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| !snapshot.busy() && snapshot.bytes.is_none());
+        self.articles.is_empty()
+            && (matches!(self.task, Some((_, Awaiting::Sync(_))))
+                || (opened_empty
+                    && matches!(
+                        self.first_sync,
+                        FirstSync::Due {
+                            key: None | Some(true)
+                        }
+                    )))
     }
 
     fn snapshot_event(&mut self, event: Option<SnapshotEvent>) {
@@ -422,6 +493,11 @@ impl Reader {
                 (
                     "Nothing on this reader yet",
                     "Articles show here after a sync that works.",
+                )
+            } else if self.first_articles_coming() {
+                (
+                    "Nothing on this reader yet",
+                    "Articles show here when the sync finishes.",
                 )
             } else {
                 self.tab.nothing_here()
@@ -832,10 +908,34 @@ impl KoboApp for Reader {
         if let Some(snapshot) = self.snapshot.as_mut().filter(|s| s.key == key) {
             let event = snapshot.stored(context, &result);
             self.snapshot_event(event);
+            self.start_first_sync(context);
             self.show(context);
             return;
         }
         self.on_store(context, result);
+    }
+
+    fn on_device_result(
+        &mut self,
+        context: &mut Context,
+        request: DeviceRequest,
+        result: DeviceResult,
+    ) {
+        let DeviceRequest::CheckSecrets { names } = request else {
+            return;
+        };
+        if let FirstSync::Due { key } = &mut self.first_sync {
+            // Only an answer about this account's key counts; a refusal or
+            // an old runtime that cannot check reads as no key.
+            if names.contains(&self.credential) {
+                *key = Some(matches!(
+                    &result,
+                    DeviceResult::Secrets { present } if present.contains(&self.credential)
+                ));
+            }
+        }
+        self.start_first_sync(context);
+        self.show(context);
     }
 
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
@@ -874,6 +974,7 @@ impl KoboApp for Reader {
         if let Some(snapshot) = self.snapshot.as_mut().filter(|s| s.owns_file(name)) {
             let event = snapshot.shelf(context, &result);
             self.snapshot_event(event);
+            self.start_first_sync(context);
             self.show(context);
         }
     }
@@ -905,6 +1006,15 @@ impl KoboApp for Reader {
                     }
                     self.snapshot = None;
                     self.open_snapshot(context);
+                }
+                // An account read back from the reader's state, which is
+                // where `kobo connect` writes one once the server has
+                // accepted its key. Whether that key is still installed is
+                // asked before anything is synced with it.
+                if changed && self.configured() {
+                    self.first_sync = FirstSync::Due { key: None };
+                    let name = self.credential.clone();
+                    context.secrets().check(&[name.as_str()]);
                 }
                 if std::mem::take(&mut self.checking) && !self.configured() {
                     self.notice = Some((BannerLevel::Attention, NO_ACCOUNT_YET.into()));
@@ -1063,6 +1173,9 @@ impl Reader {
                     match setting {
                         Setting::Server => self.server = value,
                     }
+                    // An address typed here was never checked against a
+                    // key, so its first sync waits for Sync.
+                    self.first_sync = FirstSync::Idle;
                     self.articles.clear();
                     self.open = None;
                     self.snapshot = None;
@@ -2094,6 +2207,107 @@ mod tests {
             .map(|(_, text)| text.as_str())
             .unwrap()
             .contains("Finish saving and syncing"));
+    }
+
+    /// What the shelf says when it has no articles to list.
+    fn empty_shelf(runner: &AppRunner<Reader>) -> String {
+        format!("{:?}", runner.app().shelf(&runner.context()))
+    }
+
+    #[test]
+    fn a_newly_connected_account_syncs_by_itself_once_its_key_is_known() {
+        let mut runner = connected();
+        opened(&mut runner);
+        assert!(
+            runner.app().task.is_none(),
+            "synced before the key was known"
+        );
+        let waiting = empty_shelf(&runner);
+        assert!(waiting.contains("Nothing on this reader yet"), "{waiting}");
+        assert!(!waiting.contains("No unread articles"), "{waiting}");
+
+        let asking = runner.device_result(DeviceResult::Secrets {
+            present: vec!["miniflux".into()],
+        });
+        let Some(Task::Fetch { url, .. }) = sent(&asking) else {
+            panic!("connecting did not start a sync")
+        };
+        assert!(url.contains("status=unread"), "{url}");
+        let syncing = empty_shelf(&runner);
+        assert!(syncing.contains("Nothing on this reader yet"), "{syncing}");
+        assert!(
+            syncing.contains("Articles show here when the sync finishes."),
+            "{syncing}"
+        );
+        assert!(syncing.contains("Syncing articles"), "{syncing}");
+    }
+
+    #[test]
+    fn an_address_whose_key_has_not_arrived_waits_for_sync_without_an_account_error() {
+        let mut runner = connected();
+        let answered = runner.device_result(DeviceResult::Secrets {
+            present: Vec::new(),
+        });
+        assert!(sent(&answered).is_none());
+        opened(&mut runner);
+        assert!(runner.app().task.is_none(), "half an account was synced");
+        let shelf = empty_shelf(&runner);
+        assert!(shelf.contains("No unread articles"), "{shelf}");
+        assert!(!shelf.contains("No Miniflux account"), "{shelf}");
+
+        // An address typed on the reader was never checked against a key,
+        // so nothing asks after the key and nothing syncs.
+        let mut runner = AppRunner::new(Reader::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: CONFIG.into(),
+            value: None,
+        });
+        runner.action(action_id("settings"));
+        runner.action(action_id("server"));
+        let typed = runner.type_text("https://typed.example");
+        assert!(
+            !typed.iter().any(|command| matches!(
+                command,
+                Command::Device(DeviceRequest::CheckSecrets { .. })
+            )),
+            "{typed:?}"
+        );
+        assert_eq!(runner.app().first_sync, FirstSync::Idle);
+        opened(&mut runner);
+        assert!(
+            runner.app().task.is_none(),
+            "a typed address synced by itself"
+        );
+    }
+
+    #[test]
+    fn an_account_that_has_synced_before_opens_on_what_it_saved_and_waits() {
+        let mut runner = connected();
+        opened(&mut runner);
+        runner.device_result(DeviceResult::Secrets {
+            present: vec!["miniflux".into()],
+        });
+        answer(&mut runner, SAVED_ARTICLE);
+        answer(&mut runner, NOTHING);
+        let writes = answer(&mut runner, NOTHING);
+        let (name, pointer) = acknowledge(&mut runner, &writes);
+
+        let mut restarted = connected();
+        restarted.device_result(DeviceResult::Secrets {
+            present: vec!["miniflux".into()],
+        });
+        reopened(
+            &mut restarted,
+            &name,
+            pointer,
+            &miniflux::encode_entries(&miniflux::parse_entries(SAVED_ARTICLE).unwrap()),
+        );
+        assert!(
+            restarted.app().task.is_none(),
+            "a synced account synced by itself"
+        );
+        assert_eq!(restarted.app().articles.len(), 1);
     }
 
     #[test]
