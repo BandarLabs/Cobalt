@@ -340,11 +340,51 @@ fn djb2(s: &str) -> u64 {
         h.wrapping_mul(33).wrapping_add(u64::from(b))
     })
 }
+/// The first day answered from a shuffled cycle. Days before it keep the
+/// word they always had, so a game already played, its statistics and the
+/// archive never change under an owner after an update.
+const CYCLE_START: (i64, i64, i64) = (2027, 1, 1);
+
+/// Hashing each date picked a word independently, so a year repeated about
+/// eighty words, some within six weeks. From `CYCLE_START` the days walk a
+/// shuffled copy of the list instead: no word comes back until all of them
+/// have been used, and each pass through the list is shuffled afresh.
 fn answer_for(date: &str) -> &'static str {
-    let answer_count = u64::try_from(ANSWERS.len()).expect("the answer list fits u64");
-    let index = usize::try_from(djb2(&format!("{date}{SALT}")) % answer_count)
-        .expect("the reduced answer index fits usize");
-    ANSWERS[index]
+    let (year, month, day) = CYCLE_START;
+    let start = days_from_civil(year, month, day);
+    let count = u64::try_from(ANSWERS.len()).expect("the answer list fits u64");
+    match parse_date(date).map(|(y, m, d)| days_from_civil(y, m, d) - start) {
+        Some(offset) if offset >= 0 => {
+            let offset = offset.unsigned_abs();
+            let order = shuffled(djb2(&format!("{SALT}-cycle-{}", offset / count)));
+            ANSWERS[order[usize::try_from(offset % count).expect("an index fits usize")]]
+        }
+        _ => {
+            let index = usize::try_from(djb2(&format!("{date}{SALT}")) % count)
+                .expect("the reduced answer index fits usize");
+            ANSWERS[index]
+        }
+    }
+}
+
+/// A Fisher-Yates shuffle of the answer indices driven by splitmix64, so the
+/// order depends only on the seed and is the same on every reader.
+fn shuffled(seed: u64) -> Vec<usize> {
+    let mut state = seed;
+    let mut next = || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    let mut order: Vec<usize> = (0..ANSWERS.len()).collect();
+    for i in (1..order.len()).rev() {
+        let bound = u64::try_from(i + 1).expect("an index fits u64");
+        let j = usize::try_from(next() % bound).expect("a swap index fits usize");
+        order.swap(i, j);
+    }
+    order
 }
 fn marks(answer: &str, guess: &str) -> [Mark; 5] {
     let mut out = [Mark::Absent; 5];
@@ -1535,6 +1575,30 @@ mod tests {
             let (year, month, day_of_month) = parse_date(&date).expect("civil date parses");
             assert_eq!(days_from_civil(year, month, day_of_month), day, "{date}");
         }
+    }
+    #[test]
+    fn days_before_the_cycle_keep_the_word_they_always_had() {
+        // Pinned to the hashed schedule, so an update cannot rewrite a game
+        // that has already been played.
+        let count = ANSWERS.len() as u64;
+        for date in ["2026-09-01", "2026-11-25", "2026-12-31"] {
+            let index = usize::try_from(djb2(&format!("{date}{SALT}")) % count).expect("an index");
+            assert_eq!(answer_for(date), ANSWERS[index], "{date}");
+        }
+    }
+    #[test]
+    fn no_word_repeats_until_every_answer_has_been_used() {
+        let start = days_from_civil(2027, 1, 1);
+        let days = i64::try_from(ANSWERS.len() * 2).expect("two years of days fit i64");
+        let words: Vec<&str> = (0..days)
+            .map(|offset| answer_for(&civil_date(start + offset)))
+            .collect();
+        let (first, second) = words.split_at(ANSWERS.len());
+        for pass in [first, second] {
+            let unique: std::collections::HashSet<_> = pass.iter().collect();
+            assert_eq!(unique.len(), ANSWERS.len());
+        }
+        assert_ne!(first, second, "each pass is shuffled afresh");
     }
     #[test]
     fn dates_display_as_real_dates() {
