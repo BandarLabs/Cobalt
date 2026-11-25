@@ -206,6 +206,13 @@ impl Machine {
         }))
     }
 
+    /// Whether the story is waiting for a command. Once it has ended there
+    /// is nothing listening, and a command sent anyway is a fault.
+    #[must_use]
+    pub fn wants_input(&self) -> bool {
+        self.input.is_some()
+    }
+
     /// True while the story waits on a restore the app has not resolved.
     pub fn awaiting_restore(&self) -> bool {
         self.pending_file == Some(PendingFile::Restore)
