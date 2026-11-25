@@ -126,6 +126,39 @@ impl std::ops::Deref for Notice {
     }
 }
 
+/// The answer to the last tap on a board, read in the status line that is
+/// always on screen rather than in a banner above the board.
+///
+/// A banner for "Illegal" or "Not it" pushed the board down by its own
+/// height on every wrong tap, so the next tap landed a square off. The note
+/// belongs to the position it was given on: once a move changes the board
+/// it no longer describes anything and the line goes back to the game.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BoardNote {
+    fen: String,
+    text: String,
+}
+
+impl BoardNote {
+    fn new(fen: &str, text: impl Into<String>) -> Self {
+        Self {
+            fen: fen.to_owned(),
+            text: text.into(),
+        }
+    }
+}
+
+/// Why a move the owner tried was refused, in the status line's words.
+/// In check most refusals are the king's, and the owner may not have seen
+/// the check, so that is the reason given.
+fn refusal(fen: &str) -> &'static str {
+    if chess::in_check(fen) {
+        "Your king is in check"
+    } else {
+        "That move is not allowed"
+    }
+}
+
 /// How much of the first screen fits the panel: everything, everything but
 /// the heading and the line under it, or the button and the rows' names.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -548,6 +581,10 @@ struct Lichess {
     menu_open: bool,
     result_dismissed: bool,
     notice: Option<Notice>,
+    board_note: Option<BoardNote>,
+    /// The position in which the computer last refused a draw, so the
+    /// menu does not offer one again until a move has changed it.
+    draw_declined: Option<String>,
     clock: Heartbeat,
     total_ticks: u64,
     gone_tick: u64,
@@ -622,6 +659,8 @@ impl Default for Lichess {
             menu_open: false,
             result_dismissed: false,
             notice: None,
+            board_note: None,
+            draw_declined: None,
             clock: Heartbeat::every(1),
             total_ticks: 0,
             gone_tick: 0,
@@ -972,10 +1011,11 @@ impl Lichess {
         } else {
             Color::White
         };
-        let puzzle_status = self.selected.as_deref().map_or_else(
-            || orientation.name().to_owned(),
-            |square| format!("{} · {square} →", orientation.name()),
-        );
+        let puzzle_status = match (self.note_on(&puzzle.fen), self.selected.as_deref()) {
+            (Some(note), _) => format!("{} · {note}", orientation.name()),
+            (None, Some(square)) => format!("{} · {square} →", orientation.name()),
+            (None, None) => orientation.name().to_owned(),
+        };
         let mut screen = ScreenBuilder::new("lichess-solve")
             .top_bar("Puzzle")
             .secondary(puzzle_status);
@@ -1368,10 +1408,13 @@ impl Lichess {
         let blocked = !live || self.pending_action.is_some() || self.pending_move.is_some();
         let mut menu = Vec::new();
         if game.active() && !blocked {
+            // Asked again in the same position the computer would only say
+            // no again, so the offer waits until a move has changed it.
+            let refused_here = self.local_game && self.draw_declined.as_ref() == Some(&game.fen);
             if game.draw_offer_from_opponent() {
                 menu.push(("accept-draw".to_owned(), "Accept draw".to_owned()));
                 menu.push(("decline-draw".to_owned(), "Decline draw".to_owned()));
-            } else {
+            } else if !refused_here {
                 menu.push(("offer-draw".to_owned(), "Offer draw".to_owned()));
             }
             if game.opponent_gone && self.claim_remaining() == Some(0) {
@@ -1467,13 +1510,17 @@ impl Lichess {
         // The shared root grid reserves room for both player bars. A fixed
         // width inside a band bypasses that fit and clips controls at 170%.
         screen = screen.board_with_selection(8, board);
+        // A note on the last tap takes the place of the turn and the move
+        // for as long as the position stands, in the line that is always
+        // there, so the board never moves to make room for it.
+        let note = self.note_on(&game.fen).filter(|_| game.active());
+        let status = note.map_or_else(
+            || format!("{you_color} · {turn} · {game_kind}{move_status}{check}"),
+            |note| format!("{you_color} · {note}"),
+        );
         let mut you_slots: Vec<BuilderSlot> = vec![(
             SlotWidth::Fill,
-            Box::new(move |slot| {
-                slot.text(you_name).secondary(format!(
-                    "{you_color} · {turn} · {game_kind}{move_status}{check}"
-                ))
-            }),
+            Box::new(move |slot| slot.text(you_name).secondary(status)),
         )];
         if timed {
             you_slots.push((
@@ -1917,6 +1964,7 @@ impl Lichess {
             self.deferred_board_next = None;
             self.game = None;
             self.selected = None;
+            self.invalid_square = None;
             self.promotion = None;
             self.confirmation = None;
             self.menu_open = false;
@@ -2044,6 +2092,7 @@ impl Lichess {
         self.pending_move = None;
         self.expected_seek_game = None;
         self.selected = None;
+        self.invalid_square = None;
         self.promotion = None;
         self.confirmation = None;
         self.menu_open = false;
@@ -2596,7 +2645,15 @@ impl Lichess {
         self.local_game = true;
         self.board_open = Some("computer".to_owned());
         self.board_ready = true;
+        // The marks on a board belong to the game they were made in. The ×
+        // for a refused square only fades on the clock's heartbeat, which an
+        // untimed or finished game no longer has, so a mark left from the last
+        // game sat on the new board's opening position.
         self.selected = None;
+        self.invalid_square = None;
+        self.promotion = None;
+        self.board_note = None;
+        self.draw_declined = None;
         self.result_dismissed = false;
         self.route = Route::Game;
         self.reset_clock(context, self.local_clock_runs());
@@ -2621,7 +2678,8 @@ impl Lichess {
             .rev()
             .find(|plies| (plies % 2 == 0) == owner_moves_first);
         let Some(keep) = keep else {
-            self.notice = Some(Notice::info("Nothing to take back yet."));
+            let fen = game.fen.clone();
+            self.board_note = Some(BoardNote::new(&fen, "Nothing to take back yet"));
             return;
         };
         let state = ServerState {
@@ -2657,6 +2715,8 @@ impl Lichess {
         self.menu_open = false;
         self.result_dismissed = false;
         self.notice = None;
+        self.board_note = None;
+        self.draw_declined = None;
     }
 
     /// Whether the one-second heartbeat should run for the computer game.
@@ -2823,6 +2883,15 @@ impl Lichess {
         self.pending_action_generation = None;
     }
 
+    /// The note on the last tap, while the board still shows the position
+    /// it was given on.
+    fn note_on(&self, fen: &str) -> Option<&str> {
+        self.board_note
+            .as_ref()
+            .filter(|note| note.fen == fen)
+            .map(|note| note.text.as_str())
+    }
+
     fn flash_invalid(&mut self, square: String) {
         self.invalid_square = Some(square);
         self.invalid_until_tick = self.total_ticks.saturating_add(2);
@@ -2846,8 +2915,11 @@ impl Lichess {
         if !game.active() {
             return;
         }
+        // Each tap answers the one before it, so an earlier note goes.
+        let fen = game.fen.clone();
+        self.board_note = None;
         if !game.my_turn() {
-            self.notice = Some(Notice::info("Wait for the opponent's move."));
+            self.board_note = Some(BoardNote::new(&fen, "Wait for the opponent's move"));
             return;
         }
         let Some(from) = self.selected.take() else {
@@ -2857,7 +2929,7 @@ impl Lichess {
                 self.notice = None;
             } else {
                 self.flash_invalid(square);
-                self.notice = Some(Notice::info("Your piece"));
+                self.board_note = Some(BoardNote::new(&fen, "Tap one of your pieces"));
             }
             return;
         };
@@ -2885,7 +2957,7 @@ impl Lichess {
         if !chess::legal(&game.fen, &movement) {
             self.selected = Some(from);
             self.flash_invalid(square);
-            self.notice = Some(Notice::info("Illegal"));
+            self.board_note = Some(BoardNote::new(&fen, refusal(&fen)));
             return;
         }
         self.invalid_square = None;
@@ -2910,6 +2982,9 @@ impl Lichess {
             return;
         }
         let solver = chess::side_to_move(&puzzle.fen);
+        // As in a game, the puzzle's answers go in its status line above the
+        // board, which keeps its height, and each tap replaces the last one.
+        self.board_note = None;
         let Some(from) = self.selected.take() else {
             if solver.is_some_and(|color| chess::piece_belongs_to(&puzzle.fen, &square, color)) {
                 self.selected = Some(square);
@@ -2918,7 +2993,7 @@ impl Lichess {
             } else {
                 self.invalid_square = Some(square);
                 self.invalid_until_tick = self.total_ticks.saturating_add(2);
-                self.notice = Some(Notice::info("Your piece"));
+                self.board_note = Some(BoardNote::new(&puzzle.fen, "Tap one of your pieces"));
             }
             return;
         };
@@ -2952,7 +3027,7 @@ impl Lichess {
             self.selected = Some(from);
             self.invalid_square = Some(square);
             self.invalid_until_tick = self.total_ticks.saturating_add(2);
-            self.notice = Some(Notice::info("Illegal"));
+            self.board_note = Some(BoardNote::new(&puzzle.fen, refusal(&puzzle.fen)));
             return;
         };
         self.invalid_square = None;
@@ -2967,7 +3042,7 @@ impl Lichess {
                 self.notice = None;
                 self.route = Route::PuzzleResult;
             } else {
-                self.notice = Some(Notice::info("Not it. Try again."));
+                self.board_note = Some(BoardNote::new(&puzzle.fen, "Not it, try again"));
             }
             return;
         }
@@ -2993,7 +3068,8 @@ impl Lichess {
         if puzzle.cursor >= puzzle.solution.len() {
             self.route = Route::PuzzleResult;
         } else {
-            self.notice = reply.map(|reply| Notice::info(format!("Opponent replied {reply}.")));
+            self.board_note =
+                reply.map(|reply| BoardNote::new(&puzzle.fen, format!("Opponent replied {reply}")));
         }
     }
 
@@ -4918,6 +4994,7 @@ impl KoboApp for Lichess {
             // A nudge such as "Nothing to take back yet." answered the last
             // tap on the board; it does not belong above the menu or a
             // confirmation opened from it.
+            self.board_note = None;
             if self.local_game {
                 self.notice = None;
             }
@@ -4958,11 +5035,22 @@ impl KoboApp for Lichess {
             // game and swallowed the first Back on the finished board.
             self.menu_open = false;
             if self.local_game {
+                let mut declined = false;
                 if let Some(game) = self.game.as_mut().filter(|game| game.active()) {
-                    "draw".clone_into(&mut game.state.status);
-                    game.state.winner = None;
+                    if chess::accepts_draw(&game.fen, game.my_color.opposite().fen()) {
+                        "draw".clone_into(&mut game.state.status);
+                        game.state.winner = None;
+                    } else {
+                        // The game goes on, so the refusal is a note in the
+                        // status line rather than a dialog to dismiss.
+                        declined = true;
+                        self.board_note = Some(BoardNote::new(&game.fen, "Kobo declined the draw"));
+                        self.draw_declined = Some(game.fen.clone());
+                    }
                 }
-                self.reset_clock(context, false);
+                if !declined {
+                    self.reset_clock(context, false);
+                }
             } else if let Some(game) = &self.game {
                 self.send_action(context, GameAction::OfferDraw, api::draw(&game.id, true));
             }
@@ -5013,6 +5101,15 @@ impl KoboApp for Lichess {
                 self.notice = Some(Notice::info("Downloading 32 puzzles."));
             }
         } else if action == action_id("solve") && self.remaining_puzzles() > 0 {
+            // Puzzles keep no heartbeat, so a × left from a game or an earlier
+            // try would otherwise wait on the board for the next tap.
+            self.selected = None;
+            self.invalid_square = None;
+            // A banner from the list, such as the download finishing, would
+            // otherwise sit over the board until the first tap took it away
+            // and moved the board up under the finger.
+            self.notice = None;
+            self.board_note = None;
             self.route = Route::Solve;
         } else if action == action_id("skip-puzzle") {
             self.puzzle_wrong = 2;
@@ -5424,6 +5521,11 @@ mod tests {
             game: Some(game),
             ..Lichess::default()
         }
+    }
+
+    /// The answer to the last tap on the board, as the status line reads it.
+    fn note(app: &Lichess) -> Option<&str> {
+        app.board_note.as_ref().map(|note| note.text.as_str())
     }
 
     fn ready_app() -> Lichess {
@@ -6300,7 +6402,7 @@ mod tests {
         app.on_action(&mut context, action_id("play-computer"));
         app.on_action(&mut context, action_id("start-computer"));
         app.on_action(&mut context, action_id("take-back"));
-        assert_eq!(app.notice.as_deref(), Some("Nothing to take back yet."));
+        assert_eq!(note(&app), Some("Nothing to take back yet"));
 
         app.on_action(&mut context, action_id("square-e2"));
         app.on_action(&mut context, action_id("square-e4"));
@@ -6317,7 +6419,7 @@ mod tests {
         black.on_action(&mut context, action_id("play-computer"));
         black.on_action(&mut context, action_id("start-computer"));
         black.on_action(&mut context, action_id("take-back"));
-        assert_eq!(black.notice.as_deref(), Some("Nothing to take back yet."));
+        assert_eq!(note(&black), Some("Nothing to take back yet"));
         assert_eq!(black.game.as_ref().expect("game").state.moves.len(), 1);
         black.on_action(&mut context, action_id("square-e7"));
         black.on_action(&mut context, action_id("square-e5"));
@@ -6335,6 +6437,44 @@ mod tests {
         let drawn = format!("{:?}", app.game_screen(&Context::default()));
         assert!(drawn.contains("\"You\""), "{drawn}");
         assert!(!drawn.contains("\"Owner\""), "{drawn}");
+    }
+
+    /// The × for a refused square fades on the clock's heartbeat, and an
+    /// untimed game has none, so the mark from the last game was drawn on
+    /// the opening position of the next.
+    #[test]
+    fn a_new_game_starts_without_the_last_games_refused_square() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+        app.on_action(&mut context, action_id("square-e2"));
+        app.on_action(&mut context, action_id("square-e5"));
+        let refused = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(refused.contains('×'), "{refused}");
+
+        app.start_computer_game(&mut context);
+        let fresh = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(!fresh.contains('×'), "{fresh}");
+        assert!(app.selected.is_none());
+    }
+
+    /// A puzzle board is drawn without a heartbeat too, so it opens clean.
+    #[test]
+    fn a_puzzle_opens_without_a_refused_square_from_before() {
+        let mut app = ready_app();
+        app.puzzles = vec![Puzzle {
+            id: "abc12".to_owned(),
+            fen: super::chess::START.to_owned(),
+            solution: vec!["e2e4".to_owned()],
+            cursor: 0,
+        }];
+        app.invalid_square = Some("e5".to_owned());
+        app.invalid_until_tick = app.total_ticks.saturating_add(2);
+        app.selected = Some("e2".to_owned());
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("solve"));
+        assert!(app.invalid_square.is_none());
+        assert!(app.selected.is_none());
     }
 
     #[test]
@@ -6932,7 +7072,7 @@ mod tests {
 
         assert_eq!(app.selected.as_deref(), Some("e2"));
         assert_eq!(app.invalid_square.as_deref(), Some("e5"));
-        assert_eq!(app.notice.as_deref(), Some("Illegal"));
+        assert_eq!(note(&app), Some("That move is not allowed"));
         assert!(!context
             .commands()
             .iter()
@@ -6984,7 +7124,7 @@ mod tests {
 
         assert!(app.selected.is_none());
         assert_eq!(app.invalid_square.as_deref(), Some("e7"));
-        assert_eq!(app.notice.as_deref(), Some("Your piece"));
+        assert_eq!(note(&app), Some("Tap one of your pieces"));
     }
 
     #[test]
@@ -7101,11 +7241,7 @@ mod tests {
         assert_eq!(app.puzzles[0].cursor, 2);
         assert_eq!(super::chess::piece_at(&app.puzzles[0].fen, "e5"), Some('p'));
         assert_eq!(app.route, Route::Solve);
-        assert!(app
-            .notice
-            .as_deref()
-            .unwrap_or_default()
-            .contains("Opponent replied"));
+        assert!(note(&app).unwrap_or_default().contains("Opponent replied"));
 
         app.choose_puzzle_square("g1".to_owned());
         app.choose_puzzle_square("f3".to_owned());
@@ -9343,10 +9479,111 @@ mod tests {
         app.on_action(&mut context, action_id("computer-clock-none"));
         app.on_action(&mut context, action_id("start-computer"));
         app.on_action(&mut context, action_id("take-back"));
-        assert_eq!(app.notice.as_deref(), Some("Nothing to take back yet."));
+        assert_eq!(note(&app), Some("Nothing to take back yet"));
         app.on_action(&mut context, action_id("game-menu"));
         app.on_action(&mut context, action_id("confirm-abort"));
         assert_eq!(app.confirmation, Some(super::Confirmation::Abort));
+        assert_eq!(app.notice, None);
+        assert_eq!(note(&app), None);
+    }
+
+    /// A banner for "Illegal" pushed the board down under the finger on every
+    /// wrong tap; the answer now takes the status line's place instead.
+    #[test]
+    fn a_wrong_tap_is_answered_in_the_status_line_and_the_board_stays_where_it_was() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("play-computer"));
+        app.on_action(&mut context, action_id("computer-clock-none"));
+        app.on_action(&mut context, action_id("start-computer"));
+        let before = app.game_screen(&Context::default());
+
+        app.on_action(&mut context, action_id("square-e5"));
+        let empty = app.game_screen(&Context::default());
+        assert!(format!("{empty:?}").contains("White · Tap one of your pieces"));
+        assert_eq!(empty.nodes.len(), before.nodes.len());
+
+        app.on_action(&mut context, action_id("square-e2"));
+        assert_eq!(note(&app), None);
+        app.on_action(&mut context, action_id("square-e5"));
+        let refused = app.game_screen(&Context::default());
+        assert!(format!("{refused:?}").contains("White · That move is not allowed"));
+        assert_eq!(refused.nodes.len(), before.nodes.len());
+        assert_eq!(app.notice, None);
+
+        // A move changes the position, and the note about the old one goes.
+        app.on_action(&mut context, action_id("square-e4"));
+        let moved = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(moved.contains("White · Your move · Casual · "), "{moved}");
+        assert!(!moved.contains("not allowed"), "{moved}");
+    }
+
+    #[test]
+    fn a_refused_move_in_check_names_the_check_as_the_reason() {
+        assert_eq!(
+            super::refusal("4k3/8/8/8/8/8/8/R3K2r w - - 0 1"),
+            "Your king is in check"
+        );
+        assert_eq!(
+            super::refusal(super::chess::START),
+            "That move is not allowed"
+        );
+    }
+
+    /// The computer used to take every draw, even a queen up.
+    #[test]
+    fn the_computer_refuses_a_draw_it_is_winning_and_the_game_goes_on() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("play-computer"));
+        app.on_action(&mut context, action_id("computer-clock-none"));
+        app.on_action(&mut context, action_id("start-computer"));
+        let queen_down = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1";
+        queen_down.clone_into(&mut app.game.as_mut().expect("game").fen);
+
+        app.on_action(&mut context, action_id("game-menu"));
+        app.on_action(&mut context, action_id("offer-draw"));
+        let game = app.game.as_ref().expect("game");
+        assert!(game.active(), "{}", game.state.status);
+        assert_eq!(note(&app), Some("Kobo declined the draw"));
+        let screen = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(
+            screen.contains("White · Kobo declined the draw"),
+            "{screen}"
+        );
+        // Asking again in the same position would get the same answer.
+        app.on_action(&mut context, action_id("game-menu"));
+        let menu = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(!menu.contains("Offer draw"), "{menu}");
+        assert!(menu.contains("Resign"), "{menu}");
+    }
+
+    #[test]
+    fn a_puzzle_answers_in_its_status_line_without_moving_the_board() {
+        let mut app = Lichess {
+            route: Route::Solve,
+            puzzles: vec![Puzzle {
+                id: "line".to_owned(),
+                fen: super::chess::START.to_owned(),
+                solution: ["e2e4", "e7e5", "g1f3"].map(str::to_owned).to_vec(),
+                cursor: 0,
+            }],
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        let before = app.solve_screen().nodes.len();
+
+        app.on_action(&mut context, action_id("square-d2"));
+        app.on_action(&mut context, action_id("square-d4"));
+        let missed = app.solve_screen();
+        assert!(format!("{missed:?}").contains("White · Not it, try again"));
+        assert_eq!(missed.nodes.len(), before);
+
+        app.on_action(&mut context, action_id("square-e2"));
+        app.on_action(&mut context, action_id("square-e4"));
+        let replied = app.solve_screen();
+        assert!(format!("{replied:?}").contains("White · Opponent replied e5"));
+        assert_eq!(replied.nodes.len(), before);
         assert_eq!(app.notice, None);
     }
 

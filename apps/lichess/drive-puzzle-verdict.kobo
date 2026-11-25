@@ -6,7 +6,7 @@ tap Resume puzzle
 wait-for-id skip-puzzle
 tap-id square-e2
 tap-id square-e3
-expect Not it. Try again.
+expect Not it, try again
 tap-id square-e2
 tap-id square-e4
 wait-for Not solved

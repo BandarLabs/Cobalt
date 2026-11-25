@@ -172,6 +172,43 @@ pub fn tiny_move(fen: &str) -> Option<String> {
     Some(chosen)
 }
 
+/// Whether the side to move stands in check, so a refused move can say why.
+pub fn in_check(fen: &str) -> bool {
+    position(fen).is_some_and(|position| position.is_check())
+}
+
+/// How far ahead the engine may be and still take a draw, in its own
+/// units, where a pawn is 100 before its small bonuses.
+///
+/// The evaluation adds up to about half a pawn for centre squares, pawn
+/// advances and mobility alone, so a stricter line would read a quiet,
+/// level game as a win and refuse every offer in it. A full pawn is the
+/// smallest lead that means material, and below it the game is about even.
+const DRAW_MARGIN: i32 = 100;
+
+/// Whether `color` would take a draw in this position: only when its own
+/// evaluation is about even or worse.
+///
+/// The computer used to agree at once, even a queen up, which made a draw
+/// offer the way out of any lost game. The position is searched two plies
+/// deep so a piece that is about to be taken counts as lost, and a search
+/// that runs out of its node budget falls back to the plain evaluation.
+pub fn accepts_draw(fen: &str, color: char) -> bool {
+    const MAX_NODES: u32 = 5_000;
+    let Some(position) = position(fen) else {
+        return true;
+    };
+    let mut nodes = 0;
+    let for_side_to_move = tiny_search(&position, 2, -100_000, 100_000, &mut nodes, MAX_NODES)
+        .unwrap_or_else(|| evaluate(&position));
+    let for_color = if side_to_move(fen) == Some(color) {
+        for_side_to_move
+    } else {
+        -for_side_to_move
+    };
+    for_color <= DRAW_MARGIN
+}
+
 pub fn terminal(fen: &str) -> Option<(&'static str, Option<char>)> {
     let position = position(fen)?;
     if position.is_checkmate() {
@@ -344,8 +381,8 @@ fn evaluate(position: &Chess) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        legal, piece_at, piece_belongs_to, play, promotion_choices, puzzle_position, replay,
-        terminal, tiny_move, START,
+        accepts_draw, in_check, legal, piece_at, piece_belongs_to, play, promotion_choices,
+        puzzle_position, replay, terminal, tiny_move, START,
     };
     use shakmaty::{fen::Fen, perft, CastlingMode, Chess};
 
@@ -398,6 +435,32 @@ mod tests {
     fn pgn_replay_includes_the_move_that_creates_the_puzzle() {
         let fen = puzzle_position("1. e4 e5 2. Nf3 Nc6", 2).expect("position");
         assert!(legal(&fen, "b8c6"));
+    }
+
+    #[test]
+    fn the_engine_takes_a_draw_in_a_level_game_and_refuses_one_it_is_winning() {
+        // The opening is level, so either side takes the draw.
+        assert!(accepts_draw(START, 'b'));
+        assert!(accepts_draw(START, 'w'));
+        // Black is a queen up with White to move: Black refuses, and
+        // White, the side that is losing, would gladly take it.
+        let queen_up = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1";
+        assert!(!accepts_draw(queen_up, 'b'));
+        assert!(accepts_draw(queen_up, 'w'));
+    }
+
+    #[test]
+    fn a_piece_about_to_be_taken_already_counts_against_its_side() {
+        // Material is level, but White's queen on h5 stands en prise to the
+        // knight on f6 with Black to move, so Black is as good as a queen up.
+        let hanging = "rnbqkb1r/pppppppp/5n2/7Q/8/8/PPPPPPPP/RNB1KBNR b KQkq - 0 1";
+        assert!(!accepts_draw(hanging, 'b'));
+    }
+
+    #[test]
+    fn check_is_read_for_the_side_to_move() {
+        assert!(!in_check(START));
+        assert!(in_check("4k3/8/8/8/8/8/8/R3K2r w - - 0 1"));
     }
 
     #[test]
