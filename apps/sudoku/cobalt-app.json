@@ -3,10 +3,10 @@
   "display_name": "Sudoku",
   "short_label": "Sudoku",
   "summary": "Play 600 original Sudoku puzzles with pencil notes, undo and saved games.",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "glyph": "cell-grid",
   "capabilities": [],
-  "release_notes": "Use landscape now works on every Kobo, with Undo, Notes and Erase beside the digits. A saved game that cannot be read can be set aside to start over, and Erase no longer reopens a finished puzzle.",
+  "release_notes": "Show mistakes now strikes through every wrong answer on the board, not only the one in the selected square.",
   "minimum_cobalt_version": "0.3.44",
   "page_description": "Play 600 original Sudoku puzzles, 200 at each of three difficulties, each with exactly one solution. Pencil notes, undo, an optional mistakes check, and saved games survive reopening."
 }
