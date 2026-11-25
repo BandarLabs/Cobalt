@@ -110,17 +110,15 @@ clean
 shot crossword-more
 tap Check word
 expect This word is correct.
-tap Back to puzzle
 tap-id cell-10
 type alikx
 tap Enter
 expect 6 Across: Much the same
 tap-id game-more
 tap Check word
-expect 1 incorrect, 0 empty. Your letters are unchanged.
+expect 1 wrong, 0 empty.
 clean
 shot crossword-check-wrong
-tap Back to puzzle
 # Reveal asks first, Keep playing leaves the square alone, and Undo takes a reveal back.
 tap-id cell-14
 tap-id 4294967295
@@ -133,27 +131,23 @@ shot crossword-reveal-confirm
 tap Keep playing
 tap-id game-more
 tap Check word
-expect 1 incorrect, 0 empty.
-tap Back to puzzle
+expect 1 wrong, 0 empty.
 tap-id game-more
 tap Reveal square
 tap Reveal
 tap-id game-more
 tap Check word
 expect This word is correct.
-tap Back to puzzle
 tap Undo
 tap-id game-more
 tap Check word
-expect 1 incorrect, 0 empty.
-tap Back to puzzle
+expect 1 wrong, 0 empty.
 # Clear square empties the selected square, and says so when it already is.
 tap-id game-more
 tap Clear square
 tap-id game-more
 tap Check word
-expect 0 incorrect, 1 empty.
-tap Back to puzzle
+expect 0 wrong, 1 empty.
 tap-id game-more
 tap Clear square
 expect This square is already empty.

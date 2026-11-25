@@ -16,7 +16,6 @@ tap Enter
 tap-id game-more
 tap Check word
 expect This word is correct.
-tap Back to puzzle
 # A revealed square counts, and the last two letters finish the grid.
 tap-id cell-21
 tap-id 4294967295

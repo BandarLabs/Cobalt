@@ -349,6 +349,9 @@ impl Progress {
         self.reveals = self.reveals.saturating_add(1);
         self.solved_once |= self.solved(p);
     }
+    /// What checking the shaded word found, short enough for the line over
+    /// the grid, where it now appears. It had a page to itself, so the reader
+    /// left the grid to learn a count and tapped back to act on it.
     pub fn check(&mut self, p: &Puzzle) -> String {
         self.checks = self.checks.saturating_add(1);
         let word = p.word(self.position.selected, self.position.down);
@@ -365,7 +368,7 @@ impl Progress {
         if wrong == 0 && empty == 0 {
             "This word is correct.".into()
         } else {
-            format!("{wrong} incorrect, {empty} empty. Your letters are unchanged.")
+            format!("{wrong} wrong, {empty} empty.")
         }
     }
 }

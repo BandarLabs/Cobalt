@@ -134,7 +134,7 @@ fn edits_check_reveal_and_restart_history_round_trip() {
     assert!(g.enter(p, "1cat").is_err());
     assert!(g.undo.is_empty());
     g.enter(p, "dog").unwrap();
-    assert!(g.check(p).starts_with("3 incorrect"));
+    assert_eq!(g.check(p), "3 wrong, 0 empty.");
     assert_eq!(g.position.letters[..3], *b"DOG");
     g.reveal(p);
     assert_eq!(g.position.letters[0], b'C');
@@ -248,7 +248,6 @@ fn every_view_fits_all_text_sizes_on_both_portrait_profiles() {
                         View::Clues,
                         View::Reveal,
                         View::Restart,
-                        View::Result,
                         View::Rules,
                     ]
                 } else {
@@ -677,6 +676,25 @@ fn clearing_an_empty_square_says_so_instead_of_doing_nothing() {
     r.action(action_id(chrome::MORE));
     r.action(action_id("clear"));
     assert_eq!(notice_line(&r), "This square is already empty.");
+}
+
+#[test]
+fn checking_a_word_counts_its_wrong_letters_over_the_grid_without_leaving_it() {
+    // The count had a page of its own, so the word it was about was out of
+    // sight and Back to puzzle was one more tap before fixing anything.
+    let mut r = on_board(3);
+    r.action(action_id("cell-5"));
+    r.app_mut().keyboard = Keyboard::with_text("MINOX");
+    r.action(action_id("kb.enter"));
+    assert!(r.app().view == View::Board);
+    r.action(action_id(chrome::MORE));
+    r.action(action_id("check"));
+    assert!(r.app().view == View::Board);
+    assert_eq!(notice_line(&r), "1 wrong, 0 empty.");
+    assert_eq!(r.app().game().position.letters[5..10], *b"MINOX");
+    // The next tap takes the count away and the clue comes back.
+    r.action(action_id("direction"));
+    assert!(notice_line(&r).contains("Down"));
 }
 
 #[test]
