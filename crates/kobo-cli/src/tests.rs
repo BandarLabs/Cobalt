@@ -1793,8 +1793,14 @@ fn remote_session_uses_stdin_only_and_fixed_safe_artifacts() {
         &ssh_args[..5],
         ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
     );
-    assert!(matches!(ssh_args.len(), 6 | 10), "{ssh_args:?}");
-    if ssh_args.len() == 10 {
+    assert!(matches!(ssh_args.len(), 8 | 12), "{ssh_args:?}");
+    // BatchMode cannot answer for an unseen host key, so without this no
+    // reader met for the first time could ever be reached.
+    assert_eq!(
+        &ssh_args[ssh_args.len() - 3..ssh_args.len() - 1],
+        ["-o", "StrictHostKeyChecking=accept-new"]
+    );
+    if ssh_args.len() == 12 {
         assert_eq!(&ssh_args[5..8], ["-o", "IdentitiesOnly=yes", "-i"]);
         assert_eq!(
             PathBuf::from(&ssh_args[8])

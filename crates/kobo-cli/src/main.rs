@@ -5019,6 +5019,10 @@ fn remote_ssh_command(remote: &str, tty: Tty) -> Command {
     if let Some(key) = device_key_path() {
         command.args(["-o", "IdentitiesOnly=yes", "-i"]).arg(key);
     }
+    // BatchMode cannot ask about a host key it has not seen, so ssh's default
+    // of asking refuses every reader met for the first time, before its
+    // serial can be read. A key that has changed is still refused.
+    command.args(["-o", "StrictHostKeyChecking=accept-new"]);
     command.arg(remote);
     command
 }
