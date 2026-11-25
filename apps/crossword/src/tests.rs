@@ -1030,6 +1030,38 @@ fn a_stroke_goes_with_its_letter_and_comes_back_with_it_on_undo() {
 }
 
 #[test]
+fn undo_brings_back_the_strokes_of_a_letter_checked_twice_and_of_a_board_before_a_restart() {
+    let p = &PUZZLES[3];
+    let reopened = |g: &Progress| {
+        let mut games = PUZZLES.iter().map(Progress::new).collect::<Vec<_>>();
+        games[3] = g.clone();
+        saved::decode(&saved::encode(&games, 3)).unwrap().0[3].clone()
+    };
+    let mut g = Progress::new(p);
+    g.position.selected = 5;
+    g.enter(p, "MINOX").unwrap();
+    g.check(p);
+    // Another wrong letter over the checked one, checked in its turn.
+    g.position.selected = 9;
+    g.enter(p, "Y").unwrap();
+    g.check(p);
+    assert!(g.is_struck(9));
+    for mut g in [g.clone(), reopened(&g)] {
+        g.position = g.undo.pop_back().unwrap();
+        assert_eq!(g.position.letters[9], b'X');
+        assert!(g.is_struck(9), "the first wrong letter keeps its stroke");
+    }
+    // Undo after a restart gives back the board as it was, strokes and all.
+    g.restart(p);
+    assert!(!g.is_struck(9));
+    for mut g in [g.clone(), reopened(&g)] {
+        g.position = g.undo.pop_back().unwrap();
+        assert_eq!(g.position.letters[9], b'Y');
+        assert!(g.is_struck(9), "the restart is undone with its strokes");
+    }
+}
+
+#[test]
 fn strokes_are_saved_with_the_letters_and_a_save_from_before_them_has_none() {
     let p = &PUZZLES[3];
     let mut games = PUZZLES.iter().map(Progress::new).collect::<Vec<_>>();
@@ -1054,7 +1086,8 @@ fn strokes_are_saved_with_the_letters_and_a_save_from_before_them_has_none() {
     let older = format!("{}{}", &text[..start], &text[end..]);
     let (older, _) = saved::decode(older.as_bytes()).unwrap();
     assert!(!older[3].is_struck(9));
-    assert_eq!(older[3].position, games[3].position);
+    assert_eq!(older[3].position.letters, games[3].position.letters);
+    assert_eq!(older[3].position.selected, games[3].position.selected);
     // A stroke on a block, or a record of the wrong length, is refused.
     let broken = text.replacen("\"struck\":\"#", "\"struck\":\"X", 1);
     assert_ne!(broken, text);

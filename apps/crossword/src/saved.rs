@@ -13,14 +13,25 @@ fn schema() -> Schema {
     Schema::new("crossword.games", 2, LIMIT).expect("fixed schema")
 }
 fn position(p: &Position) -> Value {
-    ObjectBuilder::new()
+    let position = ObjectBuilder::new()
         .set(
             "letters",
             String::from_utf8(p.letters.clone()).expect("ASCII board"),
         )
         .set("selected", p.selected.to_string())
-        .set("down", p.down)
-        .build()
+        .set("down", p.down);
+    // Written only once something has been struck, so a step from a game
+    // that never checked a wrong letter is the step it always was.
+    if p.struck.iter().any(u8::is_ascii_uppercase) {
+        position
+            .set(
+                "struck",
+                String::from_utf8(p.struck.clone()).expect("ASCII strokes"),
+            )
+            .build()
+    } else {
+        position.build()
+    }
 }
 fn record(g: &Progress, p: &crate::game::Puzzle, undo: bool) -> Value {
     let steps = if undo {
@@ -28,7 +39,7 @@ fn record(g: &Progress, p: &crate::game::Puzzle, undo: bool) -> Value {
     } else {
         Vec::new()
     };
-    let record = ObjectBuilder::new()
+    ObjectBuilder::new()
         .set("id", p.id)
         .set(
             "answer",
@@ -38,19 +49,8 @@ fn record(g: &Progress, p: &crate::game::Puzzle, undo: bool) -> Value {
         .set("undo", Value::Array(steps))
         .set("reveals", g.reveals)
         .set("checks", g.checks)
-        .set("solved", g.solved_once);
-    // Written only once something has been struck, so a record from a game
-    // that never checked a wrong letter is the record it always was.
-    if g.struck.iter().any(u8::is_ascii_uppercase) {
-        record
-            .set(
-                "struck",
-                String::from_utf8(g.struck.clone()).expect("ASCII strokes"),
-            )
-            .build()
-    } else {
-        record.build()
-    }
+        .set("solved", g.solved_once)
+        .build()
 }
 /// The record for every puzzle that has been touched.
 ///
@@ -134,9 +134,10 @@ fn read_position(v: &Value, answer: &[u8]) -> Result<Position, Error> {
         letters,
         selected,
         down: flag(v, "down")?,
+        struck: read_struck(v, answer)?,
     })
 }
-/// The strokes a game was saved with. A record from before strokes has none,
+/// The strokes a step was saved with. A record from before strokes has none,
 /// and reads as a game in which nothing has been struck.
 fn read_struck(v: &Value, answer: &[u8]) -> Result<Vec<u8>, Error> {
     let Some(struck) = v.get("struck") else {
@@ -232,7 +233,6 @@ pub fn decode(bytes: &[u8]) -> Result<(Vec<Progress>, usize), Error> {
             checks: number(v, "checks")?,
             reveals: number(v, "reveals")?,
             solved_once: flag(v, "solved")?,
-            struck: read_struck(v, p.answer)?,
         };
         if g.solved(p) && !g.solved_once {
             return Err(Error::Corrupt);

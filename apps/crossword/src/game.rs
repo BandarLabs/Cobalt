@@ -274,6 +274,29 @@ pub struct Position {
     pub letters: Vec<u8>,
     pub selected: usize,
     pub down: bool,
+    /// The letter Check word last found wrong in each square, `.` where it
+    /// found none, and `#` on a block, as the letters are written.
+    ///
+    /// The letter is kept rather than a yes or no, so the stroke belongs to
+    /// the letter it was drawn through: change the letter and the stroke
+    /// goes, undo the change and the same wrong letter comes back with its
+    /// stroke, as a pen mark on paper would. Undo and a typed letter need no
+    /// rule of their own for it, which a flag would have needed both.
+    ///
+    /// It lives in the position, so every undo step keeps the strokes of its
+    /// moment. Kept once for the whole game, a letter checked wrong, checked
+    /// again after another wrong letter replaced it, came back on Undo with
+    /// no stroke, and Undo after a restart brought back no strokes at all.
+    pub struck: Vec<u8>,
+}
+impl Position {
+    /// A grid with nothing in it: no letter typed and none struck.
+    fn blank(p: &Puzzle) -> Vec<u8> {
+        p.answer
+            .iter()
+            .map(|b| if *b == b'#' { b'#' } else { b'.' })
+            .collect()
+    }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Progress {
@@ -283,25 +306,12 @@ pub struct Progress {
     pub reveals: u32,
     pub checks: u32,
     pub solved_once: bool,
-    /// The letter Check word last found wrong in each square, `.` where it
-    /// found none, and `#` on a block, as the letters are written.
-    ///
-    /// The letter is kept rather than a yes or no, so the stroke belongs to
-    /// the letter it was drawn through: change the letter and the stroke
-    /// goes, undo the change and the same wrong letter comes back with its
-    /// stroke, as a pen mark on paper would. Undo and a typed letter need no
-    /// rule of their own for it, which a flag would have needed both.
-    pub struck: Vec<u8>,
 }
 impl Progress {
     pub fn new(p: &Puzzle) -> Self {
         Self {
             position: Position {
-                letters: p
-                    .answer
-                    .iter()
-                    .map(|b| if *b == b'#' { b'#' } else { b'.' })
-                    .collect(),
+                letters: Position::blank(p),
                 // The first white square, which is not square zero once a grid
                 // has black corners: starting on a black square left nothing
                 // selected, refused the save that recorded it, and panicked
@@ -312,32 +322,27 @@ impl Progress {
                     .position(|square| *square != b'#')
                     .unwrap_or(0),
                 down: false,
+                struck: Position::blank(p),
             },
             undo: VecDeque::new(),
             reveals: 0,
             checks: 0,
             solved_once: false,
-            struck: p
-                .answer
-                .iter()
-                .map(|b| if *b == b'#' { b'#' } else { b'.' })
-                .collect(),
         }
     }
     /// Whether the letter in a square is one Check word found wrong, and so
     /// is drawn struck through.
     pub fn is_struck(&self, cell: usize) -> bool {
         let letter = self.position.letters[cell];
-        letter.is_ascii_uppercase() && self.struck.get(cell) == Some(&letter)
+        letter.is_ascii_uppercase() && self.position.struck.get(cell) == Some(&letter)
     }
     /// Empties the grid, and forgets every stroke with it: a stroke belongs
     /// to a letter checked in this attempt, not to the same letter typed into
-    /// the square again after a fresh start.
+    /// the square again after a fresh start. Undo brings back both.
     pub fn restart(&mut self, p: &Puzzle) {
         self.remember();
-        let fresh = Self::new(p);
-        self.position.letters = fresh.position.letters;
-        self.struck = fresh.struck;
+        self.position.letters = Position::blank(p);
+        self.position.struck = Position::blank(p);
     }
     pub fn solved(&self, p: &Puzzle) -> bool {
         self.position.letters == p.answer
@@ -400,7 +405,7 @@ impl Progress {
             })
             .collect();
         for cell in &wrong {
-            self.struck[*cell] = self.position.letters[*cell];
+            self.position.struck[*cell] = self.position.letters[*cell];
         }
         let wrong = wrong.len();
         if wrong == 0 && empty == 0 {
