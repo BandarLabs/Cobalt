@@ -18594,7 +18594,14 @@ fn paint_layout(
             // bar stays paper, because two coloured bands would frame every
             // screen in the same colour and the content between them would
             // be the quietest thing on the panel.
-            LayoutKind::TopBar => fill_clipped(surface, node.rect, palette.bar(), clip),
+            LayoutKind::TopBar => {
+                fill_clipped(surface, node.rect, palette.bar(), clip);
+                // Only a bar called up over the page can cut through a line:
+                // everywhere else the page starts below it.
+                if screen.auto_hide_top_bar && chrome.status.is_none() {
+                    cover_cut_line(surface, node.rect, metrics, prose, clip);
+                }
+            }
             LayoutKind::BarRule => match palette.bar_rule() {
                 Some(accent) => {
                     fill_clipped(surface, bar_accent_rect(node.rect, metrics), accent, clip);
@@ -20536,6 +20543,70 @@ fn draw_caret(surface: &mut Surface, rect: Rect, side: Side, clip: Rect) {
                 height: 1,
             },
             tone::INK,
+            clip,
+        );
+    }
+}
+
+/// Clears what is left showing of a line the top bar was called up over.
+///
+/// The bar is drawn over the page rather than pushing it down, so the page
+/// never moves, and its foot falls wherever it falls: through a heading, or
+/// just above a line's last few pixels. What showed under the rule was half
+/// a heading or a row of descenders, which reads as a rendering fault. The
+/// paper under the bar now reaches down to the first row with no ink on it,
+/// so every line is either whole or gone, and the bar, its rule and its
+/// controls stay exactly where they are.
+///
+/// Read from the pixels already drawn rather than from each node's lines,
+/// because every kind of node sets its lines its own way, and an application
+/// drawing a pattern chart or a poem is owed the same as a book. Kept to two
+/// heading lines: a picture under the bar has no clean row to stop at, and
+/// one of those is left alone rather than cut into.
+fn cover_cut_line(
+    surface: &mut Surface,
+    bar: Rect,
+    metrics: &DisplayMetrics,
+    prose: Face,
+    clip: Rect,
+) {
+    let top = bar
+        .y
+        .saturating_add(bar.height)
+        .saturating_add(metrics.rule_thickness());
+    let reach = FontSize::Heading
+        .line_height()
+        .max(FontSize::Heading.line_height_in(prose))
+        .saturating_mul(2);
+    let width = surface.width;
+    let height = i32::try_from(surface.height).unwrap_or(i32::MAX);
+    // Paper, or the tint under a marked passage: anything else is ink.
+    let clear = |y: i32| {
+        if y < 0 || y >= height {
+            return true;
+        }
+        let start = usize::try_from(y).unwrap_or(0).saturating_mul(width);
+        surface
+            .pixels
+            .get(start..start.saturating_add(width))
+            .is_none_or(|row| {
+                row.iter()
+                    .all(|&grey| grey == tone::PAPER || grey == tone::SURFACE)
+            })
+    };
+    let Some(foot) = (top..top.saturating_add(reach)).find(|&y| clear(y)) else {
+        return;
+    };
+    if foot > top {
+        fill_clipped(
+            surface,
+            Rect {
+                x: 0,
+                y: top,
+                width: i32::try_from(width).unwrap_or(i32::MAX),
+                height: foot - top,
+            },
+            tone::PAPER,
             clip,
         );
     }
