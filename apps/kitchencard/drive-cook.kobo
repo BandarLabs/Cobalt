@@ -53,12 +53,15 @@ expect-missing min left
 # the layout because a tick has no words.
 tap Ingredients
 wait-for Serves 3 · tap a line to check it off
-expect 1 1/2 kg whole chicken, patted dry
-expect 6 sprigs fresh thyme
+# These lines are plain text, as Mealie keeps them until its parser runs,
+# and serving three from a recipe for four scales the amount each starts with.
+expect 1.1 kg whole chicken, patted dry
+expect 4½ sprigs fresh thyme
+expect ¼ cup olive oil
 tap whole chicken
-tap 4 cloves garlic
-tap 4 cloves garlic
-tap 2 lemons
+tap 3 cloves garlic
+tap 3 cloves garlic
+tap 1½ lemons
 expect-state /layout#/nodes/13/kind "RowCheck(Checked)"
 expect-state /layout#/nodes/17/kind "RowCheck(Checked)"
 expect-state /layout#/nodes/21/kind "RowCheck(Unchecked)"
@@ -101,6 +104,25 @@ clean
 shot kitchen-cook-finished
 tap Cook again
 wait-for Cooking · 1 of 4
+# Finish ends the steps, not a timer still running for the oven: Dinner's
+# ready carries its banner, and Cook again carries the timer back.
+tap-id next
+wait-for Cooking · 2 of 4
+tap-id next
+wait-for Cooking · 3 of 4
+tap-id next
+wait-for Cooking · 4 of 4
+tap Start 15 min timer
+wait-for Stop the timer
+tap Finish
+wait-for Dinner's ready
+expect set on step 4.
+clean
+shot kitchen-cook-finished-timer
+tap Cook again
+wait-for Cooking · 1 of 4
+expect set on step 4.
+expect Stop the timer
 tap-id 4294967295
 wait-for Start cooking
 expect-missing Continue from
