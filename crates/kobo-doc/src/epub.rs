@@ -134,7 +134,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     let base = directory_of(&package_at);
     let publisher_styles = stylesheets_of(&archive, &package, &base);
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::keeping_line_breaks();
     name_the_book(&mut builder, &package);
 
     let mut truncated = false;
@@ -1765,6 +1765,30 @@ mod tests {
                 "Chapter Two",
                 "It got worse."
             ]
+        );
+    }
+
+    #[test]
+    fn a_poems_line_breaks_survive_being_gathered_into_the_book() {
+        // Every chapter is collected once on its own and again into the
+        // book, and the second pass must not fold the lines back together.
+        let package = opf(
+            r#"<itemref idref="one"/>"#,
+            r#"<item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>"#,
+        );
+        let book = archive(&[
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            (
+                "OEBPS/one.xhtml",
+                b"<html><body><p>The first line,<br/>\n the second.</p></body></html>",
+            ),
+        ]);
+        let document = parse(&book).expect("a readable book");
+        assert_eq!(
+            document.blocks,
+            vec![Block::Paragraph("The first line,\nthe second.".to_owned())]
         );
     }
 

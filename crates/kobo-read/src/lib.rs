@@ -3321,13 +3321,6 @@ fn is_outline_font(bytes: &[u8]) -> bool {
 /// grain visible.
 const MAX_PICTURE_MM: u16 = 90;
 
-/// The fraction of a page that must be filled before a chapter may end it.
-///
-/// A quarter. Below that the page is a fragment rather than an opening, and
-/// breaking after it spends a whole sheet on a line or two -- which is what
-/// the notice at the front of every Project Gutenberg book did.
-const MIN_PAGE_FILL: i32 = 4;
-
 /// The page being packed, handed to something that needs to add to it.
 struct Placing<'a> {
     pages: &'a mut Vec<Vec<Piece>>,
@@ -3397,29 +3390,72 @@ fn chapter_starts_of(document: &Document) -> BTreeSet<usize> {
     document.contents.iter().map(|entry| entry.block).collect()
 }
 
-/// Ends the page being filled, if anything is on it.
+/// The contents entries inside a file that open a chapter, and so a page.
+///
+/// A book that keeps several chapters in one file names each by an anchor,
+/// and those start a page the way a file of their own would. An entry for a
+/// section within a chapter does not: the contents of a manual or of
+/// Moby-Dick's Etymology point at a paragraph or a minor heading partway
+/// down a page, and breaking there scattered one page of reading over
+/// several. A top-level entry is a chapter, and so is one at a first or
+/// second level heading, which is where a reader would say one starts.
+fn chapters_inside_files(document: &Document) -> BTreeSet<usize> {
+    document
+        .contents
+        .iter()
+        .filter(|entry| {
+            entry.depth == 0
+                || document
+                    .blocks
+                    .get(entry.block)
+                    .is_some_and(|block| matches!(block, Block::Heading { level: 1 | 2, .. }))
+        })
+        .map(|entry| entry.block)
+        .collect()
+}
+
+/// Whether the file that begins at `next` opens on a page of its own.
+///
+/// Every chapter of an EPUB is a file, but not every file is a chapter: a
+/// converter that splits a long chapter at a size limit leaves a seam partway
+/// through its paragraphs, and breaking there drops a field of white into the
+/// middle of the chapter. So a seam only starts a page when
+/// the book says something starts there: the contents name the file, the
+/// file opens with a heading (after any ornament above it), or its first
+/// block asks for a page break. A seam that carries none of those is a
+/// continuation and keeps flowing.
+///
+/// This replaced a rule that a page had to be a quarter full before a seam
+/// could end it, which was there for the one-line notice at the front of a
+/// Project Gutenberg book. It also kept the last few lines of every chapter
+/// on the page with the next chapter's title, so a dedication sat above
+/// part one and a Contents tap landed under the tail of the chapter before.
+fn seam_starts_a_page(document: &Document, chapter_starts: &BTreeSet<usize>, next: usize) -> bool {
+    if chapter_starts.contains(&next) {
+        return true;
+    }
+    if document
+        .rich
+        .get(&next)
+        .is_some_and(|rich| rich.style.page_break_before)
+    {
+        return true;
+    }
+    document
+        .blocks
+        .get(next..)
+        .unwrap_or_default()
+        .iter()
+        .find(|block| !matches!(block, Block::Picture { .. }))
+        .is_some_and(|block| matches!(block, Block::Heading { .. }))
+}
+
+/// Ends a non-empty page: the publisher asked for a break, or a chapter
+/// starts here.
 ///
 /// A page break with nothing above it is not a break, it is a blank page, and
 /// a book whose first chapter is listed in its contents would otherwise open
 /// on one.
-fn break_page(pages: &mut Vec<Vec<Piece>>, page: &mut Vec<Piece>, used: &mut i32, height: i32) {
-    if page.is_empty() {
-        return;
-    }
-    // A page holding two lines and then nothing is not a chapter opening, it
-    // is a fragment that claimed a page. Gutenberg's books begin with one:
-    // a single sentence saying an illustrated edition exists, in a file of
-    // its own, which turned the first page of every one of them into a
-    // notice and a field of white. Something that short keeps the company of
-    // whatever follows it instead.
-    if *used < height / MIN_PAGE_FILL {
-        return;
-    }
-    pages.push(std::mem::take(page));
-    *used = 0;
-}
-
-/// Ends a non-empty page because the publisher explicitly requested one.
 fn force_page_break(pages: &mut Vec<Vec<Piece>>, page: &mut Vec<Piece>, used: &mut i32) {
     if !page.is_empty() {
         pages.push(std::mem::take(page));
@@ -3832,6 +3868,11 @@ fn paginate(
     }
     let mut capped = false;
     let chapter_starts = chapter_starts_of(document);
+    let opens_chapter = chapters_inside_files(document);
+    // Whether the file being packed has put anything but pictures down yet,
+    // so a cover that is a file of its own keeps its page even when the
+    // file after it carries no sign of starting one.
+    let mut file_has_words = false;
     // What the columns of the table currently being laid out want to be,
     // measured over all of its rows at once. Held across the loop so that a
     // table taller than a page keeps its columns on the page it spills onto.
@@ -3845,7 +3886,6 @@ fn paginate(
 
     for (index, block) in document.blocks.iter().enumerate() {
         let rich = document.rich.get(&index);
-        let starts_chapter = chapter_starts.contains(&index);
         let Ok(index) = Locator::try_from(index) else {
             break;
         };
@@ -3854,14 +3894,23 @@ fn paginate(
             break;
         }
         let kind = kind_of(block, highlights.contains(&index));
-        // A file seam is a chapter boundary in every EPUB, listed in the
-        // contents or not, and it used to draw a small space instead.
-        if kind == Kind::Break || starts_chapter {
-            break_page(&mut pages, &mut page, &mut used, area.height);
-            if kind == Kind::Break {
-                continue;
+        // A seam is a new page when the book marks a start there, or when the
+        // file before it held only pictures: a cover or a plate is a page,
+        // and the words of the next file drawn under it are not.
+        if kind == Kind::Break {
+            let next = index_of(index) + 1;
+            if !file_has_words || seam_starts_a_page(document, &chapter_starts, next) {
+                force_page_break(&mut pages, &mut page, &mut used);
             }
+            file_has_words = false;
+            continue;
         }
+        // A chapter the contents name starts a page wherever it is in its
+        // file, so going to it never lands under the end of the one before.
+        if opens_chapter.contains(&index_of(index)) {
+            force_page_break(&mut pages, &mut page, &mut used);
+        }
+        file_has_words |= !matches!(block, Block::Picture { .. });
         if rich.is_some_and(|rich| rich.style.page_break_before) {
             force_page_break(&mut pages, &mut page, &mut used);
         }
@@ -4573,8 +4622,8 @@ mod tests {
                     level: 1,
                     text: "Chapter One".into(),
                 }];
-                // Enough to fill its page: a chapter that ends two lines in is
-                // a fragment, and a fragment deliberately does not break.
+                // Enough to fill its page, so the test is about the contents
+                // rather than about a short page.
                 blocks.extend((0..14).map(|n| {
                     Block::Paragraph(format!("Paragraph {n} of the first chapter, at length."))
                 }));
@@ -4890,23 +4939,243 @@ mod tests {
         );
     }
 
+    /// A chapter's last few lines, a seam, and the file that follows it.
+    ///
+    /// Short enough that the tail and the next file share a page unless
+    /// something deliberately puts them apart.
+    fn tail_then(next: Vec<Block>) -> Document {
+        let mut blocks: Vec<Block> = (0..2)
+            .map(|n| Block::Paragraph(format!("Line {n} of the end of the chapter before.")))
+            .collect();
+        blocks.push(Block::Break);
+        blocks.extend(next);
+        Document {
+            blocks,
+            ..Document::default()
+        }
+    }
+
+    fn first_words_of_page(reader: &Reader, page: usize) -> String {
+        reader.pages[page]
+            .first()
+            .map(|piece| piece.text.clone())
+            .unwrap_or_default()
+    }
+
     #[test]
-    fn a_file_seam_starts_a_page_rather_than_leaving_a_gap() {
-        // An EPUB's chapters are separate files and the seam between two of
-        // them is a chapter boundary even when the book listed no contents.
-        // It used to draw a small space, so one page held the end of one
-        // chapter and the start of the next.
+    fn a_seam_a_converter_left_inside_a_chapter_keeps_the_prose_flowing() {
+        // A converter splits a long chapter into files at a size limit, and
+        // the seam it leaves names nothing, opens on no heading and asks for
+        // no break. Breaking there put a field of white mid-chapter.
         let mut blocks: Vec<Block> = (0..14)
             .map(|n| Block::Paragraph(format!("Paragraph {n} of the chapter before the seam.")))
             .collect();
         blocks.push(Block::Break);
-        blocks.push(Block::Paragraph("The start of the next.".into()));
+        blocks.push(Block::Paragraph("And the chapter goes on.".into()));
         let document = Document {
             blocks,
             ..Document::default()
         };
         let reader = Reader::open(document, Memory::default(), &panel());
-        assert_eq!(reader.page_count(), 2, "the seam drew a gap instead");
+        assert_eq!(reader.page_count(), 1, "a mid-chapter split broke the page");
+    }
+
+    #[test]
+    fn a_file_that_opens_on_a_heading_starts_a_page_however_short_the_one_before() {
+        // A dedication of one line, then the part title "1 GENESIS": the
+        // quarter-page rule ran both into chapter one.
+        let reader = Reader::open(
+            tail_then(vec![
+                Block::Heading {
+                    level: 1,
+                    text: "1 GENESIS".into(),
+                },
+                Block::Paragraph("There were no windows in the facility.".into()),
+            ]),
+            Memory::default(),
+            &panel(),
+        );
+        assert_eq!(reader.page_count(), 2);
+        assert_eq!(first_words_of_page(&reader, 1), "1 GENESIS");
+    }
+
+    #[test]
+    fn a_heading_under_an_ornament_still_starts_a_page() {
+        // Plenty of books set a small device above each chapter title, and
+        // the file still opens on that title as far as a reader can tell.
+        let reader = Reader::open(
+            tail_then(vec![
+                Block::Picture {
+                    name: "fleuron.png".into(),
+                    alt: String::new(),
+                    illustration: false,
+                },
+                Block::Heading {
+                    level: 2,
+                    text: "Chapter Two".into(),
+                },
+            ]),
+            Memory::default(),
+            &panel(),
+        );
+        assert_eq!(reader.page_count(), 2);
+        assert_eq!(first_words_of_page(&reader, 1), "Chapter Two");
+    }
+
+    #[test]
+    fn a_file_the_contents_name_starts_a_page_even_without_a_heading() {
+        // A title page or a synopsis opens on a logo or plain prose, and the
+        // contents are what say it is a place of its own. Going there from
+        // Contents landed under the tail of what came before.
+        let mut document = tail_then(vec![Block::Paragraph("Adrian Tchaikovsky".into())]);
+        document.contents = vec![kobo_doc::Contents {
+            title: "Children of Time".into(),
+            block: 3,
+            depth: 0,
+        }];
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert_eq!(reader.page_count(), 2);
+        assert_eq!(first_words_of_page(&reader, 1), "Adrian Tchaikovsky");
+    }
+
+    #[test]
+    fn a_chapter_the_contents_name_inside_a_file_starts_a_page_after_a_short_tail() {
+        // One file holding several chapters names each by an anchor, with
+        // no seam between them to break at.
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("The last line of chapter one.".into()),
+                Block::Paragraph("Chapter two starts here.".into()),
+            ],
+            contents: vec![kobo_doc::Contents {
+                title: "Chapter Two".into(),
+                block: 1,
+                depth: 0,
+            }],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert_eq!(reader.page_count(), 2);
+        assert_eq!(first_words_of_page(&reader, 1), "Chapter two starts here.");
+    }
+
+    #[test]
+    fn a_section_the_contents_name_inside_a_chapter_keeps_its_page() {
+        // Moby-Dick's Etymology lists a word of it in the contents, a
+        // paragraph partway down the page, and it is not a chapter.
+        let document = Document {
+            blocks: vec![
+                Block::Heading {
+                    level: 1,
+                    text: "ETYMOLOGY.".into(),
+                },
+                Block::Paragraph("WHALE, English.".into()),
+                Block::Heading {
+                    level: 3,
+                    text: "A minor section".into(),
+                },
+            ],
+            contents: vec![
+                kobo_doc::Contents {
+                    title: "WHALE".into(),
+                    block: 1,
+                    depth: 1,
+                },
+                kobo_doc::Contents {
+                    title: "A minor section".into(),
+                    block: 2,
+                    depth: 1,
+                },
+            ],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert_eq!(reader.page_count(), 1);
+    }
+
+    #[test]
+    fn a_file_that_asks_for_a_page_break_before_it_gets_one() {
+        let document = kobo_doc::html::parse(
+            r#"<p>The last line before.</p><p style="page-break-before: always">To Portia</p>"#,
+        );
+        let mut blocks = vec![document.blocks[0].clone(), Block::Break];
+        blocks.push(document.blocks[1].clone());
+        let rich = document
+            .rich
+            .get(&1)
+            .cloned()
+            .map(|rich| (2, rich))
+            .into_iter()
+            .collect();
+        let reader = Reader::open(
+            Document {
+                blocks,
+                rich,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+        assert_eq!(reader.page_count(), 2);
+        assert_eq!(first_words_of_page(&reader, 1), "To Portia");
+    }
+
+    #[test]
+    fn a_cover_that_is_a_file_of_its_own_keeps_its_page() {
+        // The synopsis after a cover carries no sign of starting a page, and
+        // flowing it would draw the blurb under the cover picture.
+        let document = Document {
+            blocks: vec![
+                Block::Picture {
+                    name: "cover.jpg".into(),
+                    alt: "Cover".into(),
+                    illustration: true,
+                },
+                Block::Break,
+                Block::Paragraph("A race for survival among the stars.".into()),
+            ],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        reader.set_pictures(
+            BTreeMap::from([(
+                "cover.jpg".to_owned(),
+                kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 400, 300),
+            )]),
+            &panel(),
+        );
+        assert_eq!(reader.page_count(), 2);
+        assert_eq!(
+            first_words_of_page(&reader, 1),
+            "A race for survival among the stars."
+        );
+    }
+
+    #[test]
+    fn a_saved_place_comes_back_to_the_same_words_after_chapters_move() {
+        // Pages moved when seams changed meaning; a place is kept as a block
+        // and an offset into it, so it still names the same words.
+        let mut document = tail_then(vec![
+            Block::Heading {
+                level: 1,
+                text: "Part Two".into(),
+            },
+            Block::Paragraph("Where the reader stopped.".into()),
+        ]);
+        document.contents = Vec::new();
+        let memory = Memory {
+            at: 4,
+            ..Memory::default()
+        };
+        let reader = Reader::open(document, memory, &panel());
+        assert!(
+            reader
+                .page()
+                .iter()
+                .any(|piece| piece.text == "Where the reader stopped."),
+            "{:?}",
+            reader.page()
+        );
     }
 
     /// unreachable: the reading screen carries nothing at the foot, and the
