@@ -43,6 +43,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     match verb.as_str() {
         "inspect" if arguments.len() == 2 => {
             describe(&comic, notice.as_deref());
+            describe_large(&large_pages(&bytes, &comic)?);
             Ok(())
         }
         "preview" => {
@@ -79,6 +80,198 @@ fn describe(comic: &kobo_comic::Comic, notice: Option<&str>) {
     if let Some(notice) = notice {
         println!("Notice: {notice}");
     }
+}
+
+/// Says which pages a push will scale down, so the owner hears it before
+/// sending rather than finding a page the reader would not open.
+fn describe_large(large: &[Large]) {
+    if large.is_empty() {
+        return;
+    }
+    println!(
+        "Scaled down on push: {} page{} larger than the {} pixels the reader opens",
+        large.len(),
+        if large.len() == 1 { "" } else { "s" },
+        kobo_image::MAX_PIXELS
+    );
+    for page in large {
+        println!(
+            "  page {}: {} ({} x {})",
+            page.index + 1,
+            page.name,
+            page.width,
+            page.height
+        );
+    }
+}
+
+/// A page bigger than the reader decodes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Large {
+    index: usize,
+    name: String,
+    width: u32,
+    height: u32,
+}
+
+/// The pages of a comic the reader would refuse to decode, read from their
+/// headers alone.
+///
+/// The reader's ceiling, [`kobo_image::MAX_PIXELS`], is right for a single
+/// core with half a gigabyte, and a two-page spread from a digital release is
+/// often past it. Such a page used to arrive and then fail on the reader with
+/// "This page could not be opened", with nothing said on the computer.
+fn large_pages(bytes: &[u8], comic: &kobo_comic::Comic) -> Result<Vec<Large>, String> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("read the comic: {e}"))?;
+    let mut large = Vec::new();
+    for (index, name) in comic.pages.iter().enumerate() {
+        let encoded = entry_bytes(&mut archive, name)?;
+        let Ok((width, height)) = image::ImageReader::new(std::io::Cursor::new(&encoded))
+            .with_guessed_format()
+            .map_err(|_| ())
+            .and_then(|reader| reader.into_dimensions().map_err(|_| ()))
+        else {
+            // A page that is not a picture at all is the reader's to report,
+            // as it always has; scaling cannot help it.
+            continue;
+        };
+        if u64::from(width) * u64::from(height) > kobo_image::MAX_PIXELS {
+            large.push(Large {
+                index,
+                name: name.clone(),
+                width,
+                height,
+            });
+        }
+    }
+    Ok(large)
+}
+
+fn entry_bytes(
+    archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
+    name: &str,
+) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    let mut file = archive
+        .by_name(name)
+        .map_err(|e| format!("read {name} from the comic: {e}"))?;
+    let mut encoded = Vec::new();
+    (&mut file)
+        .take(kobo_image::MAX_SOURCE_BYTES as u64 + 1)
+        .read_to_end(&mut encoded)
+        .map_err(|e| format!("read {name} from the comic: {e}"))?;
+    Ok(encoded)
+}
+
+/// The largest size inside the reader's pixel budget with the page's shape.
+fn within_budget(width: u32, height: u32) -> (u32, u32) {
+    // Across times down is the budget when across squared is the budget
+    // times width over height; the square root of that, in whole pixels.
+    let widest = (kobo_image::MAX_PIXELS * u64::from(width) / u64::from(height.max(1))).isqrt();
+    let mut across = u32::try_from(widest).unwrap_or(width).clamp(1, width);
+    let down = |across: u32| {
+        u32::try_from(u64::from(height) * u64::from(across) / u64::from(width))
+            .unwrap_or(height)
+            .max(1)
+    };
+    while across > 1 && u64::from(across) * u64::from(down(across)) > kobo_image::MAX_PIXELS {
+        across -= 1;
+    }
+    (across, down(across))
+}
+
+/// One large page, scaled into the reader's budget and written back in the
+/// format it came in, colour and all: a colour reader shows colour pages.
+fn scaled_page(name: &str, encoded: &[u8]) -> Result<Vec<u8>, String> {
+    let failed = |e: image::ImageError| format!("scale {name}: {e}");
+    let reader = image::ImageReader::new(std::io::Cursor::new(encoded))
+        .with_guessed_format()
+        .map_err(|e| format!("scale {name}: {e}"))?;
+    let format = reader.format();
+    let mut decoder = reader.into_decoder().map_err(failed)?;
+    let orientation = image::ImageDecoder::orientation(&mut decoder).map_err(failed)?;
+    let mut picture = image::DynamicImage::from_decoder(decoder).map_err(failed)?;
+    // Turned upright here, because the scaled copy carries no orientation
+    // tag for the reader to turn it by.
+    picture.apply_orientation(orientation);
+    let (width, height) = within_budget(picture.width(), picture.height());
+    let scaled = picture.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
+    let color = scaled.color();
+    let mut out = Vec::new();
+    if format == Some(image::ImageFormat::Jpeg) {
+        let flat = if color.has_color() {
+            image::DynamicImage::ImageRgb8(scaled.to_rgb8())
+        } else {
+            image::DynamicImage::ImageLuma8(scaled.to_luma8())
+        };
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 90)
+            .encode_image(&flat)
+            .map_err(failed)?;
+    } else {
+        let eight_bit = match (color.has_color(), color.has_alpha()) {
+            (true, true) => image::DynamicImage::ImageRgba8(scaled.to_rgba8()),
+            (true, false) => image::DynamicImage::ImageRgb8(scaled.to_rgb8()),
+            (false, true) => image::DynamicImage::ImageLumaA8(scaled.to_luma_alpha8()),
+            (false, false) => image::DynamicImage::ImageLuma8(scaled.to_luma8()),
+        };
+        eight_bit
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .map_err(failed)?;
+    }
+    if out.len() > kobo_image::MAX_SOURCE_BYTES {
+        return Err(format!(
+            "{name} is still over Panels' 4 MiB page limit once scaled to fit the reader; export it smaller"
+        ));
+    }
+    Ok(out)
+}
+
+/// The comic as it should travel: unchanged when every page fits the reader,
+/// otherwise the same archive with only the large pages scaled down.
+///
+/// Every other entry is copied byte for byte, `ComicInfo.xml` and all, and the
+/// scaled pages keep their names and places, so page order, the cover, the
+/// title and the reading direction are what the owner made them.
+fn fit_for_reader(bytes: Vec<u8>, large: &[Large]) -> Result<Vec<u8>, String> {
+    if large.is_empty() {
+        return Ok(bytes);
+    }
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes.as_slice()))
+        .map_err(|e| format!("read the comic: {e}"))?;
+    let mut scaled = std::collections::BTreeMap::new();
+    for page in large {
+        let encoded = entry_bytes(&mut archive, &page.name)?;
+        scaled.insert(page.name.clone(), scaled_page(&page.name, &encoded)?);
+    }
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for index in 0..archive.len() {
+        let file = archive
+            .by_index_raw(index)
+            .map_err(|e| format!("read the comic: {e}"))?;
+        if let Some(page) = scaled.get(file.name()) {
+            let mut options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            if let Some(modified) = file.last_modified() {
+                options = options.last_modified_time(modified);
+            }
+            let name = file.name().to_owned();
+            drop(file);
+            writer
+                .start_file(name, options)
+                .map_err(|e| format!("write the comic: {e}"))?;
+            std::io::Write::write_all(&mut writer, page)
+                .map_err(|e| format!("write the comic: {e}"))?;
+        } else {
+            writer
+                .raw_copy_file(file)
+                .map_err(|e| format!("write the comic: {e}"))?;
+        }
+    }
+    Ok(writer
+        .finish()
+        .map_err(|e| format!("write the comic: {e}"))?
+        .into_inner())
 }
 
 fn title<'a>(comic: &'a kobo_comic::Comic, input: &'a str) -> &'a str {
@@ -144,11 +337,25 @@ fn preview(
 struct Sending {
     bytes: Vec<u8>,
     sent: Sent,
+    /// How many pages were scaled down to fit the reader.
+    scaled: usize,
 }
 
 fn prepare(input: &str) -> Result<Sending, String> {
     let bytes = read(Path::new(input))?;
     let (comic, _) = kobo_comic::inspect_named(&bytes, input).map_err(|e| e.to_string())?;
+    let large = large_pages(&bytes, &comic)?;
+    let bytes = fit_for_reader(bytes, &large)?;
+    if !large.is_empty() {
+        // The rewritten archive is held to the reader's own checks, and to
+        // the comic it came from, before anything is sent.
+        let (fitted, _) = kobo_comic::inspect_named(&bytes, input).map_err(|e| e.to_string())?;
+        if fitted != comic || !large_pages(&bytes, &fitted)?.is_empty() {
+            return Err(format!(
+                "{input} could not be scaled to fit the reader without changing it"
+            ));
+        }
+    }
     let sha256 = kobo_net::sha256::hex_digest(&bytes);
     // The title travels in the list the app reads, so it is cut to what the
     // app accepts there rather than refused for being long.
@@ -170,6 +377,19 @@ fn prepare(input: &str) -> Result<Sending, String> {
             sha256,
         },
         bytes,
+        scaled: large.len(),
+    })
+}
+
+/// The line a push adds when it had to scale pages for the reader.
+fn scaled_note(sending: &Sending) -> Option<String> {
+    (sending.scaled > 0).then(|| {
+        format!(
+            "Scaled {} large page{} of {} down to fit the reader.",
+            sending.scaled,
+            if sending.scaled == 1 { "" } else { "s" },
+            sending.sent.title
+        )
     })
 }
 
@@ -261,6 +481,9 @@ fn push(arguments: &[String]) -> Result<(), String> {
         };
         let sending = prepare(input)?;
         atomic(Path::new(path), &sending.bytes)?;
+        if let Some(note) = scaled_note(&sending) {
+            println!("{note}");
+        }
         println!(
             "Wrote {} ({} pages) to {path}. Copy it to .adds/cobalt/data/panels/{BLOB} on the reader.",
             sending.sent.title, sending.sent.pages
@@ -280,6 +503,11 @@ fn push(arguments: &[String]) -> Result<(), String> {
         Destination::Device(host) => send_to_reader(host, &sending, &offered, replace)?,
         Destination::File(_) => unreachable!("handled above"),
     };
+    for item in &sending {
+        if let Some(note) = scaled_note(item) {
+            println!("{note}");
+        }
+    }
     for item in &offered {
         println!("Sent {} ({} pages).", item.title, item.pages);
     }
@@ -446,6 +674,116 @@ mod tests {
             .collect::<Vec<_>>();
         let error = merge(full, &|_| true, &[sent("One more", 'f')], false).unwrap_err();
         assert!(error.contains("--replace"));
+    }
+
+    fn picture(width: u32, height: u32, format: image::ImageFormat) -> Vec<u8> {
+        let page = image::RgbImage::from_fn(width, height, |x, y| {
+            image::Rgb([(x % 251) as u8, (y % 241) as u8, 120])
+        });
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgb8(page)
+            .write_to(&mut std::io::Cursor::new(&mut bytes), format)
+            .unwrap();
+        bytes
+    }
+
+    /// A right-to-left comic whose middle page is a 3200 by 2400 spread,
+    /// past what the reader decodes, between two pages it opens as they are.
+    fn comic_with_a_spread() -> Vec<u8> {
+        use std::io::Write as _;
+        let entries: [(&str, Vec<u8>); 4] = [
+            (
+                "ComicInfo.xml",
+                b"<ComicInfo><Title>Harbour Lights</Title><Manga>YesAndRightToLeft</Manga></ComicInfo>"
+                    .to_vec(),
+            ),
+            ("pages/01.png", picture(800, 1200, image::ImageFormat::Png)),
+            ("pages/02.jpg", picture(3200, 2400, image::ImageFormat::Jpeg)),
+            ("pages/10.png", picture(800, 1200, image::ImageFormat::Png)),
+        ];
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, body) in &entries {
+            writer
+                .start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(body).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn inspect_names_the_pages_a_push_will_scale_to_fit_the_reader() {
+        let bytes = comic_with_a_spread();
+        let comic = kobo_comic::inspect(&bytes).unwrap();
+        assert_eq!(
+            large_pages(&bytes, &comic).unwrap(),
+            [Large {
+                index: 1,
+                name: "pages/02.jpg".to_owned(),
+                width: 3200,
+                height: 2400,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_push_sends_the_scaled_comic_and_names_it_by_what_was_sent() {
+        let path = std::env::temp_dir().join(format!("panels-spread-{}.cbz", std::process::id()));
+        fs::write(&path, comic_with_a_spread()).unwrap();
+        let sending = prepare(path.to_str().unwrap()).unwrap();
+        let _ = fs::remove_file(&path);
+        assert_eq!(sending.scaled, 1);
+        assert_eq!(sending.sent.title, "Harbour Lights");
+        assert_eq!(sending.sent.pages, 3);
+        assert_eq!(
+            sending.sent.sha256,
+            kobo_net::sha256::hex_digest(&sending.bytes),
+            "the reader checks the bytes it receives, not the ones on the computer"
+        );
+        assert_eq!(
+            scaled_note(&sending).as_deref(),
+            Some("Scaled 1 large page of Harbour Lights down to fit the reader.")
+        );
+    }
+
+    #[test]
+    fn a_pushed_spread_too_big_for_the_reader_arrives_scaled_and_opens() {
+        let original = comic_with_a_spread();
+        let comic = kobo_comic::inspect(&original).unwrap();
+        assert!(
+            kobo_comic::page(&original, &comic, 1).is_err(),
+            "the reader refuses the spread as it was made"
+        );
+        let large = large_pages(&original, &comic).unwrap();
+        let fitted = fit_for_reader(original.clone(), &large).unwrap();
+        let after = kobo_comic::inspect(&fitted).unwrap();
+        assert_eq!(after, comic, "page order, names, title and direction stay");
+        assert_eq!(after.metadata.right_to_left, Some(true));
+        for index in 0..comic.pages.len() {
+            kobo_comic::page(&fitted, &after, index).expect("every page opens on the reader");
+        }
+        let spread = kobo_comic::page(&fitted, &after, 1).unwrap();
+        assert!(u64::from(spread.width()) * u64::from(spread.height()) <= kobo_image::MAX_PIXELS);
+        assert_eq!(
+            (spread.width(), spread.height()),
+            (2877, 2157),
+            "the spread keeps its shape"
+        );
+        // The pages that already fit travel byte for byte.
+        let mut before = zip::ZipArchive::new(std::io::Cursor::new(original.as_slice())).unwrap();
+        let mut now = zip::ZipArchive::new(std::io::Cursor::new(fitted.as_slice())).unwrap();
+        for name in ["ComicInfo.xml", "pages/01.png", "pages/10.png"] {
+            assert_eq!(
+                entry_bytes(&mut before, name).unwrap(),
+                entry_bytes(&mut now, name).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn a_comic_whose_pages_all_fit_is_sent_exactly_as_it_was() {
+        let bytes = comic_with_a_spread();
+        assert_eq!(fit_for_reader(bytes.clone(), &[]).unwrap(), bytes);
     }
 
     #[test]

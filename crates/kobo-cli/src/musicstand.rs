@@ -2,7 +2,7 @@
 //! and publish them over the already-paired SSH channel or into the simulator.
 
 use kobo_music_host::{
-    digest, fit_page, plan, ImportFailure, IncomingScore, Manifest, Panel, Push, MANIFEST,
+    decode_page, digest, plan, ImportFailure, IncomingScore, Manifest, Panel, Push, MANIFEST,
     MAX_SCORES,
 };
 use std::fmt::Write as _;
@@ -369,17 +369,14 @@ fn offer(
         match bounded_file(path) {
             Ok(bytes) => {
                 source_bytes.extend_from_slice(&bytes);
-                match kobo_image::decode(&bytes) {
-                    Ok(picture) => match fit_page(&picture, panel) {
-                        Ok(page) => pages.push(page),
-                        Err(reason) => failures.push(ImportFailure {
-                            input: path.display().to_string(),
-                            reason,
-                        }),
-                    },
-                    Err(error) => failures.push(ImportFailure {
+                // Read with the computer's limit, not the reader's: a 300 dpi
+                // scan is past what the reader decodes, and was refused here
+                // although the page that reaches the reader is scaled to fit.
+                match decode_page(&bytes, panel) {
+                    Ok(page) => pages.push(page),
+                    Err(reason) => failures.push(ImportFailure {
                         input: path.display().to_string(),
-                        reason: format!("could not be decoded: {error}"),
+                        reason,
                     }),
                 }
             }
@@ -748,6 +745,32 @@ mod tests {
     fn missing_poppler_names_the_package_to_install_on_each_system() {
         assert!(NO_POPPLER.contains("brew install poppler"));
         assert!(NO_POPPLER.contains("poppler-utils"));
+    }
+
+    #[test]
+    fn a_page_scanned_at_300_dpi_is_prepared_instead_of_refused() {
+        let path = std::env::temp_dir().join(format!("musicstand-scan-{}.png", std::process::id()));
+        let page = image::GrayImage::from_fn(2550, 3300, |_, y| {
+            image::Luma([if y % 40 < 3 { 20 } else { 250 }])
+        });
+        page.save_with_format(&path, image::ImageFormat::Png)
+            .expect("scan");
+        let prepared = offer(
+            &path,
+            Panel {
+                width: 1072,
+                height: 1448,
+            },
+            false,
+        );
+        let _ = fs::remove_file(&path);
+        let score = prepared.unwrap_or_else(|failures| panic!("{failures:?}"));
+        assert_eq!(score.pages.len(), 1);
+        assert_eq!(score.pages[0].width(), 2144);
+        assert!(
+            u64::from(score.pages[0].width()) * u64::from(score.pages[0].height())
+                <= kobo_image::MAX_PIXELS
+        );
     }
 
     #[test]

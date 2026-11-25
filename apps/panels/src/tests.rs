@@ -792,6 +792,41 @@ fn a_sent_comic_that_cannot_be_read_stops_the_run_and_is_not_tried_again() {
 }
 
 #[test]
+fn comics_pushed_while_a_comic_is_open_are_added_once_the_reader_goes_back_to_the_shelf() {
+    use kobo_sdk::{Context, KoboApp};
+    let garden = include_bytes!("../assets/a-small-garden.cbz");
+    let sent = sent_comic("The Small Garden", garden);
+    let mut app = super::Panels {
+        library: Some(super::Library::restore(None).unwrap()),
+        loaded: true,
+        route: super::Route::Reader,
+        ..super::Panels::default()
+    };
+    let mut context = Context::default();
+    // The list arrives on a return to Panels while the comic is still open.
+    app.sent = vec![sent.clone()];
+    app.add_waiting(&mut context);
+    assert!(!app.adding, "reading is not interrupted");
+    assert_eq!(app.route, super::Route::Reader);
+    app.on_action(&mut context, kobo_sdk::ActionId::BACK);
+    assert!(app.adding, "the shelf takes up the comic that was waiting");
+    assert_eq!(app.route, super::Route::Import);
+    assert_eq!(
+        app.local_load.as_ref().map(|load| load.name().to_owned()),
+        Some(sent.file.clone())
+    );
+    // Cancelling the add is final: the shelf does not start it again.
+    app.on_action(&mut context, kobo_sdk::ActionId::BACK);
+    assert_eq!(app.route, super::Route::Library);
+    assert!(!app.adding);
+    app.on_action(&mut context, action_id("shelf-next"));
+    assert!(
+        !app.adding,
+        "a cancelled add is not restarted by the next shelf screen"
+    );
+}
+
+#[test]
 fn a_sent_comic_without_comic_info_keeps_the_title_it_was_sent_with() {
     use kobo_sdk::{Context, KoboApp};
     let bytes = include_bytes!("../../../docs/quality/fixtures/original-pages.cbz").to_vec();

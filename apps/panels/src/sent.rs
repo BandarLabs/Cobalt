@@ -185,8 +185,17 @@ impl Panels {
                 .as_ref()
                 .is_some_and(|library| library.status() == kobo_state::draft::Status::Saved)
         {
+            // Not now, but not forgotten: the shelf picks these up the next
+            // time it is shown. Only outside a run, so a run the owner
+            // cancelled, or one stopped by a comic that could not be read,
+            // is not started again behind their back.
+            self.add_on_shelf = !self.adding
+                && self.sent.iter().any(|sent| {
+                    self.on_shelf_already(sent).is_none() && !self.add_failed.contains(&sent.sha256)
+                });
             return;
         }
+        self.add_on_shelf = false;
         let next = self.sent.iter().position(|sent| {
             self.on_shelf_already(sent).is_none() && !self.add_failed.contains(&sent.sha256)
         });
