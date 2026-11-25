@@ -9,6 +9,7 @@ fn entities(count: usize) -> Vec<ha::Entity> {
             id: format!("light.room_{n:02}"),
             name: format!("Room {n:02} ceiling light"),
             state: "off".into(),
+            unit: String::new(),
         })
         .collect()
 }
@@ -72,11 +73,10 @@ fn all_wall_tiles_and_error_notices_fit_at_every_text_size() {
                 view: View::Grid,
                 wall,
                 tiles: (0..12).map(|n| format!("light.room_{n:02}")).collect(),
-                banner: Some((
-                    BannerLevel::Attention,
-                    "Home Assistant did not answer. Check the address and that it is running."
-                        .into(),
-                )),
+                // The outage is said in the status line, the grid's only
+                // notice now, at its longest.
+                last_ok: Some((0, "06:40".to_owned())),
+                trouble: Some(kobo_sdk::failure::Cause::Missing),
                 ..HomePanel::default()
             };
             let pages = app.grid_pages(&context);
@@ -182,11 +182,14 @@ fn stale_poll_outcomes_preserve_the_current_service_and_its_result() {
             runner.action(action_id("tile.light.desk"));
             let current = runner.app().task.expect("active service");
             let pending = runner.app().pending.clone();
-            let banner = runner.app().banner.clone();
+            let said = (runner.app().note.clone(), runner.app().dialog.clone());
             assert!(runner.task_outcome(poll, stale).is_empty());
             assert_eq!(runner.app().task, Some(current));
             assert_eq!(runner.app().pending, pending);
-            assert_eq!(runner.app().banner, banner);
+            assert_eq!(
+                (runner.app().note.clone(), runner.app().dialog.clone()),
+                said
+            );
             assert_eq!(runner.app().state_of("light.desk"), Some("off"));
             if succeeds {
                 let commands = runner.task_outcome(current.0, TaskOutcome::Completed(vec![]));
@@ -197,14 +200,11 @@ fn stale_poll_outcomes_preserve_the_current_service_and_its_result() {
                     confirmation,
                     TaskOutcome::Completed(br#"[{"id":"light.desk","s":"on"}]"#.to_vec()),
                 );
-                assert_eq!(runner.app().banner_text(), Some("desk is now on."));
+                assert_eq!(runner.app().note.as_deref(), Some("desk is now on."));
             } else {
                 runner.task_outcome(current.0, TaskOutcome::Failed(TaskError::Unauthorized));
-                assert!(runner
-                    .app()
-                    .banner_text()
-                    .unwrap()
-                    .starts_with("Couldn't update desk."));
+                let (title, _) = runner.app().dialog.clone().expect("a dialogue");
+                assert_eq!(title, "Couldn't update desk");
             }
             assert!(runner.app().task.is_none());
             assert!(runner.app().pending.is_none());
@@ -238,13 +238,13 @@ fn repeated_taps_keep_each_service_request_and_only_the_latest_status() {
         for old in tasks {
             let tracked = runner.app().task;
             let pending = runner.app().pending.clone();
-            let banner = runner.app().banner.clone();
+            let note = runner.app().note.clone();
             assert!(runner
                 .task_outcome(old, TaskOutcome::Completed(vec![]))
                 .is_empty());
             assert_eq!(runner.app().task, tracked);
             assert_eq!(runner.app().pending, pending);
-            assert_eq!(runner.app().banner, banner);
+            assert_eq!(runner.app().note, note);
         }
         if !latest_first {
             runner.task_outcome(latest, TaskOutcome::Completed(vec![]));
@@ -260,7 +260,7 @@ fn repeated_taps_keep_each_service_request_and_only_the_latest_status() {
                 br#"[{"id":"light.desk","s":"off"},{"id":"switch.fan","s":"on"}]"#.to_vec(),
             ),
         );
-        assert_eq!(runner.app().banner_text(), Some("fan is now on."));
+        assert_eq!(runner.app().note.as_deref(), Some("fan is now on."));
         assert!(runner.app().pending.is_none());
     }
 }
@@ -335,13 +335,10 @@ fn stale_poll_does_not_consume_the_latest_temperature_change() {
     );
     assert!(runner.task_outcome(poll, TaskOutcome::Cancelled).is_empty());
     assert_eq!(runner.app().task, Some(current));
-    assert_eq!(runner.app().banner_text(), Some("Setting 21.5°…"));
+    assert_eq!(runner.app().note.as_deref(), Some("Setting 21.5°…"));
     runner.task_outcome(current.0, TaskOutcome::Failed(TaskError::Unauthorized));
-    assert!(runner
-        .app()
-        .banner_text()
-        .unwrap()
-        .starts_with("Couldn't set the temperature."));
+    let (title, _) = runner.app().dialog.clone().expect("a dialogue");
+    assert_eq!(title, "Couldn't set the temperature");
     assert_eq!(runner.app().climate_of("climate.room").target, Some(21.0));
     assert!(runner.app().task.is_none());
 }

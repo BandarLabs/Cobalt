@@ -2,20 +2,25 @@
 # A panel with twelve saved tiles and readings from an earlier poll, on a
 # reader whose token is missing, so every request fails the same way.
 wait-for kitchen · on
-# Readings from another day say which day.
-expect Offline since 1 Sep at 06:40. Readings may be stale.
-expect Showing readings from 1 Sep at 06:40.
+# Readings from another day say which day, and the line over the tiles says
+# why they are not newer rather than "Updated" over a banner saying it.
+wait-for No account for Home Assistant yet. Readings from 1 Sep at 06:40.
+expect-missing Updated
 expect living room · 20.5°
 expect humidity · 48 %
 clean
 shot homepanel-tiles
 # A light toggles through Home Assistant. When that fails the tile keeps
-# its last reading and the banner names the tile.
+# its last reading and a dialogue names the tile, with one way out.
 tap kitchen · on
-wait-for Couldn't update kitchen.
+wait-for Couldn't update kitchen
+expect No Home Assistant account is on this reader yet
 expect kitchen · on
 clean
 shot homepanel-toggle-failed
+tap Close
+wait-idle
+expect-missing Couldn't update kitchen
 # A sensor only shows its reading.
 tap outdoor temperature
 wait-for This tile only shows its reading.
@@ -35,20 +40,25 @@ expect Power
 clean
 shot homepanel-climate
 tap Warmer
-wait-for Couldn't set the temperature.
+wait-for Couldn't set the temperature
 expect Target: 21°
+tap Close
 tap Cooler
-wait-for Couldn't set the temperature.
+wait-for Couldn't set the temperature
+tap Close
 tap Power
-wait-for Couldn't update living room.
+wait-for Couldn't update living room
 clean
 shot homepanel-climate-failed
+tap Close
+wait-for Cooler
 tap-id 4294967295
 wait-for kitchen · on
 # Twelve is the limit, and Add says so instead of opening the picker.
 tap Add tile
 wait-for Home Panel can show up to 12 tiles.
 expect-missing Finding devices
+expect kitchen · on
 clean
 shot homepanel-tile-limit
 # Settings counts the tiles. Edit tiles lists them six to a page.
@@ -125,12 +135,17 @@ wait-for coffee maker · off
 companion secret set homeassistant --from apps/homepanel/fixtures/token --sim
 scenario offline
 tap heater
-wait-for Couldn't update heater. This reader is not on Wi-Fi.
+wait-for Couldn't update heater
+expect This reader is not on Wi-Fi. Join Wi-Fi
 expect heater · off
 clean
 shot homepanel-offline
+tap Close
+wait-idle
+expect-missing Couldn't update heater
 scenario host-down
 tap heater
-wait-for Couldn't update heater. Home Assistant did not answer
+wait-for Couldn't update heater
+expect Home Assistant did not answer
 clean
 shot homepanel-host-down

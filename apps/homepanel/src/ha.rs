@@ -7,6 +7,17 @@ pub struct Entity {
     pub id: String,
     pub name: String,
     pub state: String,
+    /// The unit its readings are in, empty when Home Assistant gives none.
+    pub unit: String,
+}
+
+/// What a tile is called and the unit its reading is in, as Home Assistant
+/// says them. Either may be empty: a tile then falls back to a name made
+/// from its entity ID, and a reading is shown bare.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Label {
+    pub name: String,
+    pub unit: String,
 }
 
 /// What a climate entity reports: the room temperature and the temperature
@@ -45,6 +56,7 @@ pub fn poll(base: &str, ids: &[String]) -> Task {
         "[{{% for e in [{names}] %}}\
 {{\"id\":\"{{{{e}}}}\",\"s\":\"{{{{states(e)}}}}\",\
 \"a\":{{{{{{'brightness':state_attr(e,'brightness'),'unit':state_attr(e,'unit_of_measurement'),\
+'name':state_attr(e,'friendly_name'),\
 'ct':state_attr(e,'current_temperature'),'t':state_attr(e,'temperature')}}|tojson}}}}\
 }}{{{{',' if not loop.last}}}}{{% endfor %}}]"
     );
@@ -67,7 +79,8 @@ pub fn entities(base: &str) -> Task {
         "[{% for e in states %}",
         "{\"id\":{{ e.entity_id|tojson }},",
         "\"s\":{{ e.state|tojson }},",
-        "\"n\":{{ e.attributes.friendly_name|default(e.entity_id, true)|tojson }}}",
+        "\"n\":{{ e.attributes.friendly_name|default(e.entity_id, true)|tojson }},",
+        "\"u\":{{ e.attributes.unit_of_measurement|default('', true)|tojson }}}",
         "{% if not loop.last %},{% endif %}{% endfor %}]"
     );
     Task::Post {
@@ -177,6 +190,40 @@ pub fn climate_rows(bytes: &[u8]) -> Vec<(String, Climate)> {
     })
 }
 
+/// The names and units a poll reports, by entity. A name Home Assistant
+/// does not have comes back empty rather than as the entity ID, so the tile
+/// keeps the name it was added under.
+pub fn label_rows(bytes: &[u8]) -> Vec<(String, Label)> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Vec::new();
+    };
+    let Ok(items) = kobo_json::parse(text) else {
+        return Vec::new();
+    };
+    items.as_array().map_or_else(Vec::new, |items| {
+        items
+            .iter()
+            .filter_map(|item| {
+                let id = item.get("id")?.as_str()?.to_owned();
+                let attrs = item.get("a")?;
+                let field = |key: &str| {
+                    attrs
+                        .get(key)
+                        .and_then(kobo_json::Value::as_str)
+                        .map_or_else(String::new, |text| text.trim().to_owned())
+                };
+                Some((
+                    id,
+                    Label {
+                        name: field("name"),
+                        unit: field("unit"),
+                    },
+                ))
+            })
+            .collect()
+    })
+}
+
 pub fn entity_rows(bytes: &[u8]) -> Vec<Entity> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Vec::new();
@@ -198,7 +245,18 @@ pub fn entity_rows(bytes: &[u8]) -> Vec<Entity> {
                         || id.rsplit('.').next().unwrap_or(&id).replace('_', " "),
                         str::to_owned,
                     );
-                Some(Entity { id, name, state })
+                let unit = item
+                    .get("u")
+                    .and_then(kobo_json::Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned();
+                Some(Entity {
+                    id,
+                    name,
+                    state,
+                    unit,
+                })
             })
             .collect()
     });
@@ -303,14 +361,57 @@ mod tests {
                     id: "light.kitchen".into(),
                     name: "Kitchen".into(),
                     state: "on".into(),
+                    unit: String::new(),
                 },
                 Entity {
                     id: "switch.z_desk".into(),
                     name: "z desk".into(),
                     state: "off".into(),
+                    unit: String::new(),
                 },
             ]
         );
+    }
+
+    #[test]
+    fn a_poll_carries_each_tiles_friendly_name_and_unit() {
+        let Task::Post { body, .. } = poll("https://ha.example", &["sensor.outside".into()]) else {
+            panic!("a post")
+        };
+        assert!(
+            body.contains("'name':state_attr(e,'friendly_name')"),
+            "{body}"
+        );
+        assert_eq!(
+            label_rows(
+                br#"[
+                    {"id":"sensor.outside","s":"12.3","a":{"unit":"\u00b0C","name":"Outside"}},
+                    {"id":"light.desk","s":"on","a":{"unit":null,"name":null}}
+                ]"#
+            ),
+            vec![
+                (
+                    "sensor.outside".to_owned(),
+                    Label {
+                        name: "Outside".into(),
+                        unit: "°C".into(),
+                    },
+                ),
+                ("light.desk".to_owned(), Label::default()),
+            ]
+        );
+    }
+
+    #[test]
+    fn discovery_keeps_the_unit_a_sensor_reads_in() {
+        let Task::Post { body, .. } = entities("https://ha.example") else {
+            panic!("a post")
+        };
+        assert!(body.contains("unit_of_measurement"), "{body}");
+        let rows =
+            entity_rows(br#"[{"id":"sensor.outside","s":"12.3","n":"Outside","u":"\u00b0C"}]"#);
+        assert_eq!(rows[0].unit, "°C");
+        assert_eq!(rows[0].name, "Outside");
     }
 
     #[test]
