@@ -68,6 +68,9 @@ impl Work {
 pub struct FollowedTag {
     pub name: String,
     pub slug: String,
+    /// AO3's number for the tag, once known. Its feed is addressed by this
+    /// number and not by its name: see [`tag_feed_id`].
+    pub feed: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -104,8 +107,30 @@ pub fn work_url(id: &str, adult: bool) -> String {
     format!("{}/works/{id}{suffix}", ao3_base())
 }
 
-pub fn feed_url(tag: &FollowedTag) -> String {
-    format!("{}/tags/{}/feeds.atom", ao3_base(), tag.slug)
+/// The tag's newest works as an Atom feed, once its number is known.
+pub fn feed_url(tag: &FollowedTag) -> Option<String> {
+    let id = tag.feed.as_deref()?;
+    Some(format!("{}/tags/{id}/feed.atom", ao3_base()))
+}
+
+/// The tag's own page of works, which is where its feed's number is found.
+pub fn tag_page_url(tag: &FollowedTag) -> String {
+    format!("{}/tags/{}/works", ao3_base(), tag.slug)
+}
+
+/// The number in a tag page's "Subscribe to the feed" link.
+///
+/// AO3 serves a tag's feed at `/tags/<number>/feed.atom`, and only there. The
+/// feed was asked for at `/tags/<name>/feeds.atom`, which AO3 answers with
+/// "not found" for every tag, so following a tag never listed a work. A tag
+/// AO3 has not filed under a canonical name has no feed, and no link.
+pub fn tag_feed_id(page: &str) -> Option<String> {
+    page.match_indices("/tags/").find_map(|(at, marker)| {
+        let rest = &page[at + marker.len()..];
+        let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+        (digits > 0 && digits <= 20 && rest[digits..].starts_with("/feed.atom"))
+            .then(|| rest[..digits].to_owned())
+    })
 }
 
 pub fn parse_work_page(id: &str, body: &str) -> ParsedWork {
@@ -392,21 +417,22 @@ pub fn parse_tag(input: &str) -> Option<FollowedTag> {
     if input.is_empty() {
         return None;
     }
-    let (name, slug) = if let Some(tail) = input.split("/tags/").nth(1) {
-        let slug = tail
-            .split('/')
-            .next()
-            .unwrap_or_default()
-            .split('?')
-            .next()
-            .unwrap_or_default();
-        (decode_percent(slug), slug.to_owned())
+    let (name, slug, feed) = if let Some(tail) = input.split("/tags/").nth(1) {
+        let mut parts = tail.split(['/', '?']);
+        let slug = parts.next().unwrap_or_default();
+        // A feed's own address already carries the number it is served by.
+        let feed = (parts.next() == Some("feed.atom")
+            && !slug.is_empty()
+            && slug.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| slug.to_owned());
+        (decode_percent(slug), slug.to_owned(), feed)
     } else {
-        (input.to_owned(), encode_path(input))
+        (input.to_owned(), encode_path(input), None)
     };
     (!slug.is_empty() && slug.len() <= 512).then(|| FollowedTag {
         name: bounded(&name, 160),
         slug,
+        feed,
     })
 }
 
@@ -698,7 +724,10 @@ fn decode_legacy(text: &str) -> Vec<Work> {
 pub fn encode_tags(tags: &[FollowedTag]) -> Vec<u8> {
     tags.iter()
         .take(MAX_TAGS)
-        .map(|tag| format!("{}\t{}", escape(&tag.name), tag.slug))
+        .map(|tag| match &tag.feed {
+            Some(feed) => format!("{}\t{}\t{feed}", escape(&tag.name), tag.slug),
+            None => format!("{}\t{}", escape(&tag.name), tag.slug),
+        })
         .collect::<Vec<_>>()
         .join("\n")
         .into_bytes()
@@ -710,10 +739,19 @@ pub fn decode_tags(bytes: &[u8]) -> Vec<FollowedTag> {
     };
     text.lines()
         .filter_map(|line| {
-            let (name, slug) = line.split_once('\t')?;
+            // The feed's number is a third field, written once it is
+            // found; a tag followed before then has two.
+            let mut fields = line.split('\t');
+            let name = fields.next()?;
+            let slug = fields.next()?;
+            let feed = fields
+                .next()
+                .filter(|feed| !feed.is_empty() && feed.bytes().all(|byte| byte.is_ascii_digit()))
+                .map(str::to_owned);
             (!slug.is_empty() && slug.len() <= 512).then(|| FollowedTag {
                 name: bounded(&unescape(name), 160),
                 slug: slug.to_owned(),
+                feed,
             })
         })
         .take(MAX_TAGS)
@@ -830,7 +868,48 @@ mod tests {
         work.download = DownloadState::UpdateAvailable;
         assert_eq!(decode_works(&encode_works(&[work.clone()])), [work]);
         let tag = parse_tag("Public Domain Fairy Tales").unwrap();
-        assert_eq!(decode_tags(&encode_tags(std::slice::from_ref(&tag))), [tag]);
+        assert_eq!(
+            decode_tags(&encode_tags(std::slice::from_ref(&tag))),
+            [tag.clone()]
+        );
+        let found = FollowedTag {
+            feed: Some("101375".into()),
+            ..tag
+        };
+        assert_eq!(
+            decode_tags(&encode_tags(std::slice::from_ref(&found))),
+            [found]
+        );
+    }
+
+    #[test]
+    fn a_tags_feed_is_addressed_by_the_number_on_its_page_and_not_by_its_name() {
+        let tag = parse_tag("Pride and Prejudice - Jane Austen").unwrap();
+        assert_eq!(feed_url(&tag), None, "a name is not a feed address");
+        assert_eq!(
+            tag_page_url(&tag),
+            format!(
+                "{}/tags/Pride%20and%20Prejudice%20-%20Jane%20Austen/works",
+                ao3_base()
+            )
+        );
+        let page = r#"<ul class="navigation actions" role="navigation">
+            <li><a href="/tags/Pride%20and%20Prejudice%20-%20Jane%20Austen">Tag</a></li>
+            <li><a class="rss" href="/tags/101375/feed.atom"><span>Subscribe to the feed</span></a></li>
+            </ul>"#;
+        assert_eq!(tag_feed_id(page).as_deref(), Some("101375"));
+        assert_eq!(tag_feed_id("<p>No feed for an unfiled tag.</p>"), None);
+        let found = FollowedTag {
+            feed: tag_feed_id(page),
+            ..tag
+        };
+        assert_eq!(
+            feed_url(&found),
+            Some(format!("{}/tags/101375/feed.atom", ao3_base()))
+        );
+        // A feed's own address is followed as it is.
+        let pasted = parse_tag("https://archiveofourown.org/tags/101375/feed.atom").unwrap();
+        assert_eq!(pasted.feed.as_deref(), Some("101375"));
     }
 
     #[test]

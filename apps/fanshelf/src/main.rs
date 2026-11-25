@@ -17,8 +17,8 @@ use std::process::ExitCode;
 
 use library::{
     decode_reading, decode_tags, decode_works, encode_reading, encode_tags, encode_works, feed_url,
-    parse_feed, parse_tag, parse_work_page, place_key, shelf_name, work_id, work_url,
-    DownloadState, FeedWork, FollowedTag, ParsedWork, Work, MAX_TAGS, MAX_WORKS,
+    parse_feed, parse_tag, parse_work_page, place_key, shelf_name, tag_feed_id, tag_page_url,
+    work_id, work_url, DownloadState, FeedWork, FollowedTag, ParsedWork, Work, MAX_TAGS, MAX_WORKS,
 };
 
 const WORKS_KEY: &str = "works.v2";
@@ -65,10 +65,25 @@ enum View {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Request {
-    Lookup { id: String, adult: bool },
-    Update { work: usize, adult: bool },
-    Feed { tag: usize },
-    Epub { work: usize, offset: u32 },
+    Lookup {
+        id: String,
+        adult: bool,
+    },
+    Update {
+        work: usize,
+        adult: bool,
+    },
+    /// A tag's page of works, read for the number its feed is served at.
+    TagPage {
+        tag: usize,
+    },
+    Feed {
+        tag: usize,
+    },
+    Epub {
+        work: usize,
+        offset: u32,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -255,7 +270,8 @@ fn fetch(request: &Request, works: &[Work], tags: &[FollowedTag]) -> Option<Task
     let (url, offset, max_bytes) = match request {
         Request::Lookup { id, adult } => (work_url(id, *adult), 0, PAGE_BYTES),
         Request::Update { work, adult } => (work_url(&works.get(*work)?.id, *adult), 0, PAGE_BYTES),
-        Request::Feed { tag } => (feed_url(tags.get(*tag)?), 0, FEED_BYTES),
+        Request::TagPage { tag } => (tag_page_url(tags.get(*tag)?), 0, PAGE_BYTES),
+        Request::Feed { tag } => (feed_url(tags.get(*tag)?)?, 0, FEED_BYTES),
         Request::Epub { work, offset } => (works.get(*work)?.epub.clone(), *offset, CHUNK),
     };
     Some(Task::Fetch {
@@ -1540,6 +1556,27 @@ impl Fanshelf {
         }
     }
 
+    /// A tag's page has said which number its feed is served at: kept with
+    /// the tag, so the page is read once per tag, and the feed asked for next
+    /// if the tag is still open.
+    fn finish_tag_page(&mut self, context: &mut Context, tag: usize, body: &[u8]) {
+        let open = self.view == View::Feed && self.open_tag == Some(tag);
+        let Some(id) = tag_feed_id(&String::from_utf8_lossy(body)) else {
+            if open {
+                self.message = Some("AO3 listed no works for this tag.".into());
+            }
+            return;
+        };
+        let Some(followed) = self.tags.get_mut(tag) else {
+            return;
+        };
+        followed.feed = Some(id);
+        self.save_tags(context);
+        if open {
+            self.queued.push_front(Request::Feed { tag });
+        }
+    }
+
     fn finish_feed(&mut self, body: &[u8]) {
         let text = String::from_utf8_lossy(body);
         self.feed = parse_feed(&text);
@@ -2007,7 +2044,15 @@ impl KoboApp for Fanshelf {
             if self.demo_enabled() {
                 self.seed_demo_feed();
             } else {
-                self.enqueue(context, Request::Feed { tag: index });
+                let known = self.tags.get(index).is_some_and(|tag| tag.feed.is_some());
+                self.enqueue(
+                    context,
+                    if known {
+                        Request::Feed { tag: index }
+                    } else {
+                        Request::TagPage { tag: index }
+                    },
+                );
             }
         } else if let Some(index) =
             (0..self.feed.len()).find(|index| action == action_id(&format!("feed-{index}")))
@@ -2119,6 +2164,7 @@ impl KoboApp for Fanshelf {
                             self.finish_update(context, work, adult, &body);
                             self.checked(work, true);
                         }
+                        Request::TagPage { tag } => self.finish_tag_page(context, tag, &body),
                         Request::Feed { .. } => self.finish_feed(&body),
                         Request::Epub { work, .. } => self.finish_epub(context, work, &body),
                     }
@@ -2881,6 +2927,71 @@ mod tests {
         runner.action(action_id("more"));
         let menu = runner.app().screen(&runner.context());
         assert!(!offers(&menu, "remove-work"));
+    }
+
+    #[test]
+    fn a_tag_followed_by_name_finds_its_feed_number_on_its_page_and_reads_that_feed() {
+        let fetched = |commands: &[Command]| {
+            commands.iter().find_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } => Some(url.clone()),
+                _ => None,
+            })
+        };
+        let mut runner = AppRunner::new(Fanshelf::default());
+        runner.start();
+        runner.app_mut().tags_loaded = true;
+        runner.app_mut().tags =
+            vec![parse_tag("Pride and Prejudice - Jane Austen").expect("a tag")];
+        let commands = runner.action(action_id("tag-0"));
+        assert_eq!(
+            fetched(&commands).as_deref(),
+            Some(
+                format!(
+                    "{}/tags/Pride%20and%20Prejudice%20-%20Jane%20Austen/works",
+                    library::ao3_base()
+                )
+                .as_str()
+            )
+        );
+        let page = br#"<a class="rss" href="/tags/101375/feed.atom"><span>Subscribe to the feed</span></a>"#;
+        let task = runner
+            .app()
+            .task
+            .as_ref()
+            .expect("the page was asked for")
+            .0;
+        let commands = runner.task_outcome(task, TaskOutcome::Completed(page.to_vec()));
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::Save { key, .. }) if key == TAGS_KEY
+            )),
+            "the feed's number was not kept with the tag"
+        );
+        assert_eq!(runner.app().tags[0].feed.as_deref(), Some("101375"));
+        let spacing = runner.app().task.as_ref().expect("the feed is next").0;
+        let commands = runner.task_outcome(spacing, TaskOutcome::Completed(Vec::new()));
+        assert_eq!(
+            fetched(&commands).as_deref(),
+            Some(format!("{}/tags/101375/feed.atom", library::ao3_base()).as_str())
+        );
+
+        // The second time, the feed is asked for straight away.
+        let task = runner.app().task.as_ref().expect("the feed").0;
+        runner.task_outcome(task, TaskOutcome::Completed(Vec::new()));
+        runner.action(ActionId::BACK);
+        let commands = runner.action(action_id("tag-0"));
+        let asked = fetched(&commands).or_else(|| {
+            let spacing = runner.app().task.as_ref()?.0;
+            fetched(&runner.task_outcome(spacing, TaskOutcome::Completed(Vec::new())))
+        });
+        assert_eq!(
+            asked.as_deref(),
+            Some(format!("{}/tags/101375/feed.atom", library::ao3_base()).as_str())
+        );
     }
 
     #[test]
