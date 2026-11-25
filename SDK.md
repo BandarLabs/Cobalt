@@ -2131,6 +2131,14 @@ ordinary grid frames stay byte-compatible with installed apps. A runtime older
 than protocol 14 refuses a numbered board. No existing grid label is
 interpreted as an embedded numbering format.
 
+`ScreenBuilder::crossword_board_with_struck(columns, cells)` takes the same
+tuples with one more value, true for a letter the app checked and found wrong.
+The letter stays, with an ink stroke from the lower left corner to the upper
+right, clear of the clue number. A pencil board marks a wrong answer the same
+way with `PencilMarkKind::WrongDigit(value)` in place of an entered
+`PencilMarkKind::Digit`. Both carry a value a runtime before Cobalt 0.3.44
+refuses, so an app that uses either sets `minimum_cobalt_version` to 0.3.44.
+
 Short keyboard labels fit their physical key rectangles, including compact
 landscape rows at large text settings. Top-bar text actions use caption size
 when body text cannot fit the bar's height; measurement and drawing agree.

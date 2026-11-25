@@ -238,6 +238,20 @@ pub const LIBRARY_RANGE_VERSION: u8 = 18;
 /// next start.
 pub const WARMTH_VERSION: u8 = 18;
 
+/// The protocol whose frames may mark a checked answer wrong: a crossword
+/// square in [`kobo_ui::CellTone::Struck`] and a puzzle digit that is
+/// [`kobo_ui::PencilMarkKind::WrongDigit`].
+///
+/// Each travels in a byte that already existed, as the word-game tones did:
+/// the tone in the upper bits of the byte that says whether a cell is
+/// selected, and the wrong digit as a third value of the byte that says
+/// whether a digit was given. So a frame without one is the bytes it always
+/// was. A runtime from before them refuses the value, which is the right
+/// failure, since the alternative is a wrong answer drawn as if it were
+/// fine. The version did not move, and an application that marks its
+/// answers names the first release that draws the mark as its minimum.
+pub const STRUCK_MARK_VERSION: u8 = 18;
+
 /// The fewest settings a warmth control is reported with: two ends and
 /// nothing between.
 pub const MIN_WARMTH_STEPS: u8 = 2;
@@ -7053,6 +7067,11 @@ fn encode_node(
                         "cell tone requires protocol 17",
                     ));
                 }
+                if cell.tone == kobo_ui::CellTone::Struck && version < STRUCK_MARK_VERSION {
+                    return Err(ProtocolError::InvalidValue(
+                        "struck cell requires protocol 18",
+                    ));
+                }
                 if version >= 13 {
                     output.push(u8::from(cell.selected) | (cell.tone.code() << 1));
                 }
@@ -8952,7 +8971,7 @@ fn decode_node(
             Ok(Node::Terminal { id, rows, cursor })
         }
         32 if version >= 14 => board::read(reader, id),
-        34 if version >= 14 => pencil::read(reader, id),
+        34 if version >= 14 => pencil::read(reader, id, version),
         tag @ (15 | 33) if tag == 15 || version >= 14 => {
             let columns = reader.u8()?;
             if columns == 0 || columns > kobo_ui::MAX_COLUMNS {
@@ -8986,7 +9005,9 @@ fn decode_node(
                 let mut cell = if version >= 13 {
                     let flags = reader.u8()?;
                     let tone = if version >= CELL_TONE_VERSION {
-                        kobo_ui::CellTone::from_code(flags >> 1)
+                        kobo_ui::CellTone::from_code(flags >> 1).filter(|tone| {
+                            *tone != kobo_ui::CellTone::Struck || version >= STRUCK_MARK_VERSION
+                        })
                     } else {
                         (flags >> 1 == 0).then_some(kobo_ui::CellTone::Plain)
                     }

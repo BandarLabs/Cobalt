@@ -1530,6 +1530,11 @@ pub enum CellStyle {
     CrosswordBlock,
     /// Joined white crossword square with a restrained active-word highlight.
     Crossword,
+    /// A crossword square whose letter was checked and is wrong: drawn as
+    /// [`Self::Crossword`] with [`CellTone::Struck`]'s stroke across it. A
+    /// style of its own rather than a flag on that one, so every square
+    /// without the mark describes itself exactly as it always has.
+    CrosswordStruck,
     #[default]
     Board,
     /// A shaded playable square on a conventional draughts board.
@@ -4980,6 +4985,18 @@ pub enum CellTone {
     Shaded,
     /// A faint label on paper: the letter has been tried and is not used.
     Faded,
+    /// The letter kept, with a stroke of ink from the lower left corner to
+    /// the upper right: a crossword's letter that was checked and is wrong.
+    ///
+    /// The way a solver marks a checked grid in pen, and the way a puzzle
+    /// app draws it: the wrong letter stays readable under the stroke, so
+    /// the reader sees what they wrote as well as that it is wrong, and the
+    /// stroke runs clear of the clue number in the upper left. Only a
+    /// crossword square draws it. Any other cell is drawn plain, because a
+    /// word game's tile already says what its letter is with its ink.
+    ///
+    /// Sent from protocol 18, a release later than the other tones.
+    Struck,
 }
 
 impl CellTone {
@@ -4991,6 +5008,7 @@ impl CellTone {
             Self::Solid => 1,
             Self::Shaded => 2,
             Self::Faded => 3,
+            Self::Struck => 4,
         }
     }
 
@@ -5002,8 +5020,16 @@ impl CellTone {
             1 => Some(Self::Solid),
             2 => Some(Self::Shaded),
             3 => Some(Self::Faded),
+            4 => Some(Self::Struck),
             _ => None,
         }
+    }
+
+    /// Whether a word game's tile or key changes its ink for this tone. A
+    /// struck letter belongs to a crossword square, and a tile given one is
+    /// drawn as a plain square would be.
+    const fn tints_tile(self) -> bool {
+        matches!(self, Self::Solid | Self::Shaded | Self::Faded)
     }
 }
 
@@ -6107,6 +6133,11 @@ pub enum LayoutKind {
     /// A digit the solver entered rather than one the puzzle gave: the same
     /// size, in grey, the way a pencilled answer sits beside a printed clue.
     PencilEntry(bool),
+    /// An entered digit the solution disagrees with: set as
+    /// [`Self::PencilEntry`] is, then struck through in ink over the grey,
+    /// as a checked answer is marked in pen over pencil. Struck in paper in
+    /// the selected square, where the digit is reversed out too.
+    PencilWrong(bool),
     /// The three nested squares and four connectors behind a Morris board.
     MorrisBoard,
     /// A ring around a selected cell that draws no ground of its own.
@@ -9523,6 +9554,8 @@ fn layout_node(
                     }
                 } else if crossword_board && cell.label == "#" {
                     CellStyle::CrosswordBlock
+                } else if crossword_board && cell.tone == CellTone::Struck {
+                    CellStyle::CrosswordStruck
                 } else if crossword_board {
                     CellStyle::Crossword
                 } else if morris_board {
@@ -9563,7 +9596,7 @@ fn layout_node(
                     && cell.label.trim().is_empty()
                 {
                     CellStyle::EmptyPad
-                } else if cell.tone != CellTone::Plain && cell.glyph.is_none() {
+                } else if cell.tone.tints_tile() && cell.glyph.is_none() {
                     // Only a plain square or a key takes a tone. The other
                     // boards already say what their squares are with the
                     // colour of the square itself.
@@ -9775,7 +9808,10 @@ fn layout_node(
                             // letter has the rest but a tenth at the foot, so
                             // it is set as large as a filled-in letter is
                             // written, a little below the middle.
-                            let letter = if style == CellStyle::Crossword {
+                            let letter = if matches!(
+                                style,
+                                CellStyle::Crossword | CellStyle::CrosswordStruck
+                            ) {
                                 let inset = rect.height / 5;
                                 Rect {
                                     x: rect.x,
@@ -9814,6 +9850,7 @@ fn layout_node(
                                         CellStyle::Board
                                             | CellStyle::BoardDark
                                             | CellStyle::Crossword
+                                            | CellStyle::CrosswordStruck
                                     )),
                                 },
                                 text_lines: vec![cell.label.clone()],
@@ -16503,7 +16540,7 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
         };
         let scale = if matches!(
             node.kind,
-            LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_)
+            LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_) | LayoutKind::PencilWrong(_)
         ) {
             pencil::label_style(node).1
         } else if matches!(
@@ -16540,7 +16577,9 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             let leading_allowance = if rows == 1
                 && matches!(
                     node.kind,
-                    LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_)
+                    LayoutKind::PencilNumber(_)
+                        | LayoutKind::PencilEntry(_)
+                        | LayoutKind::PencilWrong(_)
                 ) {
                 (metrics.rule_thickness() * 2).max(node.rect.height / 6)
             } else {
@@ -16712,7 +16751,9 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
         LayoutKind::CellLabel(true) | LayoutKind::ToneLabel(_, true) => board_label_size(node),
-        LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_) => pencil::label_style(node).0,
+        LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_) | LayoutKind::PencilWrong(_) => {
+            pencil::label_style(node).0
+        }
         LayoutKind::FieldCount => field_count_style(node).0,
         LayoutKind::CellLabel(false) | LayoutKind::ToneLabel(_, false) => key_label_style(node).0,
         LayoutKind::TopBarTitle => BAR_TITLE,
@@ -17799,7 +17840,11 @@ fn paint_layout(
             // ruled squares and an empty cell stays paper white. Filling would
             // make every move a full-cell change, which is slow on E Ink and
             // looks like a mistake.
-            LayoutKind::Cell(_, CellStyle::Crossword, selected) => {
+            LayoutKind::Cell(
+                _,
+                style @ (CellStyle::Crossword | CellStyle::CrosswordStruck),
+                selected,
+            ) => {
                 if selected {
                     fill_clipped(surface, node.rect, palette.selection_field(), clip);
                 }
@@ -17829,6 +17874,18 @@ fn paint_layout(
                     tone::INK,
                     clip,
                 );
+                // Drawn before the letter, which is set over it in the same
+                // ink, so the letter is whole and the stroke shows round it.
+                if style == CellStyle::CrosswordStruck {
+                    draw_struck(
+                        surface,
+                        node.rect,
+                        metrics.tenth_mm(STRUCK_WEIGHT_TENTH_MM),
+                        rule * 2,
+                        tone::INK,
+                        clip,
+                    );
+                }
             }
             LayoutKind::CrosswordBoard => {
                 stroke_clipped(
@@ -18082,7 +18139,9 @@ fn paint_layout(
                     CellTone::Faded => {
                         stroke_clipped(surface, node.rect, tone::RULE_LIGHT, rule, clip);
                     }
-                    CellTone::Plain => stroke_clipped(surface, node.rect, tone::RULE, rule, clip),
+                    CellTone::Plain | CellTone::Struck => {
+                        stroke_clipped(surface, node.rect, tone::RULE, rule, clip);
+                    }
                 }
                 if selected && cell_tone != CellTone::Solid {
                     stroke_clipped(surface, node.rect, tone::INK, rule * 2, clip);
@@ -18118,7 +18177,7 @@ fn paint_layout(
                         metrics.rule_thickness(),
                         clip,
                     ),
-                    CellTone::Plain => {
+                    CellTone::Plain | CellTone::Struck => {
                         fill_rounded_clipped(surface, node.rect, radius, tone::SURFACE, clip);
                     }
                 }
@@ -18231,7 +18290,7 @@ fn paint_layout(
                     clip,
                 );
             }
-            LayoutKind::PencilEntry(inverted) => {
+            LayoutKind::PencilEntry(inverted) | LayoutKind::PencilWrong(inverted) => {
                 let (size, scale) = pencil::label_style(&node);
                 with_text_scale(scale, || {
                     draw_centered(
@@ -18247,6 +18306,19 @@ fn paint_layout(
                         clip,
                     );
                 });
+                // Over the digit rather than under it: a grey digit set on
+                // an ink stroke cut a pale notch out of the stroke, which read
+                // as the digit having been written after the check.
+                if matches!(node.kind, LayoutKind::PencilWrong(_)) {
+                    draw_struck(
+                        surface,
+                        node.rect,
+                        metrics.tenth_mm(STRUCK_WEIGHT_TENTH_MM),
+                        0,
+                        if inverted { tone::PAPER } else { tone::INK },
+                        clip,
+                    );
+                }
             }
             LayoutKind::PencilNumber(inverted) => {
                 let (size, scale) = pencil::label_style(&node);
@@ -18340,7 +18412,7 @@ fn paint_layout(
                 let ink = match cell_tone {
                     CellTone::Solid => tone::PAPER,
                     CellTone::Faded => TILE_FADED_INK,
-                    CellTone::Plain | CellTone::Shaded => tone::INK,
+                    CellTone::Plain | CellTone::Shaded | CellTone::Struck => tone::INK,
                 };
                 with_text_scale(scale, || {
                     draw_centered(surface, &node.text_lines, node.rect, size, ink, clip);
@@ -20694,6 +20766,54 @@ fn fill_clipped(surface: &mut Surface, rect: Rect, paint: impl Into<Paint>, clip
     }
 }
 
+/// How heavy the stroke through a checked, wrong letter or digit is: a pen
+/// line, a little lighter than the stem of the letter it crosses, so the
+/// letter stays the thing read and the stroke is the thing noticed.
+const STRUCK_WEIGHT_TENTH_MM: i32 = 5;
+
+/// Strikes a square through from its lower left corner to its upper right,
+/// the way a checked grid is marked in pen, with round ends that stop just
+/// inside the square's rules.
+///
+/// Lower left to upper right because a crossword's clue number sits in the
+/// upper left, and a stroke the other way would run through it. Blended at
+/// its edges as the letters are: a stepped diagonal costs the panel the same
+/// waveform as a smooth one and looks like a fault rather than a mark.
+fn draw_struck(surface: &mut Surface, square: Rect, weight: i32, inset: i32, ink: u8, clip: Rect) {
+    let Some(area) = square.intersection(clip) else {
+        return;
+    };
+    let half = f64::from(weight.max(1)) / 2.0;
+    let end = f64::from(inset) + half;
+    let (x0, y0) = (
+        f64::from(square.x) + end,
+        f64::from(square.y + square.height) - end,
+    );
+    let (x1, y1) = (
+        f64::from(square.x + square.width) - end,
+        f64::from(square.y) + end,
+    );
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let length = dx.mul_add(dx, dy * dy);
+    if length <= 0.0 {
+        return;
+    }
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            let (px, py) = (f64::from(x) + 0.5, f64::from(y) + 0.5);
+            let along = (px - x0).mul_add(dx, (py - y0) * dy) / length;
+            let along = along.clamp(0.0, 1.0);
+            let distance = (along.mul_add(dx, x0) - px).hypot(along.mul_add(dy, y0) - py);
+            let coverage = (half + 0.5 - distance).clamp(0.0, 1.0);
+            if coverage > 0.0 {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let alpha = (coverage * 255.0).round() as u8;
+                surface.blend(x, y, ink, alpha);
+            }
+        }
+    }
+}
+
 /// Outlines a rectangle with a border of the given thickness.
 ///
 /// The thickness is not decoration. This used to draw a single pixel, which is
@@ -20958,7 +21078,7 @@ fn draw_point_number(
             tone::INK
         }
         CellTone::Faded => tone::RULE,
-        CellTone::Plain => tone::MUTED,
+        CellTone::Plain | CellTone::Struck => tone::MUTED,
     };
     draw_centered(surface, &node.text_lines, field, size, ink, clip);
 }
@@ -21805,6 +21925,9 @@ mod controls_tests;
 
 #[cfg(test)]
 mod tile_tests;
+
+#[cfg(test)]
+mod struck_tests;
 
 #[cfg(test)]
 mod choice_tests;

@@ -5,6 +5,16 @@ pub(super) fn encoded_len(board: &PencilBoard, version: u8) -> Result<usize, Pro
     if version < 14 || !board.is_valid() {
         return Err(ProtocolError::InvalidValue("pencil board"));
     }
+    if version < super::STRUCK_MARK_VERSION
+        && board
+            .marks
+            .iter()
+            .any(|mark| matches!(mark.kind, PencilMarkKind::WrongDigit(_)))
+    {
+        return Err(ProtocolError::InvalidValue(
+            "wrong digit requires protocol 18",
+        ));
+    }
     Ok(11 + board.marks.len() * 10 + board.edges.len() * 9)
 }
 pub(super) fn push(
@@ -28,6 +38,7 @@ pub(super) fn push(
             PencilMarkKind::Block => [3, 0, 0],
             PencilMarkKind::Sum { across, down } => [4, across, down],
             PencilMarkKind::Digit { value, given } => [5, value, u8::from(given)],
+            PencilMarkKind::WrongDigit(value) => [5, value, 2],
             #[allow(clippy::cast_possible_truncation)]
             PencilMarkKind::Candidates(m) => [6, m as u8, (m >> 8) as u8],
         });
@@ -53,7 +64,11 @@ fn action(reader: &mut Reader<'_>) -> Result<Option<ActionId>, ProtocolError> {
         n => Some(ActionId(n)),
     })
 }
-pub(super) fn read(reader: &mut Reader<'_>, id: NodeId) -> Result<Node, ProtocolError> {
+pub(super) fn read(
+    reader: &mut Reader<'_>,
+    id: NodeId,
+    version: u8,
+) -> Result<Node, ProtocolError> {
     let columns = reader.u8()?;
     let rows = reader.u8()?;
     let cell_tenth_mm = reader.u16()?;
@@ -75,6 +90,9 @@ pub(super) fn read(reader: &mut Reader<'_>, id: NodeId) -> Result<Node, Protocol
                 value,
                 given: given == 1,
             },
+            (5, value, 2) if version >= super::STRUCK_MARK_VERSION => {
+                PencilMarkKind::WrongDigit(value)
+            }
             (6, lo, hi) => {
                 let mask = u16::from(lo) | (u16::from(hi) << 8);
                 if mask == 0 || mask > 0x1FF {
@@ -190,14 +208,14 @@ mod tests {
         push(&mut bytes, id, &board, VERSION).unwrap();
         assert_eq!(bytes.len(), encoded_len(&board, VERSION).unwrap());
         assert_eq!(
-            read(&mut Reader::new(&bytes[5..]), id).unwrap(),
+            read(&mut Reader::new(&bytes[5..]), id, VERSION).unwrap(),
             Node::PencilBoard {
                 id,
                 board: board.clone()
             }
         );
         for end in 5..bytes.len() {
-            assert!(read(&mut Reader::new(&bytes[5..end]), id).is_err());
+            assert!(read(&mut Reader::new(&bytes[5..end]), id, VERSION).is_err());
         }
         assert!(encoded_len(&board, FOLIO_VERSION).is_err());
         let frame = Frame {
@@ -224,7 +242,7 @@ mod tests {
         let mut bytes = Vec::new();
         push(&mut bytes, id, &board, VERSION).unwrap();
         assert_eq!(
-            read(&mut Reader::new(&bytes[5..]), id).unwrap(),
+            read(&mut Reader::new(&bytes[5..]), id, VERSION).unwrap(),
             Node::PencilBoard {
                 id,
                 board: board.clone()
@@ -234,10 +252,63 @@ mod tests {
             let mut bad = bytes.clone();
             bad[offset] = value;
             assert!(
-                read(&mut Reader::new(&bad[5..]), NodeId(1)).is_err(),
+                read(&mut Reader::new(&bad[5..]), NodeId(1), VERSION).is_err(),
                 "offset {offset}"
             );
         }
+    }
+
+    #[test]
+    fn a_wrong_digit_is_the_given_byte_set_to_two_and_a_runtime_before_it_refuses_it() {
+        let mut board = sample();
+        board.marks[3].kind = PencilMarkKind::WrongDigit(3);
+        let id = NodeId(12);
+        let mut bytes = Vec::new();
+        push(&mut bytes, id, &board, VERSION).unwrap();
+        assert_eq!(
+            read(&mut Reader::new(&bytes[5..]), id, VERSION).unwrap(),
+            Node::PencilBoard {
+                id,
+                board: board.clone()
+            }
+        );
+        // The same square entered and not yet marked differs in that byte
+        // alone, so a board with no mistake on it is the frame it always was.
+        let mut entered = Vec::new();
+        push(&mut entered, id, &sample(), VERSION).unwrap();
+        let differing = (0..bytes.len())
+            .filter(|index| bytes[*index] != entered[*index])
+            .collect::<Vec<_>>();
+        assert_eq!(differing, vec![44]);
+        assert_eq!((entered[44], bytes[44]), (0, 2));
+        let before = crate::STRUCK_MARK_VERSION - 1;
+        assert!(encoded_len(&board, before).is_err());
+        assert!(read(&mut Reader::new(&bytes[5..]), id, before).is_err());
+        // Nothing is wrong about an empty square, and a given cannot be.
+        board.marks[3].kind = PencilMarkKind::WrongDigit(0);
+        assert!(encoded_len(&board, VERSION).is_err());
+        let mut three = bytes.clone();
+        three[44] = 3;
+        assert!(read(&mut Reader::new(&three[5..]), id, VERSION).is_err());
+        let frame = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::SetScreen(Screen::new(
+                1,
+                vec![Node::PencilBoard {
+                    id,
+                    board: PencilBoard {
+                        marks: {
+                            let mut marks = sample().marks;
+                            marks[3].kind = PencilMarkKind::WrongDigit(7);
+                            marks
+                        },
+                        ..sample()
+                    },
+                }],
+            )),
+        };
+        assert_eq!(decode(&encode(&frame).unwrap()).unwrap(), frame);
     }
 
     #[test]
@@ -248,7 +319,7 @@ mod tests {
             let mut bad = bytes.clone();
             bad[offset] = value;
             assert!(
-                read(&mut Reader::new(&bad[5..]), NodeId(1)).is_err(),
+                read(&mut Reader::new(&bad[5..]), NodeId(1), VERSION).is_err(),
                 "offset {offset}"
             );
         }

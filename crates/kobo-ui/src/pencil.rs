@@ -20,6 +20,17 @@ pub enum PencilMarkKind {
         value: u8,
         given: bool,
     },
+    /// A digit the solver entered that the puzzle's solution disagrees with,
+    /// drawn as an entered digit with a stroke of ink through the square, as
+    /// a checked puzzle is marked in pen.
+    ///
+    /// A kind of its own rather than a flag on [`Self::Digit`], so a digit
+    /// is either the puzzle's, the solver's, or the solver's and wrong, and
+    /// a given can never be marked. Only from 1 to 9: an empty square has
+    /// nothing to be wrong about. Sent from protocol 18, in the byte that
+    /// says whether a digit was given, which a runtime from before it
+    /// refuses rather than drawing the mistake as an ordinary entry.
+    WrongDigit(u8),
     /// Pencil-mark candidates for one square, bits 0..=8 for digits 1..=9.
     Candidates(u16),
 }
@@ -74,6 +85,7 @@ impl PencilBoard {
                         }
                         PencilMarkKind::Clue(_) | PencilMarkKind::Island(_) => 1,
                         PencilMarkKind::Digit { value, .. } => usize::from(value != 0),
+                        PencilMarkKind::WrongDigit(_) => 1,
                         PencilMarkKind::Candidates(m) => m.count_ones() as usize,
                         _ => 0,
                     }
@@ -108,6 +120,7 @@ impl PencilBoard {
                     return false;
                 }
                 PencilMarkKind::Digit { value, .. } if value > 9 => return false,
+                PencilMarkKind::WrongDigit(value) if !(1..=9).contains(&value) => return false,
                 PencilMarkKind::Candidates(m) if m == 0 || m & !0x1FF != 0 => return false,
                 _ => {}
             }
@@ -116,6 +129,7 @@ impl PencilBoard {
                     mark.kind,
                     PencilMarkKind::Island(_)
                         | PencilMarkKind::Digit { .. }
+                        | PencilMarkKind::WrongDigit(_)
                         | PencilMarkKind::Candidates(_)
                 )
             {
@@ -268,7 +282,9 @@ pub(super) fn layout(
         && board.marks.iter().all(|m| {
             matches!(
                 m.kind,
-                PencilMarkKind::Digit { .. } | PencilMarkKind::Candidates(_)
+                PencilMarkKind::Digit { .. }
+                    | PencilMarkKind::WrongDigit(_)
+                    | PencilMarkKind::Candidates(_)
             )
         });
     let box_mask = |mark: &PencilMark| -> u8 {
@@ -311,6 +327,7 @@ pub(super) fn layout(
                         PencilMarkKind::Island(n) => format!("island {n}"),
                         PencilMarkKind::Digit { value: 0, .. } => "blank square".into(),
                         PencilMarkKind::Digit { value, .. } => format!("digit {value}"),
+                        PencilMarkKind::WrongDigit(value) => format!("digit {value}, wrong"),
                         PencilMarkKind::Candidates(_) => "notes".into(),
                         _ => "clue".into(),
                     }
@@ -324,7 +341,7 @@ pub(super) fn layout(
             LayoutKind::PencilMark(mark.kind, mark.selected, mark.peer, box_mask(mark)),
             vec![],
         );
-        let mut label = |value: u8, area: Rect, inverted: bool, entered: bool| {
+        let mut label = |value: u8, area: Rect, inverted: bool, kind: fn(bool) -> LayoutKind| {
             let pad = metrics.rule_thickness() * 2;
             let area = Rect {
                 x: area.x + pad,
@@ -332,22 +349,24 @@ pub(super) fn layout(
                 width: area.width - pad * 2,
                 height: area.height - pad * 2,
             };
-            push(
-                layout,
-                id,
-                area,
-                if entered {
-                    LayoutKind::PencilEntry(inverted)
-                } else {
-                    LayoutKind::PencilNumber(inverted)
-                },
-                vec![value.to_string()],
-            );
+            push(layout, id, area, kind(inverted), vec![value.to_string()]);
         };
         match mark.kind {
-            PencilMarkKind::Clue(n) | PencilMarkKind::Island(n) => label(n, rect, false, false),
-            PencilMarkKind::Digit { value, given } if value != 0 => {
-                label(value, rect, mark.selected, !given);
+            PencilMarkKind::Clue(n) | PencilMarkKind::Island(n) => {
+                label(n, rect, false, LayoutKind::PencilNumber);
+            }
+            PencilMarkKind::Digit { value, given } if value != 0 => label(
+                value,
+                rect,
+                mark.selected,
+                if given {
+                    LayoutKind::PencilNumber
+                } else {
+                    LayoutKind::PencilEntry
+                },
+            ),
+            PencilMarkKind::WrongDigit(value) => {
+                label(value, rect, mark.selected, LayoutKind::PencilWrong);
             }
             PencilMarkKind::Candidates(mask) => {
                 // Candidate digits get a ninth of the square each, in the
@@ -385,7 +404,7 @@ pub(super) fn layout(
                             height: half,
                         },
                         true,
-                        false,
+                        LayoutKind::PencilNumber,
                     );
                 }
                 if down != 0 {
@@ -398,7 +417,7 @@ pub(super) fn layout(
                             height: half,
                         },
                         true,
-                        false,
+                        LayoutKind::PencilNumber,
                     );
                 }
             }
@@ -524,7 +543,9 @@ pub(super) fn draw_mark(
             stroke_rounded_clipped(surface, circle, circle.width / 2, tone::INK, line, clip);
         }
         PencilMarkKind::Block => fill_clipped(surface, rect, tone::INK, clip),
-        PencilMarkKind::Digit { .. } | PencilMarkKind::Candidates(_) => {
+        PencilMarkKind::Digit { .. }
+        | PencilMarkKind::WrongDigit(_)
+        | PencilMarkKind::Candidates(_) => {
             // The selected cell is the one filled control of the board, and
             // takes the accent the way a primary button does; its digit is
             // reversed out in paper either way. Peers stay on the quiet grey.
