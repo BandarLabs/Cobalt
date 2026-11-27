@@ -645,8 +645,12 @@ impl Store {
             }
             DeviceResult::RemoteInstall(outcome) if *request == DeviceRequest::PollAppLink => {
                 self.link_request_pending = false;
-                self.notice = remote_install_notice(outcome, &self.entries);
+                // A linked reader is polled every few seconds, and nearly
+                // every poll brings nothing. Only one that installed
+                // something has news; the rest used to blank whatever the
+                // banner said, so "is updated" lasted five seconds at most.
                 if !matches!(outcome, RemoteInstallOutcome::None) {
+                    self.notice = remote_install_notice(outcome, &self.entries);
                     context.applications().cached_catalog();
                 }
             }
@@ -2106,6 +2110,26 @@ mod tests {
         let mut runner = opened_with(&[alpha], &[alpha_installed]);
         let list = painted(&runner.action(action_id(Filter::Updates.action())));
         assert!(!words(&list, &CLARA_BW_METRICS).contains("Update all"));
+    }
+
+    #[test]
+    fn a_link_poll_that_brings_nothing_leaves_the_updated_banner_up() {
+        let mut runner = three_behind();
+        runner.action(action_id(Filter::Updates.action()));
+        runner.action(action_id(&install_action("alpha")));
+        runner.device_result(DeviceResult::Done);
+        runner.device_result(DeviceResult::Apps {
+            entries: runner.app().entries.clone(),
+        });
+        assert_eq!(notice(&runner), Some("alpha app is updated."));
+        // What a linked reader's poll answers nearly every time.
+        let mut context = runner.context();
+        runner.app_mut().handle_link_result(
+            &mut context,
+            &DeviceRequest::PollAppLink,
+            &DeviceResult::RemoteInstall(RemoteInstallOutcome::None),
+        );
+        assert_eq!(notice(&runner), Some("alpha app is updated."));
     }
 
     #[test]
