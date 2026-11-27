@@ -333,6 +333,26 @@ figcaption { margin-top: 12px; font-size: var(--step--1); color: var(--quiet); }
 .beside.flip { grid-template-columns: minmax(0, 3fr) minmax(0, 7fr); }
 .beside.flip .reader { justify-self: start; }
 
+/* Home: the Mac app's window, drawn flat like the reader. A hairline follows
+   its corners where macOS would draw a shadow. */
+.window { margin: 0; }
+.window img {
+  width: 100%;
+  border-radius: 1.91% / 2.76%;
+  box-shadow: 0 0 0 1px var(--rule);
+}
+#mac .wrap > .window { margin-top: 32px; }
+.windows a { display: block; }
+.windows a:hover img { box-shadow: 0 0 0 2px var(--ink); }
+.windows {
+  list-style: none;
+  margin: 32px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(18px, 3vw, 36px);
+}
+
 /* Steps are numbered because they are done in order. */
 .steps { list-style: none; counter-reset: step; margin: 28px 0 0; padding: 0; border-top: 1px solid var(--ink); max-width: 46em; }
 .steps > li {
@@ -466,6 +486,7 @@ form button:hover, .section button:hover { background: var(--cobalt); border-col
   .index { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   footer nav { justify-content: flex-start; }
   .ways { grid-template-columns: minmax(0, 1fr); }
+  .windows { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 560px) {
   .index { grid-template-columns: minmax(0, 1fr); }
