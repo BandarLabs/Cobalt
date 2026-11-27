@@ -422,6 +422,10 @@ enum FeedPurpose {
     More,
     /// One catalog's share of a search run against every catalog at once.
     Federated { catalog: usize },
+    /// The page on top of the stack fetched again because it was showing its
+    /// saved copy. It replaces that page where it stands, and a failure
+    /// leaves the saved copy as it was.
+    Reload,
 }
 
 struct CachedFeed {
@@ -894,6 +898,33 @@ impl Default for Gutenbird {
 }
 
 impl Gutenbird {
+    /// Whether the page on screen is being fetched again behind itself. It
+    /// stays readable meanwhile rather than turning into a skeleton.
+    fn reloading(&self) -> bool {
+        matches!(self.task, Some((_, Awaiting::Feed(FeedPurpose::Reload, _))))
+    }
+
+    /// Fetches the page on top of the shelf again if it is a saved copy.
+    ///
+    /// A page restored while the reader was offline said "Reconnect to
+    /// refresh", and coming back to Gutenbird on Wi-Fi left it saying so
+    /// with nothing on screen able to refresh it. Asked when the shelf is
+    /// shown again, quietly, and only when nothing else is being fetched.
+    fn refresh_saved_page(&mut self, context: &mut Context) {
+        if self.view != View::Shelf || self.task.is_some() {
+            return;
+        }
+        let Some(url) = self
+            .stack
+            .last()
+            .filter(|entry| entry.saved)
+            .map(|entry| entry.url.clone())
+        else {
+            return;
+        };
+        self.spawn_feed(context, url, FeedPurpose::Reload);
+    }
+
     fn awaiting_feed(&self) -> bool {
         matches!(
             self.task,
@@ -1778,6 +1809,25 @@ impl Gutenbird {
                 self.want_covers(context);
                 self.hydrate_visible(context);
             }
+            FeedPurpose::Reload => {
+                // Only over the page it was asked for: Back may have taken
+                // the reader somewhere else while it was on its way.
+                if let Some(entry) = self.stack.last_mut().filter(|entry| entry.url == base) {
+                    let mut fresh = StackEntry::fresh(feed, base).with_saved(restored);
+                    fresh.page = entry.page.min(shelf_pages(&fresh).saturating_sub(1));
+                    // The same books keep the covers already drawn rather
+                    // than going blank while they are fetched again.
+                    if fresh.feed.publications == entry.feed.publications {
+                        fresh.covers = std::mem::take(&mut entry.covers);
+                    }
+                    if fresh.feed.navigation == entry.feed.navigation {
+                        fresh.nav_covers = std::mem::take(&mut entry.nav_covers);
+                    }
+                    *entry = fresh;
+                    self.want_covers(context);
+                    self.hydrate_visible(context);
+                }
+            }
             FeedPurpose::Federated { catalog } => {
                 let name = self.catalogs[catalog].name.clone();
                 if let Some(entry) = self.stack.last_mut() {
@@ -2085,7 +2135,7 @@ impl Gutenbird {
                 },
             );
         }
-        if self.awaiting_feed() {
+        if self.awaiting_feed() && !self.reloading() {
             let metrics = context.metrics();
             for rows in (0..=SKELETON_ROWS).rev() {
                 let candidate = screen
@@ -4377,6 +4427,10 @@ fn main() -> ExitCode {
 }
 
 impl KoboApp for Gutenbird {
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.refresh_saved_page(context);
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         context.shelf().list();
         context.store().load(REGISTRY_KEY);
@@ -4656,6 +4710,7 @@ impl KoboApp for Gutenbird {
                 self.stack.pop();
                 self.want_covers(context);
                 self.hydrate_visible(context);
+                self.refresh_saved_page(context);
             } else if self.view == View::Reading {
                 self.leave_book(context);
             } else if let Some(previous) = self.step_back() {
@@ -5033,6 +5088,11 @@ impl KoboApp for Gutenbird {
                 Awaiting::Feed(FeedPurpose::Federated { .. }, _) => {
                     self.advance_federated(context);
                 }
+                // Nothing the reader asked for failed: the saved copy stays
+                // up with the notice it already carries.
+                Awaiting::Feed(FeedPurpose::Reload, _) => {
+                    self.cached_feed = None;
+                }
                 // A row that could not be followed stays a row. It is already
                 // marked as examined, so the next page turn does not spend
                 // the radio asking again.
@@ -5361,6 +5421,65 @@ mod tests {
             !says_saved(&app.shelf_screen(&context)),
             "a page fetched from the catalog was called a saved one"
         );
+    }
+
+    /// A shelf showing the saved copy of the catalog's first page, as it is
+    /// left after opening Gutenbird with no connection.
+    fn saved_shelf(context: &mut Context) -> Gutenbird {
+        let mut app = Gutenbird {
+            view: View::Shelf,
+            ..Gutenbird::default()
+        };
+        app.restored = true;
+        app.took_feed(
+            context,
+            two_publication_feed_json().as_bytes(),
+            FeedPurpose::Root { catalog: 0 },
+            BASE.to_owned(),
+        );
+        assert!(app.stack.last().expect("the saved page").saved);
+        app
+    }
+
+    #[test]
+    fn coming_back_to_a_saved_page_on_wifi_fetches_it_again_and_drops_the_notice() {
+        use kobo_sdk::KoboApp as _;
+        let mut context = Context::default();
+        let mut app = saved_shelf(&mut context);
+        app.on_foreground(&mut context);
+        let (task, _) = app.task.clone().expect("the page is fetched again");
+        assert!(app.reloading());
+        // The saved page stays readable while it is fetched.
+        let meanwhile = app.shelf_screen(&context);
+        assert!(says_saved(&meanwhile));
+        assert!(!format!("{meanwhile:?}").contains("Fetching the catalog"));
+
+        app.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Completed(two_publication_feed_json().into_bytes()),
+        );
+        assert_eq!(app.stack.len(), 1);
+        assert!(!app.stack[0].saved);
+        assert!(!says_saved(&app.shelf_screen(&context)));
+    }
+
+    #[test]
+    fn a_saved_page_that_still_cannot_be_fetched_stays_as_it_was() {
+        use kobo_sdk::KoboApp as _;
+        let mut context = Context::default();
+        let mut app = saved_shelf(&mut context);
+        app.on_foreground(&mut context);
+        let (task, _) = app.task.clone().expect("the page is fetched again");
+        app.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Failed(TaskError::Unreachable),
+        );
+        assert_eq!(app.stack.len(), 1);
+        assert!(app.stack[0].saved);
+        assert_eq!(app.problem, None);
+        assert!(says_saved(&app.shelf_screen(&context)));
     }
 
     fn says_saved(screen: &kobo_sdk::Screen) -> bool {
