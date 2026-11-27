@@ -728,6 +728,22 @@ jobs:
           fi
           api_get "$release_state" \
             "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}"
+          # A release holds at most 1000 files, and every package a
+          # publication replaces used to stay. Let go of the ones neither the
+          # catalog readers have nor the one about to replace it names, once
+          # they are two weeks old; see tools/prune-app-release.mjs.
+          node tools/prune-app-release.mjs "$release_state" \
+            published-app-catalog.json \
+            dist/apps/cobalt-app-catalog-v2.json \
+            dist/apps/cobalt-app-catalog.json \
+            > "$RUNNER_TEMP/prune.tsv"
+          while IFS=$'\t' read -r stale_id stale_name; do
+            echo "Removing $stale_name, which no catalog names any more."
+            gh api --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${stale_id}" > /dev/null
+          done < "$RUNNER_TEMP/prune.tsv"
+          api_get "$release_state" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}"
           for package in dist/apps/*.cobalt-app; do
             # A publication that keeps every app signs no new package.
             [ -e "$package" ] || continue
