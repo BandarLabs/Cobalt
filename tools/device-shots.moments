@@ -1,0 +1,273 @@
+# The moments tools/device-shots.sh photographs, one block per app. Measured
+# on a Kobo Clara BW (1072 x 1448) at the default text size. Coordinates are
+# panel pixels; the comment beside a tap says what it lands on.
+
+app launcher
+home
+shot apps
+tap 965,1265            # next page
+wait 2
+shot apps-page-2
+tab books
+wait 3
+shot books
+tap 712,475             # Continue reading
+wait 6
+shot reading
+# Books and Settings open as apps of their own, with no tab bar, so the
+# launcher is brought back before the next tab.
+home
+tab settings
+wait 3
+tap 963,1360            # the second page: the main one names the Wi-Fi network
+wait 3
+shot settings
+tap 963,1360
+wait 2
+home
+
+app store
+open store
+wait 12                 # the catalog refreshes when the Store opens
+shot catalog
+tap 655,257             # Updates filter
+wait 3
+shot updates
+tap 170,257             # All
+wait 3
+tap 963,720             # Backgammon's page, from its more button
+wait 3
+shot app-page
+
+app lichess
+open lichess
+shot home
+tap 535,453             # Play the computer
+wait 3
+shot setup
+tap 535,757             # Start game, as White
+wait 5
+tap 597,1080            # e2
+wait 2
+tap 597,838             # e4
+wait 10                 # the computer answers
+shot opening
+
+app backgammon
+open backgammon
+shot board
+
+app parlor
+open parlor
+shot home
+tap 535,413             # Resume Reversi
+wait 4
+shot reversi
+
+app sudoku
+open sudoku
+shot puzzle
+
+app nonograms
+open nonograms
+shot puzzles
+tap 400,775             # Heart, in progress
+wait 4
+shot heart
+
+app logicpack
+open logicpack
+shot home
+tap 400,250             # Slitherlink
+wait 3
+tap 400,430             # Four twos
+wait 4
+shot slitherlink
+
+app crossword
+open crossword
+shot grid
+tap 535,1376            # Clues
+wait 3
+shot clues
+
+app inkling
+open inkling
+shot board
+tap 424,1328            # C
+tap 387,1067            # R
+tap 96,1197             # A
+tap 752,1328            # N
+tap 288,1067            # E
+tap 96,1328             # Guess
+wait 4
+shot guess
+
+app pubquiz
+open pubquiz
+shot home
+tap 535,541             # Play solo
+wait 3
+tap 535,1376            # Start round
+wait 4
+shot question
+tap 400,915             # an answer
+wait 4
+shot next-question
+
+app tictactoe
+open tictactoe
+shot board
+tap 531,821             # the middle square
+wait 5
+shot first-move
+
+app rss
+open rss
+shot feeds
+tap 300,510             # NASA Science
+wait 4
+shot articles
+tap 400,349             # first article
+wait 6
+shot article
+
+app arxiv
+open arxiv
+shot fields
+tap 300,250             # Computer Science
+wait 4
+tap 300,250             # Artificial Intelligence
+wait 6
+shot listing
+tap 400,250             # the newest paper
+wait 6
+shot abstract
+tap 535,1376            # Full text
+wait 10
+shot full-text
+
+app brief
+open brief
+shot brief
+# The story view waits for the line spacing fix (PR #419) to reach readers.
+
+app hn
+open hn
+shot top
+tap 400,250             # first story
+wait 6
+shot discussion
+tap 827,109             # read the linked article
+wait 8
+shot article
+
+app gutenbird
+open gutenbird
+wait 6
+shot catalogs
+
+app audiobook
+open audiobook
+shot shelf
+# Tapping a book with no headphones connected opens Bluetooth audio, which
+# lists the owner's own devices by name, so it is not photographed.
+
+app panels
+open panels
+shot shelf
+tap 300,330             # A small garden
+wait 5
+shot page
+
+app vault
+open vault
+shot home
+tap 400,340             # Browse
+wait 4
+shot browse
+tap 300,400             # Reading notes
+wait 4
+shot note
+
+app verses
+open verses
+shot poem
+
+app parser
+open parser
+shot home
+tap 200,560             # First Light
+wait 6
+shot story
+
+app birds
+open birds
+shot plates
+
+app flashcards
+open flashcards
+shot today
+
+app needles
+open needles
+shot counter
+tap 784,1328            # +1 row
+wait 2
+tap 784,1328
+wait 2
+tap 784,1328
+wait 3
+shot three-rows
+
+app morse
+open morse
+shot send
+
+app magnet
+open magnet
+shot magnet
+
+app gallery
+open gallery
+shot type
+
+app tailscale
+open tailscale
+shot status
+
+app syncthing
+open syncthing
+shot sync
+
+app deck
+open deck
+shot pads
+tap 157,632             # Status: git status on the computer
+wait 8
+shot status-ran
+
+app sidekick
+# Agents ask only while a reader is watching, so Sidekick opens first.
+open sidekick
+wait 8
+shot watching
+host tools/device-shots-companions.sh ask
+wait 8
+shot asking
+tap 285,1211            # Allow
+wait 6
+shot next-request
+host tools/device-shots-companions.sh stop
+
+app paperterm
+host tools/device-shots-companions.sh stream vim -R crates/kobo-ui/src/lib.rs
+open paperterm
+wait 10
+shot vim
+host tools/device-shots-companions.sh stream top -o cpu
+home
+open paperterm
+wait 10
+shot top
+host tools/device-shots-companions.sh stop

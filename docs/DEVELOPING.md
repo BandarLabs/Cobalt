@@ -73,6 +73,35 @@ hit-testing. Dispatching the action directly would have been simpler and
 worthless: it passes on a screen whose only button has been laid out below the
 bottom edge, which is the fault worth catching.
 
+## Taking the same pictures on a reader
+
+The website and the store listings use pictures of a real reader, and they go
+stale with every release. `tools/device-shots.sh` takes them again: it opens
+each app from the launcher, checks the binary that started is that app's, taps
+through the moments in `tools/device-shots.moments` and saves one folder per
+app.
+
+```sh
+cargo build -p kobo-cli --features device-write
+KOBO=target/debug/kobo tools/device-shots.sh --device 192.168.1.23
+KOBO=target/debug/kobo tools/device-shots.sh --device 192.168.1.23 --only lichess,sidekick
+KOBO=target/debug/kobo tools/device-shots.sh --device 192.168.1.23 --step 'app try' --step 'open vault' --step 'shot look'
+```
+
+Each block in the moments file is a short session as somebody would use the
+app: Preprints opens a field, a paper, and its full text; Lichess plays e4 and
+waits for the reply. Taps are panel coordinates measured on a Clara BW at the
+default text size, which is the one thing a label-driven simulator script
+does not need. The apps that work with a computer are photographed doing real
+work: `host` steps run `tools/device-shots-companions.sh`, which streams a
+terminal to Paperterm and puts agents' permission requests to Sidekick
+through the same hook command a coding agent runs. Run
+`kobo sidekick init --device IP` and `kobo sidekick run` once before.
+
+The reader's screen changes while this runs. A run takes about half an hour;
+`kobo session --device IP --wifi-always-on on` and `--hold MINUTES` keep the
+reader on Wi-Fi and awake for it.
+
 For the real panel:
 
 ```sh
