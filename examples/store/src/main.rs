@@ -19,6 +19,7 @@ const DISCONNECT_LINK: &str = "disconnect-link";
 const PREVIOUS: &str = "previous";
 const NEXT: &str = "next";
 const UPDATE_COBALT: &str = "update-cobalt";
+const UPDATE_ALL: &str = "update-all";
 const DETAIL_PREVIOUS: &str = "detail-previous";
 const DETAIL_NEXT: &str = "detail-next";
 const CONFIRM_REMOVE: &str = "confirm-remove";
@@ -192,6 +193,10 @@ struct Store {
     /// until the reader has answered, and then an update from a row opens
     /// the app's page, because nobody can yet say it asks for nothing new.
     granted: Option<std::collections::BTreeMap<String, Vec<String>>>,
+    /// The updates Update all has still to start, in the order they go, and
+    /// how many it began with. Empty and zero when no batch is running.
+    batch: Vec<String>,
+    batch_size: usize,
 }
 
 impl Default for Store {
@@ -213,6 +218,8 @@ impl Default for Store {
             pairing_qr_url: None,
             detail_page: None,
             granted: None,
+            batch: Vec::new(),
+            batch_size: 0,
         }
     }
 }
@@ -427,8 +434,9 @@ impl Store {
             .collect::<Vec<_>>();
         // A one-page catalog draws no bottom bar and gets that room for apps.
         // Once it turns, measure again with the navigation bar it will draw.
-        let without_controls = self.pages(context, &rows, false, compact);
-        let page_indices = if without_controls.len() > 1 {
+        let update_all = self.offers_update_all();
+        let without_controls = self.pages(context, &rows, update_all, compact);
+        let page_indices = if without_controls.len() > 1 && !update_all {
             self.pages(context, &rows, true, compact)
         } else {
             without_controls
@@ -468,10 +476,13 @@ impl Store {
             .map(|entry| (page, entry.id.clone()));
         self.page = page;
         self.anchor = anchor;
-        if pages > 1 {
+        if pages > 1 || update_all {
             let mut actions = Vec::new();
             if page > 0 {
                 actions.push((PREVIOUS, "Previous", Some(Glyph::Previous)));
+            }
+            if update_all {
+                actions.push((UPDATE_ALL, "Update all", Some(Glyph::Download)));
             }
             if page + 1 < pages {
                 actions.push((NEXT, "More", Some(Glyph::Next)));
@@ -919,13 +930,20 @@ impl Store {
             .iter()
             .find(|entry| entry.id == id)
             .map_or(id, |entry| entry.title.as_str());
+        // In a batch the owner set eighteen updates going with one tap, and
+        // the count is the only way to know how long to leave the reader.
+        let detail = if self.batch_size > 0 {
+            format!(
+                "{} of {}. Keep Cobalt open until this finishes.",
+                self.batch_size - self.batch.len(),
+                self.batch_size
+            )
+        } else {
+            "Keep Cobalt open until this finishes.".to_owned()
+        };
         ScreenBuilder::new("store-working")
             .top_bar("App Store")
-            .splash(
-                Some(Glyph::Download),
-                format!("{action} {title}"),
-                "Keep Cobalt open until this finishes.",
-            )
+            .splash(Some(Glyph::Download), format!("{action} {title}"), detail)
             .build()
     }
 
@@ -980,6 +998,106 @@ impl Store {
             })
     }
 
+    /// The updates Update all may start: every compatible one that asks for
+    /// nothing the installed version was not already granted.
+    ///
+    /// An update that asks for more stays out and keeps its own Update, which
+    /// opens its page, because one tap must never grant a permission the
+    /// owner has not read.
+    fn quiet_updates(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter(|entry| has_compatible_update(entry) && self.updates_quietly(entry))
+            .map(|entry| entry.id.clone())
+            .collect()
+    }
+
+    /// Whether the Updates list offers Update all. One update is one tap
+    /// already, so the bar only carries it for two or more.
+    fn offers_update_all(&self) -> bool {
+        self.view == View::Catalog
+            && self.filter == Filter::Updates
+            && self.quiet_updates().len() > 1
+    }
+
+    fn start_batch(&mut self, context: &mut Context) {
+        let mut ids = self.quiet_updates();
+        if ids.is_empty() {
+            return;
+        }
+        let first = ids.remove(0);
+        self.batch_size = ids.len() + 1;
+        self.batch = ids;
+        self.request_install(context, &first);
+    }
+
+    /// How many updates are left that ask for something new, which a batch
+    /// never starts.
+    fn held_back(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| has_compatible_update(entry) && !self.updates_quietly(entry))
+            .count()
+    }
+
+    /// What a running Update all takes from a device result before the usual
+    /// handling sees it. True when the result needs nothing more.
+    fn batch_result(
+        &mut self,
+        context: &mut Context,
+        request: &DeviceRequest,
+        result: &DeviceResult,
+    ) -> bool {
+        if self.batch_size == 0 {
+            return false;
+        }
+        match (request, result) {
+            (DeviceRequest::InstallApp { id }, DeviceResult::Done)
+                if matches!(self.view, View::Working { .. }) =>
+            {
+                if !self.batch_step(context, id) {
+                    self.show(context);
+                }
+                true
+            }
+            (DeviceRequest::InstallApp { .. }, DeviceResult::Failed(_))
+            | (_, DeviceResult::Denied(_)) => {
+                self.end_batch();
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Records one finished update of a batch and starts the next, or says
+    /// how the batch went when it was the last. True when another update has
+    /// started, which has drawn its own screen.
+    fn batch_step(&mut self, context: &mut Context, id: &str) -> bool {
+        self.mark_installed(id);
+        context.applications().cached_catalog();
+        if self.batch.is_empty() {
+            let updated = self.batch_size;
+            self.end_batch();
+            self.notice = Some(Notice::success(batch_done(updated, self.held_back())));
+            self.view = View::Catalog;
+            false
+        } else {
+            let next = self.batch.remove(0);
+            self.request_install(context, &next);
+            true
+        }
+    }
+
+    /// Starts no more updates. A batch ends at Back, at a refusal and at the
+    /// first failure rather than carrying on past it: whatever refused one
+    /// update, a full card or a dropped connection, is likely to refuse the
+    /// next, and the owner should see the reason before anything else is
+    /// tried. The updates not reached stay in the list with their own button.
+    fn end_batch(&mut self) {
+        self.batch.clear();
+        self.batch_size = 0;
+    }
+
     fn request_install(&mut self, context: &mut Context, id: &str) {
         let action = self
             .entries
@@ -996,6 +1114,7 @@ impl Store {
         };
         self.show(context);
         if !context.applications().install(id.to_owned()) {
+            self.end_batch();
             self.notice = Some(Notice::attention("That application identity is invalid."));
             self.view = self.after_working();
             self.show(context);
@@ -1087,6 +1206,9 @@ impl KoboApp for Store {
             if let View::ConfirmUninstall(id) = &self.view {
                 self.view = View::Detail(id.clone());
             } else if action == ActionId::BACK {
+                // Back from a batch lets the update already under way finish
+                // and starts no more.
+                self.end_batch();
                 self.notice = None;
                 self.detail_page = None;
                 self.view = View::Catalog;
@@ -1128,6 +1250,12 @@ impl KoboApp for Store {
         }
         if action == action_id(UPDATE_COBALT) {
             context.launch("settings");
+            return;
+        }
+        if action == action_id(UPDATE_ALL) {
+            if self.offers_update_all() {
+                self.start_batch(context);
+            }
             return;
         }
         if self.take_filter(context, action) {
@@ -1188,6 +1316,9 @@ impl KoboApp for Store {
     ) {
         if self.handle_link_result(context, &request, &result) {
             self.show(context);
+            return;
+        }
+        if self.batch_result(context, &request, &result) {
             return;
         }
         if request == DeviceRequest::ListInstalledApps {
@@ -1719,6 +1850,19 @@ fn tabs_read_whole(metrics: &kobo_ui::DisplayMetrics, labels: &[String]) -> bool
 /// One that needs a newer Cobalt is not offered as an update, because the
 /// tap would lead to Settings instead, and an Updates list that cannot be
 /// cleared from the Store is a list of nagging.
+/// What a finished Update all says. The updates it left alone are named,
+/// because the list still shows them and the owner will want to know why.
+fn batch_done(updated: usize, held_back: usize) -> String {
+    let done = format!("{updated} apps are updated.");
+    match held_back {
+        0 => done,
+        1 => format!("{done} One more asks for something new. Open it to review and update it."),
+        more => {
+            format!("{done} {more} more ask for something new. Open each to review and update it.")
+        }
+    }
+}
+
 fn has_compatible_update(entry: &AppInfo) -> bool {
     !is_system_app(&entry.id)
         && entry.has_update()
@@ -1871,6 +2015,97 @@ mod tests {
             capabilities: vec!["network".to_owned()],
             installed_version: installed.map(str::to_owned),
         }
+    }
+
+    fn installs(commands: &[Command]) -> Vec<String> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Device(DeviceRequest::InstallApp { id }) => Some(id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Three apps behind the catalog: two that ask for nothing new and one
+    /// that now wants the network it was never granted. The list is still on
+    /// All; a test turns to Updates itself to see what that paints.
+    fn three_behind() -> AppRunner<Store> {
+        let (alpha, alpha_installed) = behind("alpha", &["network"]);
+        let (beta, beta_installed) = behind("beta", &["network"]);
+        let (gamma, gamma_installed) = behind("gamma", &[]);
+        opened_with(
+            &[alpha, beta, gamma],
+            &[alpha_installed, beta_installed, gamma_installed],
+        )
+    }
+
+    #[test]
+    fn update_all_updates_each_app_in_turn_and_says_how_many_it_updated() {
+        let mut runner = three_behind();
+        let list = painted(&runner.action(action_id(Filter::Updates.action())));
+        assert!(words(&list, &CLARA_BW_METRICS).contains("Update all"));
+
+        let first = runner.action(action_id(UPDATE_ALL));
+        assert_eq!(installs(&first), ["alpha"]);
+        assert!(words(&painted(&first), &CLARA_BW_METRICS).contains("1 of 2."));
+
+        let (mut alpha, _) = behind("alpha", &["network"]);
+        alpha.installed_version = Some("1.1.0".to_owned());
+        let (beta, _) = behind("beta", &["network"]);
+        let (gamma, _) = behind("gamma", &[]);
+        let second = runner.device_result(DeviceResult::Done);
+        assert_eq!(installs(&second), ["beta"]);
+        assert!(words(&painted(&second), &CLARA_BW_METRICS).contains("2 of 2."));
+        // The catalog read after each install comes back before the next
+        // install does, and must not end the batch.
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![alpha, beta, gamma],
+        });
+        assert!(matches!(runner.app().view, View::Working { ref id, .. } if id == "beta"));
+
+        runner.device_result(DeviceResult::Done);
+        assert_eq!(runner.app().view, View::Catalog);
+        assert_eq!(
+            notice(&runner),
+            Some(
+                "2 apps are updated. One more asks for something new. \
+                 Open it to review and update it."
+            )
+        );
+        assert!(!runner.app().offers_update_all());
+    }
+
+    #[test]
+    fn update_all_never_starts_an_update_that_asks_for_something_new() {
+        let mut runner = three_behind();
+        runner.action(action_id(Filter::Updates.action()));
+        let mut started = installs(&runner.action(action_id(UPDATE_ALL)));
+        runner.device_result(DeviceResult::Done);
+        runner.device_result(DeviceResult::Apps {
+            entries: runner.app().entries.clone(),
+        });
+        started.extend(installs(&runner.device_result(DeviceResult::Done)));
+        assert!(!started.contains(&"gamma".to_owned()), "{started:?}");
+    }
+
+    #[test]
+    fn back_during_update_all_lets_the_current_update_finish_and_starts_no_more() {
+        let mut runner = three_behind();
+        runner.action(action_id(Filter::Updates.action()));
+        runner.action(action_id(UPDATE_ALL));
+        runner.action(ActionId::BACK);
+        let after = runner.device_result(DeviceResult::Done);
+        assert!(installs(&after).is_empty());
+        assert_eq!(runner.app().view, View::Catalog);
+    }
+
+    #[test]
+    fn one_update_is_one_tap_already_so_the_list_offers_no_update_all() {
+        let (alpha, alpha_installed) = behind("alpha", &["network"]);
+        let mut runner = opened_with(&[alpha], &[alpha_installed]);
+        let list = painted(&runner.action(action_id(Filter::Updates.action())));
+        assert!(!words(&list, &CLARA_BW_METRICS).contains("Update all"));
     }
 
     #[test]
