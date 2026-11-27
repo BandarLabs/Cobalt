@@ -73,11 +73,15 @@ source-adjacent `apps/*/cobalt-app.json` and
 Edit its source and the same `cobalt-app.json`; there is no update form or
 second manifest.
 
-- If release inputs or signed public metadata changed, set a strictly newer
-  numeric version and add `release_notes` describing the user-visible result.
-- If only tests, comments, setup instructions, the README and its
-  `screenshots/`, drive scripts, or other non-release inputs changed, leave
-  the version alone and omit release notes.
+- If anything in the app's own directory that is built into it changed (its
+  source, `Cargo.toml` beyond version lines, or `cobalt-app.json`), set a
+  strictly newer numeric version and add `release_notes` describing the
+  user-visible result.
+- If only tests outside the app, setup instructions, the README and its
+  `screenshots/`, drive scripts, or the platform under the app (shared
+  crates, `Cargo.lock`, the toolchain) changed, leave the version alone and
+  omit release notes. The app keeps its published build until its next
+  version.
 
 CI derives this decision from the last published Beta transaction. Placeholder
 notes such as “Update” or “Bug fixes” are rejected with the changed fields

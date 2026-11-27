@@ -115,6 +115,18 @@ test("a published version that is not the registered one fails", () => {
   ]);
 });
 
+test("a kept app may need an older Cobalt than a build from this tree, never a newer one", () => {
+  const kept = published();
+  kept.registry.apps[0].minimum_cobalt_version = "0.3.40";
+  assert.deepEqual(publishedCatalogFailures(kept.catalog, kept.registry, kept.assets), []);
+
+  const raised = published();
+  raised.catalog.entries[0].manifest.minimum_cobalt_version = "0.3.40";
+  assert.deepEqual(publishedCatalogFailures(raised.catalog, raised.registry, raised.assets), [
+    'notes: published minimum_cobalt_version "0.3.40" is newer than the registered "0.3.1"'
+  ]);
+});
+
 test("apps missing from or left behind in the channel are both reported", () => {
   const values = published();
   values.registry.apps.push({ ...values.registry.apps[0], id: "reader", package: "kobo-reader" });

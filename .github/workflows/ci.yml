@@ -547,10 +547,8 @@ jobs:
           # index or name, and so does anki's rslib; only anki's own build
           # runner extracts, and the importer does not depend on it. zip 9 needs
           # rustc 1.88, newer than the device toolchain, and anki at the pinned
-          # revision requires zip 4. The ignores live here, not in
-          # .cargo/audit.toml, because check-app-versions counts every path
-          # under .cargo/ as a build input and would rebuild every Store app.
-          # Re-check when the device toolchain reaches 1.88 or the anki pin moves.
+          # revision requires zip 4. Re-check when the device toolchain
+          # reaches 1.88 or the anki pin moves.
           #
           # RUSTSEC-2026-0429 is the same function again: ZipArchive::extract
           # aborts the process on a symlink entry with a large declared size.

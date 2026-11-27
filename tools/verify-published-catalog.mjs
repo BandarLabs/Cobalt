@@ -14,7 +14,6 @@ const PUBLIC_MANIFEST_FIELDS = [
   "short_label",
   "summary",
   "version",
-  "minimum_cobalt_version",
   "glyph"
 ];
 
@@ -145,6 +144,14 @@ export function publishedCatalogFailures(catalog, registry, assetNames) {
           `${app.id}: published ${field} ${JSON.stringify(entry.manifest[field])} is not the registered ${JSON.stringify(app[field])}`
         );
       }
+    }
+    // The minimum Cobalt version belongs to the build. An app the catalog
+    // kept as it was published needs the runtime it was built for, which
+    // may be older than what a build from this tree would need; never newer.
+    if (!cobaltVersionAtLeast(app.minimum_cobalt_version, entry.manifest.minimum_cobalt_version)) {
+      failures.push(
+        `${app.id}: published minimum_cobalt_version ${JSON.stringify(entry.manifest.minimum_cobalt_version)} is newer than the registered ${JSON.stringify(app.minimum_cobalt_version)}`
+      );
     }
     const published = [...(entry.manifest.capabilities || [])].sort();
     const registered = [...(app.capabilities || [])].sort();

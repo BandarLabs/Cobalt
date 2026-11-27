@@ -38,6 +38,7 @@ mod frame_preview;
 mod frame_recovery;
 mod harden;
 mod host_release;
+mod kept_apps;
 mod menu;
 mod musicstand;
 mod needles;
@@ -2568,13 +2569,18 @@ fn app_check(arguments: &[String]) -> Result<(), String> {
 
 fn app_release(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: kobo app-release --registry PATH --seed PATH --out PATH \
-                         --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]";
+                         --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH] \
+                         [--keep-dir PATH]\n\
+                         --keep-dir holds the published packages of apps this publication \
+                         keeps as they are; every other app is built or read from the \
+                         binaries given.";
     let registry_path = single_path_flag(arguments, "--registry", USAGE)?;
     let seed_path = single_path_flag(arguments, "--seed", USAGE)?;
     let output = single_path_flag(arguments, "--out", USAGE)?;
     let base_url = single_value_flag(arguments, "--base-url", USAGE)?;
     let prebuilt = optional_path_flag(arguments, "--prebuilt-dir", USAGE)?;
     let artifacts = optional_path_flag(arguments, "--artifact-dir", USAGE)?;
+    let kept = optional_path_flag(arguments, "--keep-dir", USAGE)?;
     if prebuilt.is_some() && artifacts.is_some() {
         return Err(USAGE.to_owned());
     }
@@ -2587,22 +2593,16 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
             "--base-url",
             "--prebuilt-dir",
             "--artifact-dir",
+            "--keep-dir",
         ],
         USAGE,
     )?;
     if !base_url.starts_with("https://") {
         return Err("--base-url must use HTTPS".to_owned());
     }
-    let base_url = base_url.trim_end_matches('/');
     let apps = read_release_registry(&registry_path)?;
     if apps.is_empty() {
         return Err("the app registry is empty".to_owned());
-    }
-    if let Some(directory) = &prebuilt {
-        validate_prebuilt_directory(&apps, directory)?;
-    }
-    if let Some(directory) = &artifacts {
-        validate_artifact_directory(&apps, directory)?;
     }
     let seed = read_signing_seed(&seed_path)?;
     let public = kobo_app_store::derive_public_key(&seed).map_err(|error| error.to_string())?;
@@ -2611,16 +2611,70 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
             "the signing seed does not match the public key trusted by Cobalt runtimes".to_owned(),
         );
     }
-    fs::create_dir_all(&output).map_err(|error| format!("create {}: {error}", output.display()))?;
+    let binaries = match (prebuilt, artifacts) {
+        (Some(directory), None) => ReleaseBinaries::Prebuilt(directory),
+        (None, Some(directory)) => ReleaseBinaries::Artifacts(directory),
+        _ => ReleaseBinaries::Build,
+    };
+    release_catalog(
+        &apps,
+        &binaries,
+        kept.as_deref(),
+        &seed,
+        base_url.trim_end_matches('/'),
+        &output,
+    )
+}
+
+/// Where `app-release` finds the binaries of the apps it signs anew.
+enum ReleaseBinaries {
+    Build,
+    Prebuilt(PathBuf),
+    Artifacts(PathBuf),
+}
+
+/// Signs a package for every registered app that is not kept, and the catalog
+/// over those and the kept ones.
+///
+/// Split from [`app_release`] so it can be exercised with a key other than
+/// the release key every reader trusts.
+fn release_catalog(
+    apps: &[ReleaseApp],
+    binaries: &ReleaseBinaries,
+    kept: Option<&Path>,
+    seed: &[u8; 32],
+    base_url: &str,
+    output: &Path,
+) -> Result<(), String> {
+    let public = kobo_app_store::derive_public_key(seed).map_err(|error| error.to_string())?;
+    let mut kept = match kept {
+        Some(directory) => kept_apps::read_kept_apps(apps, directory, &public, base_url)?,
+        None => Vec::new(),
+    };
+    let signed = apps
+        .iter()
+        .filter(|app| !kept.iter().any(|kept| kept.package == app.package))
+        .cloned()
+        .collect::<Vec<_>>();
+    match binaries {
+        ReleaseBinaries::Prebuilt(directory) => validate_prebuilt_directory(&signed, directory)?,
+        ReleaseBinaries::Artifacts(directory) => validate_artifact_directory(&signed, directory)?,
+        ReleaseBinaries::Build => {}
+    }
+    fs::create_dir_all(output).map_err(|error| format!("create {}: {error}", output.display()))?;
 
     let mut entries = Vec::with_capacity(apps.len());
     for app in apps {
-        let binary = match &prebuilt {
-            Some(directory) => read_release_binary_from(&app, directory)?,
-            None => match &artifacts {
-                Some(directory) => read_release_artifact(&app, directory)?,
-                None => build_release_binary(&app)?,
-            },
+        if let Some(index) = kept.iter().position(|kept| kept.package == app.package) {
+            println!("kept {} {}", app.id, app.version);
+            entries.push(kept.swap_remove(index).entry);
+            continue;
+        }
+        let app = app.clone();
+        let binary = match binaries {
+            ReleaseBinaries::Prebuilt(directory) => read_release_binary_from(&app, directory)?,
+            ReleaseBinaries::Artifacts(directory) => read_release_artifact(&app, directory)?,
+            ReleaseBinaries::Build => build_release_binary(&app)?,
         };
         let manifest = kobo_app_store::Manifest::new_public(kobo_app_store::ManifestInput {
             id: app.id.clone(),
@@ -2636,7 +2690,7 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
                 .map_err(|_| format!("{} binary is too large", app.package))?,
         })
         .map_err(|error| format!("invalid {} metadata: {error}", app.id))?;
-        let bundle = kobo_app_store::build_bundle(&manifest, &binary, &seed)
+        let bundle = kobo_app_store::build_bundle(&manifest, &binary, seed)
             .map_err(|error| format!("bundle {}: {error}", app.id))?;
         let (package_name, package_sha256) = release_package_name(&app.id, &bundle);
         let package_path = output.join(&package_name);
@@ -2659,7 +2713,7 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("build app catalog: {error}"))?;
     write_signed_catalogs(
         &catalog,
-        &seed,
+        seed,
         &output.join(kobo_app_store::CATALOG_FILE),
         &output.join(kobo_app_store::EARLIER_CATALOG_FILE),
     )

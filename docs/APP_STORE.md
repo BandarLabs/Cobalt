@@ -107,26 +107,46 @@ Developers open app pull requests against `beta`. After a tested beta merge,
 isolated `app-catalog-beta` release. Stable is changed solely by the protected
 exact-byte promotion workflow. Beta publication:
 
-1. Validates the registry and creates a matrix only for new or affected
-   packages by comparing with the previous successful run on the same branch.
-   If neither app release inputs nor catalog entries changed, later jobs are
-   skipped successfully and the fixed release is untouched.
-2. Builds each selected Cargo package on a separate runner and reuses
-   unchanged verified binaries from that previous channel run. If the complete
-   reusable set is unavailable for a required publication, it safely falls
-   back to rebuilding all apps.
+1. Validates the registry and works out which apps to build: new apps, and
+   apps whose own package directory or public listing changed since the
+   source the published catalog was built from. If nothing in the catalog
+   changed, later jobs are skipped successfully and the fixed release is
+   untouched.
+2. Builds each of those Cargo packages on a separate runner.
 3. Rejects binaries that are not static ARM hard-float executables with a real
    executable load segment.
 4. Uploads exactly one immutable artifact from each app runner.
 5. Downloads those artifacts on a fresh runner that has not executed app code.
-6. Compares each app's code, local dependencies and public manifest with the
-   last successfully published catalog, and requires a new app version for any
-   change. A wire-compatible platform-only change can be excluded only by an
-   exact old/new Git blob pair in `tools/app-release-compatible-changes.json`;
-   any later edit stops matching and is treated as an app release input.
-7. Builds and signs the packages and catalog only after that isolation.
-8. Replaces only changed app bundles plus the catalog, signature, and
+6. Requires a new app version for every app it built. A change to the
+   platform under the apps (shared crates, `Cargo.lock`, the toolchain) asks no
+   app for a version: see "Platform changes keep published apps" below.
+7. Fetches the published package of every app it did not build, checks it
+   against the published catalog, and signs the new catalog over the new
+   packages and those kept ones. A kept package is verified with the release
+   key and must still be the registered app: same version and listing, and a
+   minimum Cobalt version no newer than a fresh build would need.
+8. Uploads only the new app bundles plus the catalog, signature, and
    publication provenance on the fixed release for the branch's channel.
+
+### Platform changes keep published apps
+
+An app built against an older platform keeps working on a newer one. The
+runtime reads every app protocol back to the oldest one a published app
+speaks (`ACCEPTED_VERSIONS` in `kobo-protocol`), the way a phone runs an app
+built for an older system. So a platform change does not rebuild the Store
+apps. Each keeps its published package byte for byte, under the same version
+and the same minimum Cobalt version, and a reader on an older runtime keeps
+being offered what it could install before.
+
+An app picks up platform changes when it next publishes a version of its own:
+it is then built from the platform as it is, and its minimum Cobalt version
+is derived from the current protocol. When a platform fix has to reach an app
+sooner, a security fix in shared networking code for example, give that app a
+new version and release notes.
+
+Raising the oldest protocol the runtime accepts would strand the kept
+packages that speak it, on readers and in the catalog. Give those apps new
+versions first.
 
 The workflow uses the protected `COBALT_APP_SIGNING_SEED` secret. Publishing
 fails if the seed does not derive the public key pinned in released runtimes.

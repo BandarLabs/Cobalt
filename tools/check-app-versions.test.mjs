@@ -6,31 +6,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   COMMAND_MAX_BUFFER,
-  changedLockPackageIdentities,
   changedRegistryPackages,
   checkBuildPackages,
   checkEntries,
   checkProtocolMinimums,
-  compatibleChangePaths,
-  globalBuildInputsChanged,
   isContributionManifest,
   isDocumentation,
   isFilmingScript,
-  lockChangesResolvedAgainstBase,
-  lockfileOnlyAddsPackages,
-  lockfileToMeasureAgainst,
   manifestOnlyChangesPathDependencyVersions,
   manifestOnlyChangesVersions,
-  manifestOnlyChangesWorkspaceMembershipOrVersion,
+  appsWithOwnChanges,
   meaningfulReleaseNotes,
   packagesToBuild,
-  registeredConsumers,
-  releaseDependencyIds,
   releaseDiffArguments,
-  releaseLockPackageIdentities,
-  reviewedLockBlob,
   releaseNeeded,
-  storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
 import { collectRegistry, currentProtocolVersion, deriveMinimumCobalt } from "./app-registry.mjs";
 import {
@@ -502,27 +491,6 @@ test("the flags the apps workflow sends are ones the tool actually accepts", () 
   assert.throws(() => run(["kobo-not-registered"]), /unknown build package/);
 });
 
-test("release inputs ignore exclusively dev-only dependency edges", () => {
-  const dependencies = releaseDependencyIds({
-    deps: [
-      { pkg: "normal", dep_kinds: [{ kind: null, target: null }] },
-      { pkg: "build", dep_kinds: [{ kind: "build", target: null }] },
-      { pkg: "dev-only", dep_kinds: [{ kind: "dev", target: null }] },
-      {
-        pkg: "normal-and-dev",
-        dep_kinds: [
-          { kind: "dev", target: null },
-          { kind: null, target: "cfg(unix)" }
-        ]
-      },
-      // Fail conservatively if older Cargo metadata omits dependency kinds.
-      { pkg: "unspecified", dep_kinds: [] }
-    ]
-  });
-
-  assert.deepEqual(dependencies, ["normal", "build", "normal-and-dev", "unspecified"]);
-});
-
 test("release input discovery includes deleted paths", () => {
   assert.deepEqual(releaseDiffArguments("published"), [
     "diff",
@@ -679,45 +647,6 @@ test("an app drawing a board the runtime learned late says which release it need
   assert.ok(checked >= 2, `expected the board apps, found ${checked}`);
 });
 
-test("drive scripts do not count as unpublished Store catalog inputs", () => {
-  const packageDirectories = new Map([
-    ["kobo-todo", "examples/todo"],
-    ["kobo-gallery", "examples/gallery"],
-    ["kobo-tictactoe", "examples/tictactoe"]
-  ]);
-  const impact = storeImpactOfChangedPaths(
-    [
-      "examples/todo/drive.txt",
-      "examples/gallery/drive.txt",
-      "examples/tictactoe/drive.txt"
-    ],
-    packageDirectories,
-    ["kobo-todo", "kobo-gallery", "kobo-tictactoe"]
-  );
-  assert.deepEqual(impact.storeChanges, []);
-  assert.equal(impact.catalogQuiet, true);
-});
-
-test("workspace version and member additions do not change existing app release inputs", () => {
-  const previous = `[workspace]\nmembers = [\n    "apps/notes",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.1"\nedition = "2021"\n`;
-  const current = `[workspace]\nmembers = [\n    "apps/notes",\n    "apps/reader",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.2"\nedition = "2021"\n`;
-
-  assert.equal(manifestOnlyChangesWorkspaceMembershipOrVersion(previous, current), true);
-});
-
-test("replacing explicit app members with the equivalent app glob is not a release input", () => {
-  const previous = `[workspace]\nmembers = [\n    "apps/notes",\n    "apps/reader",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.1"\n`;
-  const current = `[workspace]\nmembers = [\n    "apps/*",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.1"\n`;
-  assert.equal(manifestOnlyChangesWorkspaceMembershipOrVersion(previous, current), true);
-});
-
-test("workspace configuration changes still affect every app", () => {
-  const previous = `[workspace]\nmembers = [\n    "apps/notes",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.1"\n`;
-  const current = `[workspace]\nmembers = [\n    "apps/notes",\n    "apps/reader",\n]\nresolver = "3"\n\n[workspace.package]\nversion = "0.3.2"\n`;
-
-  assert.equal(manifestOnlyChangesWorkspaceMembershipOrVersion(previous, current), false);
-});
-
 test("path dependency version-only manifest edits are not app release inputs", () => {
   const previous = `[dependencies]\nkobo-sdk = { version = "0.3.1", path = "../kobo-sdk", features = ["text"] }\n`;
   const current = previous.replace('version = "0.3.1"', 'version = "0.3.2"');
@@ -729,755 +658,6 @@ test("path dependency version-only manifest edits are not app release inputs", (
     ),
     false
   );
-});
-
-test("only exact reviewed compatible blobs are excluded from app release inputs", () => {
-  const manifest = {
-    format_version: 1,
-    changes: [
-      {
-        protocol_version: 11,
-        reason: "additive runtime setting",
-        files: [
-          {
-            path: "crates/kobo-protocol/src/lib.rs",
-            base_blob: "a".repeat(40),
-            compatible_blob: "b".repeat(40)
-          }
-        ]
-      }
-    ]
-  };
-  const changed = ["crates/kobo-protocol/src/lib.rs"];
-  assert.deepEqual(
-    compatibleChangePaths(
-      manifest,
-      11,
-      changed,
-      () => "a".repeat(40),
-      () => "b".repeat(40)
-    ),
-    new Set(changed)
-  );
-  assert.deepEqual(
-    compatibleChangePaths(
-      manifest,
-      11,
-      changed,
-      () => "a".repeat(40),
-      () => "c".repeat(40)
-    ),
-    new Set()
-  );
-  assert.deepEqual(
-    compatibleChangePaths(
-      manifest,
-      12,
-      changed,
-      () => "a".repeat(40),
-      () => "b".repeat(40)
-    ),
-    new Set()
-  );
-  assert.throws(
-    () =>
-      compatibleChangePaths(
-        {
-          ...manifest,
-          changes: [
-            {
-              ...manifest.changes[0],
-              files: [
-                {
-                  ...manifest.changes[0].files[0],
-                  path: "apps/arxiv/src/main.rs"
-                }
-              ]
-            }
-          ]
-        },
-        11,
-        ["apps/arxiv/src/main.rs"],
-        () => "a".repeat(40),
-        () => "b".repeat(40)
-      ),
-    /invalid app release compatible-change file/
-  );
-});
-
-test("active protocol compatible-change entries name the exact current files", () => {
-  const manifest = JSON.parse(
-    readFileSync("tools/app-release-compatible-changes.json", "utf8")
-  );
-  for (const change of manifest.changes) {
-    // Historical exemptions cannot affect a new protocol's release selection.
-    // Keep their exact historical blobs rather than re-blessing changed SDK code.
-    if (change.protocol_version !== currentProtocolVersion()) continue;
-    for (const file of change.files) {
-      const current = execFileSync("git", ["hash-object", file.path], {
-        encoding: "utf8"
-      }).trim();
-      if (current === file.compatible_blob) continue;
-      // Cargo.lock records the workspace version, so releasing anything at all
-      // moves its bytes and lapsed this entry. That cost a hand re-pin on
-      // seven releases in a row, every one of them for a lockfile in which no
-      // package identity had moved -- which is the property the review was
-      // ever about, and which the release logic already computes for itself.
-      //
-      // So ask that question instead of comparing bytes. The reviewed blob is
-      // still in the repository, so the two can be compared as lockfiles: an
-      // entry stands while the packages it resolved to are the ones resolved
-      // now, and a genuine dependency change still fails, because that moves
-      // an identity rather than a version number.
-      if (file.path === "Cargo.lock") {
-        let reviewed;
-        try {
-          reviewed = execFileSync("git", ["cat-file", "blob", file.compatible_blob], {
-            encoding: "utf8",
-            maxBuffer: COMMAND_MAX_BUFFER
-          });
-        } catch {
-          // A checkout too shallow to hold the reviewed blob cannot answer the
-          // question, and guessing in that direction would excuse a real
-          // change. Fall back to the exact comparison.
-          assert.equal(
-            current,
-            file.compatible_blob,
-            `${file.path} changed and the reviewed blob is not in this checkout`
-          );
-          continue;
-        }
-        const currentLock = readFileSync(file.path, "utf8");
-        // A lockfile that only adds packages to the reviewed one resolves
-        // everything the review covered exactly as it did, and the release
-        // logic measures it against the reviewed one. So adding an app does
-        // not lapse the entry either: a contributor's pull request would
-        // otherwise have to re-pin a review it has nothing to do with.
-        if (lockfileOnlyAddsPackages(reviewed, currentLock)) continue;
-        const changed = changedLockPackageIdentities(reviewed, currentLock);
-        assert.deepEqual(
-          [...changed],
-          [],
-          `${file.path} resolves differently than when it was reviewed`
-        );
-        continue;
-      }
-      assert.equal(
-        current,
-        file.compatible_blob,
-        `${file.path} changed without reviewing its Store release impact`
-      );
-    }
-  }
-});
-
-test("responsive SDK release isolation covers only exact reviewed inputs", () => {
-  const manifest = JSON.parse(
-    readFileSync("tools/app-release-compatible-changes.json", "utf8")
-  );
-  const responsivePaths = [
-    "Cargo.lock",
-    "crates/kobo-sdk/Cargo.toml",
-    "crates/kobo-sdk/src/keyboard.rs",
-    "crates/kobo-sdk/src/terminal.rs",
-    "crates/kobo-ui/Cargo.toml",
-    "crates/kobo-ui/src/lib.rs"
-  ];
-  const files = new Map(
-    manifest.changes
-      .find(change => change.protocol_version === 12)
-      .files.map(file => [file.path, file])
-  );
-  assert.deepEqual(
-    compatibleChangePaths(
-      manifest,
-      12,
-      responsivePaths,
-      path => files.get(path)?.base_blob,
-      path => files.get(path)?.compatible_blob
-    ),
-    new Set(responsivePaths)
-  );
-
-  for (const path of responsivePaths) {
-    assert.equal(
-      compatibleChangePaths(
-        manifest,
-        12,
-        [path],
-        candidate => files.get(candidate)?.base_blob,
-        () => "f".repeat(40)
-      ).size,
-      0,
-      `${path} must fail closed when its reviewed blob changes`
-    );
-  }
-});
-
-test("Gutenbird test-only changes are isolated by exact reviewed blobs", () => {
-  const manifest = JSON.parse(
-    readFileSync("tools/app-release-compatible-changes.json", "utf8")
-  );
-  const paths = [
-    "examples/gutenbird/Cargo.toml",
-    "examples/gutenbird/src/main.rs"
-  ];
-  const files = new Map(
-    manifest.changes
-      .find(change => change.protocol_version === 12)
-      .files.map(file => [file.path, file])
-  );
-  assert.deepEqual(
-    compatibleChangePaths(
-      manifest,
-      12,
-      paths,
-      path => files.get(path)?.base_blob,
-      path => files.get(path)?.compatible_blob
-    ),
-    new Set(paths)
-  );
-  assert.equal(
-    compatibleChangePaths(
-      manifest,
-      12,
-      ["examples/gutenbird/src/main.rs"],
-      path => files.get(path)?.base_blob,
-      () => "f".repeat(40)
-    ).size,
-    0
-  );
-});
-
-test("Lichess runtime prerequisites are isolated by exact reviewed blobs", () => {
-  const manifest = JSON.parse(
-    readFileSync("tools/app-release-compatible-changes.json", "utf8")
-  );
-  const paths = [
-    "crates/kobo-net/src/lib.rs",
-    "crates/kobo-net/src/lines.rs",
-    "crates/kobo-net/tests/fixtures/localhost-ca.der",
-    "crates/kobo-net/tests/fixtures/localhost-cert.der",
-    "crates/kobo-net/tests/fixtures/localhost-key.der",
-    "crates/kobo-net/tests/lichess_stream_mock.rs",
-    "crates/kobo-policy/src/credentials.rs",
-    "crates/kobo-policy/src/tasks.rs"
-  ];
-  const files = new Map(
-    manifest.changes
-      .find(change => change.protocol_version === 12)
-      .files.map(file => [file.path, file])
-  );
-  assert.deepEqual(
-    compatibleChangePaths(
-      manifest,
-      12,
-      paths,
-      path => files.get(path)?.base_blob,
-      path => files.get(path)?.compatible_blob
-    ),
-    new Set(paths)
-  );
-  assert.equal(
-    compatibleChangePaths(
-      manifest,
-      12,
-      ["crates/kobo-net/src/lines.rs"],
-      () => null,
-      () => "f".repeat(40)
-    ).size,
-    0
-  );
-});
-
-test("new lockfile package blocks do not change existing app release inputs", () => {
-  const previous = `version = 4\n\n[[package]]\nname = "notes"\nversion = "1.0.0"\n`;
-  const current = `${previous}\n[[package]]\nname = "reader"\nversion = "1.0.0"\n`;
-
-  assert.equal(lockfileOnlyAddsPackages(previous, current), true);
-});
-
-test("a lockfile that only adds an app to the reviewed one answers for the app alone", () => {
-  const block = (name, dependencies = []) =>
-    `[[package]]\nname = "${name}"\nversion = "0.3.37"\n` +
-    (dependencies.length > 0
-      ? `dependencies = [\n${dependencies.map(dependency => ` "${dependency}",\n`).join("")}]\n`
-      : "");
-  const lock = (...blocks) => `version = 4\n\n${blocks.join("\n")}`;
-  // The channel was published with one SDK. The platform then gave the SDK a
-  // dependency, and that lockfile was reviewed as compatible for the apps
-  // already published.
-  const published = lock(block("kobo-notes", ["kobo-sdk"]), block("kobo-sdk"));
-  const reviewed = lock(
-    block("kobo-notes", ["kobo-sdk"]),
-    block("kobo-sdk", ["kobo-text"]),
-    block("kobo-text")
-  );
-  // A pull request adds an app, and the lockfile gains its block.
-  const withNewApp = lock(
-    block("kobo-notes", ["kobo-sdk"]),
-    block("kobo-reader", ["kobo-sdk"]),
-    block("kobo-sdk", ["kobo-text"]),
-    block("kobo-text")
-  );
-  const changedSince = reference =>
-    [...releaseLockPackageIdentities(reference, withNewApp, new Set())]
-      .map(identity => JSON.parse(identity)[0])
-      .sort();
-
-  // Measured against what was published, the SDK change the review covered
-  // is charged to the new app's pull request, and every app uses the SDK.
-  assert.deepEqual(changedSince(published), ["kobo-reader", "kobo-sdk", "kobo-text"]);
-  assert.equal(lockfileToMeasureAgainst(published, withNewApp, reviewed), reviewed);
-  assert.deepEqual(changedSince(lockfileToMeasureAgainst(published, withNewApp, reviewed)), [
-    "kobo-reader"
-  ]);
-
-  // Anything other than additions is measured against the published file:
-  // an existing block that changed, one that went, or nothing added at all.
-  const sdkMoved = withNewApp.replace(' "kobo-text",\n', ' "kobo-text",\n "kobo-json",\n');
-  assert.equal(lockfileToMeasureAgainst(published, sdkMoved, reviewed), published);
-  const textGone = lock(
-    block("kobo-notes", ["kobo-sdk"]),
-    block("kobo-reader", ["kobo-sdk"]),
-    block("kobo-sdk", ["kobo-text"])
-  );
-  assert.equal(lockfileToMeasureAgainst(published, textGone, reviewed), published);
-  assert.equal(lockfileToMeasureAgainst(published, reviewed, reviewed), published);
-  // No review, or one this checkout cannot read, is no review.
-  for (const missing of [null, undefined, false]) {
-    assert.equal(lockfileToMeasureAgainst(published, withNewApp, missing), published);
-  }
-});
-
-test("a new app that brings a second version of a crate still only adds packages", () => {
-  const registry = 'source = "registry+https://github.com/rust-lang/crates.io-index"';
-  const one = [
-    "version = 4",
-    "",
-    "[[package]]",
-    'name = "foldhash"',
-    'version = "0.1.5"',
-    registry,
-    "",
-    "[[package]]",
-    'name = "kobo-notes"',
-    'version = "0.3.37"',
-    "dependencies = [",
-    ' "foldhash",',
-    "]",
-    ""
-  ].join("\n");
-  // Cargo names foldhash by name alone while one version is locked. The new
-  // app needs another, so the notes app's block is rewritten to say which it
-  // means, and still means the one it meant.
-  const two = [
-    "version = 4",
-    "",
-    "[[package]]",
-    'name = "foldhash"',
-    'version = "0.1.5"',
-    registry,
-    "",
-    "[[package]]",
-    'name = "foldhash"',
-    'version = "0.2.0"',
-    registry,
-    "",
-    "[[package]]",
-    'name = "kobo-notes"',
-    'version = "0.3.37"',
-    "dependencies = [",
-    ' "foldhash 0.1.5",',
-    "]",
-    "",
-    "[[package]]",
-    'name = "kobo-reader"',
-    'version = "0.3.37"',
-    "dependencies = [",
-    ' "foldhash 0.2.0",',
-    "]",
-    ""
-  ].join("\n");
-  assert.equal(lockfileOnlyAddsPackages(one, two), true);
-  // The workspace's own version moving with a release is not a change.
-  assert.equal(lockfileOnlyAddsPackages(one, two.replaceAll('"0.3.37"', '"0.3.38"')), true);
-  // The notes app moving to the new version is one.
-  assert.equal(
-    lockfileOnlyAddsPackages(one, two.replace(' "foldhash 0.1.5",', ' "foldhash 0.2.0",')),
-    false
-  );
-  // And so is a file that is not a lockfile, or one with nothing added.
-  assert.equal(lockfileOnlyAddsPackages(one, "not a lockfile"), false);
-  assert.equal(lockfileOnlyAddsPackages(one, one), false);
-});
-
-test("the reviewed lockfile is the one pinned for this protocol and this published file", () => {
-  const published = "a".repeat(40);
-  const reviewed = "b".repeat(40);
-  const manifest = {
-    format_version: 1,
-    changes: [
-      {
-        protocol_version: 17,
-        reason: "an earlier protocol",
-        files: [{ path: "Cargo.lock", base_blob: published, compatible_blob: "c".repeat(40) }]
-      },
-      {
-        protocol_version: 18,
-        reason: "the protocol in force",
-        files: [
-          { path: "crates/kobo-sdk/src/lib.rs", base_blob: published, compatible_blob: "d".repeat(40) },
-          { path: "Cargo.lock", base_blob: published, compatible_blob: reviewed }
-        ]
-      }
-    ]
-  };
-  assert.equal(reviewedLockBlob(manifest, 18, published), reviewed);
-  // A review of some other published lockfile says nothing about this one.
-  assert.equal(reviewedLockBlob(manifest, 18, "e".repeat(40)), null);
-  // Nor does a review made under a protocol that is no longer in force.
-  assert.equal(reviewedLockBlob(manifest, 19, published), null);
-  assert.equal(reviewedLockBlob({ format_version: 1, changes: [] }, 18, published), null);
-  assert.equal(reviewedLockBlob(null, 18, published), null);
-});
-
-test("Cargo.lock changes are isolated only after exact compatible review", () => {
-  const previous = `version = 4\n\n[[package]]\nname = "kobo-ui"\nversion = "0.3.4"\ndependencies = [\n "unicode-segmentation",\n]\n`;
-  const current = previous.replace(
-    ' "unicode-segmentation",',
-    ' "unicode-segmentation",\n "unicode-width",'
-  );
-
-  assert.notDeepEqual(
-    releaseLockPackageIdentities(previous, current, new Set()),
-    new Set()
-  );
-  assert.deepEqual(
-    releaseLockPackageIdentities(previous, current, new Set(["Cargo.lock"])),
-    new Set()
-  );
-});
-
-function metadata() {
-  const workspacePackage = name => ({
-    id: `${name} 1.0.0`,
-    name,
-    version: "0.3.2",
-    source: null
-  });
-  const registryPackage = name => ({
-    id: `${name} 1.0.0`,
-    name,
-    version: "1.0.0",
-    source: "registry+https://example.test/index"
-  });
-  const dependency = pkg => ({ pkg, dep_kinds: [{ kind: null, target: null }] });
-  return {
-    packages: [
-      workspacePackage("notes"),
-      workspacePackage("reader"),
-      workspacePackage("weather"),
-      workspacePackage("kobo-sdk"),
-      registryPackage("notes-dep"),
-      registryPackage("shared"),
-      registryPackage("unrelated")
-    ],
-    resolve: {
-      nodes: [
-        {
-          id: "notes 1.0.0",
-          deps: [
-            dependency("notes-dep 1.0.0"),
-            dependency("shared 1.0.0"),
-            dependency("kobo-sdk 1.0.0")
-          ]
-        },
-        { id: "reader 1.0.0", deps: [dependency("notes 1.0.0")] },
-        { id: "weather 1.0.0", deps: [dependency("shared 1.0.0")] },
-        { id: "notes-dep 1.0.0", deps: [] },
-        { id: "shared 1.0.0", deps: [] },
-        { id: "unrelated 1.0.0", deps: [] },
-        { id: "kobo-sdk 1.0.0", deps: [] }
-      ]
-    }
-  };
-}
-
-function registryIdentity(name, version = "1.0.0") {
-  return JSON.stringify([name, version, "registry+https://example.test/index"]);
-}
-
-test("an app-local lock change affects that app and its true dependents only", () => {
-  const previous = `version = 4\n\n[[package]]\nname = "notes-dep"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "old"\n`;
-  const current = previous.replace('checksum = "old"', 'checksum = "new"');
-  const changed = changedLockPackageIdentities(previous, current);
-  assert.deepEqual(changed, new Set([registryIdentity("notes-dep")]));
-  assert.deepEqual(
-    registeredConsumers(metadata(), ["notes", "reader", "weather"], changed),
-    new Set(["notes", "reader"])
-  );
-});
-
-test("a dependency named more exactly once a second version arrives is not a change", () => {
-  const registry = 'source = "registry+https://example.test/index"';
-  const previous = [
-    'version = 4\n\n[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n',
-    `[[package]]\nname = "shared"\nversion = "1.0.0"\n${registry}\nchecksum = "s"\ndependencies = [\n "hasher",\n]\n`,
-    `[[package]]\nname = "hasher"\nversion = "0.1.5"\n${registry}\nchecksum = "h1"\n`
-  ].join("\n");
-  // A host-only crate brings hasher 0.2.0, so Cargo now names the old one
-  // with its version wherever it was named before.
-  const current = [
-    'version = 4\n\n[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n',
-    `[[package]]\nname = "shared"\nversion = "1.0.0"\n${registry}\nchecksum = "s"\ndependencies = [\n "hasher 0.1.5",\n]\n`,
-    `[[package]]\nname = "hasher"\nversion = "0.1.5"\n${registry}\nchecksum = "h1"\n`,
-    `[[package]]\nname = "hasher"\nversion = "0.2.0"\n${registry}\nchecksum = "h2"\n`
-  ].join("\n");
-  assert.deepEqual(
-    changedLockPackageIdentities(previous, current),
-    new Set([registryIdentity("hasher", "0.2.0")])
-  );
-  // Moving shared onto the new version is still a change to shared.
-  const moved = current.replace('"hasher 0.1.5"', '"hasher 0.2.0"');
-  assert.deepEqual(
-    changedLockPackageIdentities(previous, moved),
-    new Set([registryIdentity("shared"), registryIdentity("hasher", "0.2.0")])
-  );
-});
-
-test("adding a package outside every Store app closure affects no app", () => {
-  const previous = `version = 4\n\n[[package]]\nname = "notes"\nversion = "0.3.1"\n`;
-  const current = `${previous}\n[[package]]\nname = "unrelated"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "new"\n`;
-  const changed = changedLockPackageIdentities(previous, current);
-  assert.deepEqual(changed, new Set([registryIdentity("unrelated")]));
-  assert.deepEqual(
-    registeredConsumers(metadata(), ["notes", "reader", "weather"], changed),
-    new Set()
-  );
-});
-
-test("a shared dependency lock change affects every consuming Store app", () => {
-  assert.deepEqual(
-    registeredConsumers(
-      metadata(),
-      ["notes", "reader", "weather"],
-      new Set([registryIdentity("shared")])
-    ),
-    new Set(["notes", "reader", "weather"])
-  );
-});
-
-test("a changed shared workspace crate affects only its Store consumers", () => {
-  assert.deepEqual(
-    registeredConsumers(
-      metadata(),
-      ["notes", "reader", "weather"],
-      new Set([JSON.stringify(["kobo-sdk", "<workspace-version>", ""])])
-    ),
-    new Set(["notes", "reader"])
-  );
-});
-
-test("a changed dependency version does not affect consumers of another version", () => {
-  const values = metadata();
-  values.packages.push(
-    {
-      id: "png 0.17.16",
-      name: "png",
-      version: "0.17.16",
-      source: "registry+https://example.test/index"
-    },
-    {
-      id: "png 0.18.1",
-      name: "png",
-      version: "0.18.1",
-      source: "registry+https://example.test/index"
-    }
-  );
-  values.resolve.nodes.find(node => node.id === "notes 1.0.0").deps.push({
-    pkg: "png 0.17.16",
-    dep_kinds: [{ kind: null, target: null }]
-  });
-  values.resolve.nodes.find(node => node.id === "weather 1.0.0").deps.push({
-    pkg: "png 0.18.1",
-    dep_kinds: [{ kind: null, target: null }]
-  });
-  values.resolve.nodes.push(
-    { id: "png 0.17.16", deps: [] },
-    { id: "png 0.18.1", deps: [] }
-  );
-
-  assert.deepEqual(
-    registeredConsumers(
-      values,
-      ["notes", "reader", "weather"],
-      new Set([registryIdentity("png", "0.18.1")])
-    ),
-    new Set(["weather"])
-  );
-});
-
-test("a lock change with no identifiable current package fails closed", () => {
-  assert.throws(
-    () =>
-      registeredConsumers(
-        metadata(),
-        ["notes", "reader", "weather"],
-        new Set([registryIdentity("removed-dependency")])
-      ),
-    /cannot identify its consumers/
-  );
-  assert.deepEqual(
-    registeredConsumers(
-      metadata(),
-      ["notes"],
-      new Set([registryIdentity("removed-dependency")]),
-      false
-    ),
-    new Set()
-  );
-});
-
-test("a dependency that left the lockfile affects what depended on it at base", () => {
-  const previous = [
-    'version = 4\n\n[[package]]\nname = "weather"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n',
-    '[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "notes-dep",\n]\n',
-    '[[package]]\nname = "shared"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "s"\ndependencies = [\n "removed-dependency 2.0.0",\n]\n',
-    '[[package]]\nname = "notes-dep"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "n"\n',
-    '[[package]]\nname = "removed-dependency"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "r"\n'
-  ].join("\n");
-  const current = previous
-    .replace('dependencies = [\n "removed-dependency 2.0.0",\n]\n', "")
-    .replace(
-      '[[package]]\nname = "removed-dependency"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "r"\n',
-      ""
-    );
-  const changed = changedLockPackageIdentities(previous, current);
-  assert.deepEqual(
-    changed,
-    new Set([registryIdentity("shared"), registryIdentity("removed-dependency", "2.0.0")])
-  );
-  const resolved = lockChangesResolvedAgainstBase(
-    previous,
-    changed,
-    new Set(["weather", "notes", "shared", "notes-dep"])
-  );
-  assert.deepEqual(
-    resolved,
-    new Set([registryIdentity("shared"), JSON.stringify(["weather", "<workspace-version>", ""])])
-  );
-  // The consumers at base are what the removal affects: weather, not notes.
-  const removalAlone = lockChangesResolvedAgainstBase(
-    previous,
-    new Set([registryIdentity("removed-dependency", "2.0.0")]),
-    new Set(["weather", "notes", "shared", "notes-dep"])
-  );
-  assert.deepEqual(
-    registeredConsumers(metadata(), ["notes", "reader", "weather"], removalAlone),
-    new Set(["weather"])
-  );
-  // Two resolutions of one crate keep their own dependents: notes depends
-  // on shared 2.0, which never carried the removed package, so only weather
-  // is affected.
-  const twoShared = [
-    'version = 4\n\n[[package]]\nname = "weather"\nversion = "0.3.1"\ndependencies = [\n "shared 1.0.0",\n]\n',
-    '[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "shared 2.0.0",\n]\n',
-    '[[package]]\nname = "shared"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "s1"\ndependencies = [\n "removed-dependency",\n]\n',
-    '[[package]]\nname = "shared"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "s2"\n',
-    '[[package]]\nname = "removed-dependency"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "r"\n'
-  ].join("\n");
-  assert.deepEqual(
-    lockChangesResolvedAgainstBase(
-      twoShared,
-      new Set([registryIdentity("removed-dependency", "2.0.0")]),
-      new Set(["weather", "notes", "shared"])
-    ),
-    new Set([JSON.stringify(["weather", "<workspace-version>", ""])])
-  );
-
-  // A removed package nothing at base reached is left as it was, and still
-  // fails closed.
-  const gone = lockChangesResolvedAgainstBase(
-    previous,
-    new Set([JSON.stringify(["gone-app", "<workspace-version>", ""])]),
-    new Set(["notes"])
-  );
-  assert.deepEqual(gone, new Set([JSON.stringify(["gone-app", "<workspace-version>", ""])]));
-  assert.throws(
-    () => registeredConsumers(metadata(), ["notes"], gone),
-    /cannot identify its consumers/
-  );
-});
-
-test("workspace package version-only lock changes affect no Store app", () => {
-  const previous = `version = 4\n\n[[package]]\nname = "kobo-sdk"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n`;
-  const current = previous.replace('version = "0.3.1"', 'version = "0.3.2"');
-  assert.deepEqual(changedLockPackageIdentities(previous, current), new Set());
-});
-
-test("non-build paths affect no Store package", () => {
-  const packageDirectories = new Map([
-    ["kobo-todo", "examples/todo"],
-    ["kobo-backgammon", "apps/backgammon"],
-    ["kobo-sim", "crates/kobo-sim"],
-    ["kobo-profile", "crates/kobo-profile"]
-  ]);
-  const registered = ["kobo-todo", "kobo-backgammon"];
-  const quietPaths = [
-    ".github/workflows/ci.yml",
-    "tools/check-app-versions.mjs",
-    "docs/RELEASE-TRAIN.md"
-  ];
-
-  const quiet = storeImpactOfChangedPaths(quietPaths, packageDirectories, registered);
-  assert.deepEqual(quiet.storeChanges, []);
-  assert.equal(quiet.catalogQuiet, true);
-  assert.deepEqual(quiet.affected, new Set());
-
-  for (const buildInput of [
-    "crates/kobo-sim/src/lib.rs",
-    "crates/kobo-profile/src/lib.rs",
-    "Cargo.toml",
-    "Cargo.lock",
-    "rust-toolchain.toml"
-  ]) {
-    const impact = storeImpactOfChangedPaths(
-      [buildInput],
-      packageDirectories,
-      registered
-    );
-    assert.deepEqual(impact.storeChanges, []);
-    assert.equal(impact.catalogQuiet, false, buildInput);
-    assert.equal(impact.affected, null, buildInput);
-  }
-
-  const storeEdit = storeImpactOfChangedPaths(
-    ["apps/backgammon/src/main.rs", "crates/kobo-sim/src/lib.rs"],
-    packageDirectories,
-    registered
-  );
-  assert.deepEqual(storeEdit.storeChanges, ["apps/backgammon/src/main.rs"]);
-  assert.equal(storeEdit.catalogQuiet, false);
-  assert.equal(storeEdit.affected, null);
-
-  const directories = storeWatchDirectories(
-    workspacePackageDirectories(readFileSync("Cargo.toml", "utf8"), member =>
-      readFileSync(`${member}/Cargo.toml`, "utf8")
-    ),
-    registeredStorePackages(collectRegistry())
-  );
-  assert.deepEqual(storeCatalogChanges(["crates/kobo-sim/src/lib.rs"], directories), []);
-  assert.deepEqual(storeCatalogChanges(["apps/backgammon/src/main.rs"], directories), [
-    "apps/backgammon/src/main.rs"
-  ]);
-});
-
-test("the previous complete-set artifact is still excluded from per-app reuse", () => {
-  const source = readFileSync(".github/workflows/apps.yml", "utf8");
-  assert.match(source, /\$1 !~ \/\^verified-app-set-\[0-9\]\+\$\//);
-  assert.match(source, /previous_artifact="set"/);
-  assert.match(source, /the set has to/);
 });
 
 test("the standalone importer is isolated without changing device workspace inputs", () => {
@@ -1522,66 +702,107 @@ test("a package manifest that only moves its version lines is not a Store change
   );
 });
 
-test("a toolchain pin rebuilds every app unless its exact content was reviewed", () => {
-  const compatible = new Set(["rust-toolchain.toml"]);
-  const unchangedRoot = () => true;
-  assert.equal(globalBuildInputsChanged([], compatible, unchangedRoot), false);
-  assert.equal(globalBuildInputsChanged(["rust-toolchain.toml"], new Set(), unchangedRoot), true);
-  assert.equal(globalBuildInputsChanged(["rust-toolchain"], compatible, unchangedRoot), true);
-  assert.equal(globalBuildInputsChanged(["rust-toolchain.toml"], compatible, unchangedRoot), false);
-  assert.equal(globalBuildInputsChanged([".cargo/config.toml"], compatible, unchangedRoot), true);
-  assert.equal(globalBuildInputsChanged(["Cargo.toml"], compatible, () => false), true);
-  assert.equal(globalBuildInputsChanged(["Cargo.toml"], compatible, unchangedRoot), false);
-  assert.equal(
-    globalBuildInputsChanged(["apps/sudoku/src/main.rs", "docs/README.md"], new Set(), unchangedRoot),
-    false
+test("a platform change asks no app for a new version", () => {
+  const directories = new Map([
+    ["kobo-todo", "examples/todo"],
+    ["kobo-backgammon", "apps/backgammon"],
+    ["kobo-ui", "crates/kobo-ui"],
+    ["kobo-sdk", "crates/kobo-sdk"]
+  ]);
+  const registered = ["kobo-todo", "kobo-backgammon"];
+  const platform = [
+    "crates/kobo-ui/src/lib.rs",
+    "crates/kobo-sdk/src/lib.rs",
+    "crates/kobo-protocol/src/lib.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo/config.toml",
+    "tools/protocol-minimums.json"
+  ];
+  const quiet = () => false;
+
+  assert.deepEqual(appsWithOwnChanges(platform, directories, registered, quiet).affected, new Set());
+  // The next app to change is asked for its own version, and only for that:
+  // the platform changes beside it are still nobody's.
+  assert.deepEqual(
+    appsWithOwnChanges(
+      [...platform, "apps/backgammon/src/main.rs"],
+      directories,
+      registered,
+      quiet
+    ).affected,
+    new Set(["kobo-backgammon"])
   );
 });
 
-test("the reviewed toolchain pin is the file in the tree, and only that file", () => {
-  const manifest = JSON.parse(readFileSync("tools/app-release-compatible-changes.json", "utf8"));
-  const change = manifest.changes.find(entry =>
-    entry.files.some(file => file.path === "rust-toolchain.toml")
-  );
-  assert.ok(change);
-  const file = change.files.find(entry => entry.path === "rust-toolchain.toml");
-  assert.equal(file.base_blob, null);
-  const inTree = execFileSync("git", ["hash-object", "rust-toolchain.toml"], { encoding: "utf8" }).trim();
-  assert.equal(file.compatible_blob, inTree);
-  // The protocol the pin was reviewed under, not the newest one: a review
-  // answers for the protocol it names, and a protocol bump rebuilds every
-  // app anyway.
-  const protocol = change.protocol_version;
-  assert.deepEqual(
-    compatibleChangePaths(manifest, protocol, [file.path], () => null, () => file.compatible_blob),
-    new Set([file.path])
-  );
-  assert.deepEqual(
-    compatibleChangePaths(manifest, protocol, [file.path], () => null, () => "f".repeat(40)),
-    new Set()
-  );
-  assert.deepEqual(
-    compatibleChangePaths(manifest, protocol, [file.path], () => "f".repeat(40), () => file.compatible_blob),
-    new Set()
-  );
-});
-
-test("the Flashcards test-only exemption refuses a changed production blob", () => {
-  const manifest = JSON.parse(readFileSync("tools/app-release-compatible-changes.json", "utf8"));
-  const file = manifest.changes.flatMap(change => change.files)
-    .find(entry => entry.path === "apps/flashcards/src/main.rs");
-  assert.ok(file);
-  assert.deepEqual(compatibleChangePaths(manifest, 13, [file.path], () => file.base_blob, () => file.compatible_blob), new Set([file.path]));
-  assert.deepEqual(compatibleChangePaths(manifest, 13, [file.path], () => file.base_blob, () => "f".repeat(40)), new Set());
-});
-
-test("both catalog gates share package-root exclusions without hiding nested source", () => {
-  const packages = new Map([["kobo-frame", "apps/frame"]]);
+test("an app's own source asks it for a version; its prose, pictures and filming scripts do not", () => {
+  const directories = new Map([["kobo-frame", "apps/frame"]]);
   const registered = ["kobo-frame"];
-  const hostOnly = ["apps/frame/drive.kobo", "apps/frame/drive/scenes.txt", "apps/frame/README.md"];
-  assert.equal(storeImpactOfChangedPaths(hostOnly, packages, registered).catalogQuiet, true);
-  const source = ["apps/frame/src/drive.txt", "apps/frame/src/notes.md", "apps/drive.kobo", "apps/drive/src/main.rs"];
-  const expected = [...source].sort();
-  assert.deepEqual(storeImpactOfChangedPaths([...hostOnly, ...source], packages, registered).storeChanges, expected);
-  assert.deepEqual(storeCatalogChanges([...hostOnly, ...source], storeWatchDirectories(packages, registered)), expected);
+  const quiet = () => false;
+  const hostOnly = [
+    "apps/frame/drive.kobo",
+    "apps/frame/drive/scenes.txt",
+    "apps/frame/README.md",
+    "apps/frame/screenshots/home.png"
+  ];
+  assert.deepEqual(appsWithOwnChanges(hostOnly, directories, registered, quiet).affected, new Set());
+  for (const source of [
+    "apps/frame/src/main.rs",
+    "apps/frame/src/drive.txt",
+    "apps/frame/src/notes.md",
+    "apps/frame/cobalt-app.json",
+    "apps/frame/Cargo.toml"
+  ]) {
+    assert.deepEqual(
+      appsWithOwnChanges([...hostOnly, source], directories, registered, quiet).affected,
+      new Set(["kobo-frame"]),
+      source
+    );
+  }
+  const directoriesWithSibling = new Map([...directories, ["kobo-drive", "apps/drive"]]);
+  assert.deepEqual(
+    appsWithOwnChanges(["apps/drive/src/main.rs"], directoriesWithSibling, ["kobo-frame"], quiet)
+      .affected,
+    new Set()
+  );
+});
+
+test("a package manifest that only moves version numbers asks for nothing", () => {
+  const directories = new Map([["kobo-todo", "examples/todo"]]);
+  const asked = [];
+  const result = appsWithOwnChanges(
+    ["examples/todo/Cargo.toml"],
+    directories,
+    ["kobo-todo"],
+    manifest => {
+      asked.push(manifest);
+      return true;
+    }
+  );
+  assert.deepEqual(asked, ["examples/todo/Cargo.toml"]);
+  assert.deepEqual(result.affected, new Set());
+  assert.deepEqual(result.quietManifests, new Set(["examples/todo/Cargo.toml"]));
+  // A version line beside a source change is part of that change.
+  assert.deepEqual(
+    appsWithOwnChanges(
+      ["examples/todo/Cargo.toml", "examples/todo/src/main.rs"],
+      directories,
+      ["kobo-todo"],
+      () => true
+    ).affected,
+    new Set(["kobo-todo"])
+  );
+});
+
+test("a registered app that names no workspace package fails closed", () => {
+  assert.throws(
+    () => appsWithOwnChanges([], new Map(), ["kobo-ghost"], () => false),
+    /kobo-ghost is in the Store catalog but names no workspace member/
+  );
+});
+
+test("the compatible-change review is gone with the rule that needed it", () => {
+  assert.throws(() => readFileSync("tools/app-release-compatible-changes.json", "utf8"), /ENOENT/);
+  assert.doesNotMatch(readFileSync("tools/check-app-versions.mjs", "utf8"), /compatible-change/);
 });
