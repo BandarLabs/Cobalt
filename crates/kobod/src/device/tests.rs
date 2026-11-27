@@ -1341,6 +1341,75 @@ fn landscape_taps_reach_the_same_control_from_either_physical_side() {
 }
 
 #[test]
+fn a_pressed_row_button_is_drawn_on_the_outline_the_painter_strokes() {
+    let mut row = kobo_ui::Row::new(
+        kobo_ui::ActionId(3),
+        "Home Panel",
+        "Control saved Home Assistant tiles from a low-power panel. Needs an account.",
+        kobo_ui::Glyph::Book,
+    );
+    row = row.with_button(kobo_ui::ActionId(4), "Update");
+    let screen = kobo_ui::Screen::new(
+        1,
+        vec![kobo_ui::Node::Rows {
+            id: kobo_ui::NodeId(1),
+            rows: vec![row],
+        }],
+    )
+    .with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(90), "App Store"));
+    for scale in [
+        kobo_ui::TextScale::Smallest,
+        kobo_ui::TextScale::Default,
+        kobo_ui::TextScale::Large,
+        kobo_ui::TextScale::Largest,
+    ] {
+        let metrics = kobo_ui::DisplayMetrics {
+            text_scale: scale,
+            ..kobo_ui::CLARA_BW_METRICS
+        };
+        let chrome = kobo_ui::Chrome::default();
+        let layout = screen.layout_with(&metrics, &chrome);
+        let target = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, kobo_ui::LayoutKind::RowButton(_)))
+            .expect("the row has its button")
+            .rect;
+        let (x, y) = (target.x + target.width / 2, target.y + 2);
+        let pressed = layout
+            .pressed_control(x, y)
+            .map(|rect| super::drawn_control(&layout, rect, &metrics))
+            .expect("a finger at the top of the target is on the button");
+        assert!(
+            pressed.height < target.height,
+            "{scale:?}: the press still covers the whole row"
+        );
+        let mut surface = kobo_ui::Surface::new(
+            usize::try_from(metrics.width).unwrap(),
+            usize::try_from(metrics.height).unwrap(),
+        );
+        kobo_ui::render_with(&screen, &metrics, &chrome, &mut surface, None);
+        // Down the middle of the button: the label sits between the top and
+        // bottom strokes, so the first and last ink are the stroke itself.
+        // The sides would not do, as the rounded corners stop them short.
+        let column = usize::try_from(pressed.x + pressed.width / 2).unwrap();
+        let inked: Vec<i32> = (target.y + 1..target.y + target.height - 1)
+            .filter(|&row| {
+                let row = usize::try_from(row).unwrap();
+                surface.pixels[row * surface.width + column] < 0x80
+            })
+            .collect();
+        let (first, last) = (inked[0], inked[inked.len() - 1]);
+        let bottom = pressed.y + pressed.height - 1;
+        assert!(
+            (first - pressed.y).abs() <= 1 && (last - bottom).abs() <= 1,
+            "{scale:?}: the stroke runs from {first} to {last}, the press from {} to {bottom}",
+            pressed.y
+        );
+    }
+}
+
+#[test]
 fn landscape_feedback_rect_matches_the_rotated_control() {
     let physical = crate::device_metrics();
     let logical = kobo_ui::Rect {
