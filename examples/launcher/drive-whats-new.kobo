@@ -5,25 +5,25 @@
 # file names standing in for the running one. --bare leaves out the sweep's
 # seed, which marks the notes as read for every other launcher route:
 #
-#   KOBO_LAUNCHER_NOTES_VERSION=0.3.44 python3 scripts/check-apps-sim.py launcher \
+#   KOBO_LAUNCHER_NOTES_VERSION=0.3.45 python3 scripts/check-apps-sim.py launcher \
 #     --bare --route examples/launcher/drive-whats-new.kobo --out target/sim-check-whats-new
 #
 # The version and the leads below are this release's. Rewrite them with the
 # file.
-wait-for What's new in Cobalt 0.3.44
-expect Marked mistakes:
-expect Chapters:
-expect Line breaks:
-expect Continue reading:
+wait-for What's new in Cobalt 0.3.45
+expect Update all:
+expect Update notices:
+expect Pressed buttons:
+expect Saved catalog pages:
 shot whats-new
 # One tap puts it away, and the grid under it is where it was.
 tap Done
 wait-idle
 expect-missing What's new in Cobalt
-expect-missing Marked mistakes:
-expect-missing Chapters:
-expect-missing Line breaks:
-expect-missing Continue reading:
+expect-missing Update all:
+expect-missing Update notices:
+expect-missing Pressed buttons:
+expect-missing Saved catalog pages:
 expect-missing Done
 expect Cobalt
 expect App Store

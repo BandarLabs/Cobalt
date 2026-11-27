@@ -8,8 +8,8 @@
 # drops changes from the end. Rewrite the whole file when the version is
 # bumped (docs/RELEASE-TRAIN.md). `cargo test -p kobo-launcher` checks it.
 
-0.3.44
-Marked mistakes: Crossword and Sudoku strike through the letters and digits they find wrong.
-Chapters: a new chapter starts on a new page.
-Line breaks: poems and addresses in a book keep their lines.
-Continue reading: Books keeps your place through a power loss.
+0.3.45
+Update all: the App Store updates every waiting app with one tap.
+Update notices: the line saying an app was updated now stays on screen.
+Pressed buttons: a pressed Update button stays inside its outline.
+Saved catalog pages: Gutenbird fetches them again once Wi-Fi is back.
