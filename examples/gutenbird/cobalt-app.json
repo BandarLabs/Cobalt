@@ -3,11 +3,11 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
-  "version": "1.0.35",
+  "version": "1.0.36",
   "glyph": "book-download",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "Try again on a catalog that failed fetches it again. Chapters start on a new page, and line breaks in poems are kept."
+  "release_notes": "A catalog page saved while you were offline is fetched again when you come back to Gutenbird on Wi-Fi, instead of asking you to reconnect."
 }
