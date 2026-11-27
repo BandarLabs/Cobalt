@@ -4,8 +4,8 @@
   "short_label": "Needles",
   "summary": "Count rows, browse Ravelry collections, and read your synced patterns offline.",
   "page_description": "Count rows for each section of a project, browse your Ravelry library, and read patterns you own offline.",
-  "version": "0.1.17",
-  "release_notes": "Find words in a pattern and go to any page from the reading controls.",
+  "version": "0.1.18",
+  "release_notes": "Patterns that set their own line spacing read at normal spacing, not double spaced.",
   "glyph": "yarn",
   "capabilities": [
     "network",

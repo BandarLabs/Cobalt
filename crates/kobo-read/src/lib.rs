@@ -3939,12 +3939,16 @@ fn paginate(
         let natural_height = natural_height.max(1);
         // The toolkit sets a heading's lines solid; only prose is given the
         // book's line spacing, so only prose may be charged for it.
-        let height = rich
-            .filter(|_| !heading)
-            .map_or(natural_height, |rich| {
-                natural_height
-                    .saturating_mul(i32::from(rich.style.line_height_percent.clamp(80, 250)))
-                    / 100
+        let line_percent = rich.filter(|_| !heading).map(|rich| {
+            reading_line_percent(
+                rich.style.line_height_percent,
+                wrap_size.em_in(wrap_face),
+                natural_height,
+            )
+        });
+        let height = line_percent
+            .map_or(natural_height, |percent| {
+                natural_height.saturating_mul(i32::from(percent)) / 100
             })
             .max(1);
         let (_, mut width) = quote_offsets(metrics, area.width, kind.depth());
@@ -4255,6 +4259,7 @@ fn paginate(
                         piece_presentation(rich, text.as_str(), &mut source_at);
                     let presentation =
                         fragment_presentation(presentation, placed == 0, end == lines.len());
+                    let presentation = drawn_line_spacing(presentation, line_percent);
                     page.push(Piece {
                         block: index,
                         text,
@@ -4282,6 +4287,7 @@ fn paginate(
                 piece_presentation(rich, text.as_str(), &mut source_at);
             let presentation =
                 fragment_presentation(presentation, placed == 0, placed + take == lines.len());
+            let presentation = drawn_line_spacing(presentation, line_percent);
             let presentation = collapsed_after(page.last(), presentation);
             // Only prose is drawn with the book's margins. A heading, a quote,
             // an item or a caption is set by the toolkit with its own spacing,
@@ -4509,6 +4515,37 @@ fn block_formulae(
         }
     }
     formulae
+}
+
+/// How far apart a paragraph's lines are set, as a share of the face's own
+/// line height, which is what the toolkit multiplies.
+///
+/// A stylesheet's `line-height` is a multiple of the font size: `1.7` is
+/// 1.7 ems from one baseline to the next. It was taken as a multiple of the
+/// face's line instead, which already carries the face's own leading, so a
+/// news page asking for 1.7 was set nearly three ems apart and read as if
+/// double spaced. Never closer than the face sets its lines by itself: a
+/// book asking for less gets the reading face's own spacing, which is what
+/// it gets with no stylesheet at all.
+fn reading_line_percent(css_percent: u16, em: i32, natural: i32) -> u16 {
+    let natural = natural.max(1);
+    let wanted = em
+        .max(1)
+        .saturating_mul(i32::from(css_percent.clamp(80, 250)))
+        .saturating_add(natural / 2)
+        / natural;
+    u16::try_from(wanted.clamp(100, 250)).unwrap_or(100)
+}
+
+/// A piece drawn with the line spacing it was measured with.
+fn drawn_line_spacing(
+    mut presentation: kobo_ui::ParagraphPresentation,
+    line_percent: Option<u16>,
+) -> kobo_ui::ParagraphPresentation {
+    if let Some(percent) = line_percent {
+        presentation.line_height_percent = percent;
+    }
+    presentation
 }
 
 fn paragraph_presentation(style: &kobo_doc::BlockStyle) -> kobo_ui::ParagraphPresentation {
@@ -7242,6 +7279,74 @@ mod tests {
             2,
             "the headings were kept room the page does not spend on them"
         );
+    }
+
+    // Seen on a reader: a news page asked for `line-height: 1.7` and Daily
+    // Brief set its story nearly three ems apart, because the 1.7 multiplied
+    // the reading face's line, which already carries its own leading.
+    #[test]
+    fn a_stylesheet_line_height_is_a_multiple_of_the_font_size() {
+        // The reading face on a Clara BW at the default size: type set at
+        // 40 px on lines 64 px apart.
+        let (em, natural) = (40, 64);
+
+        // Nothing asked for: the face's own spacing, as before.
+        assert_eq!(super::reading_line_percent(100, em, natural), 100);
+        // Asking for less than the face gives on its own never crowds it.
+        assert_eq!(super::reading_line_percent(80, em, natural), 100);
+        // 1.7 and 2.5 ems apart, as a stylesheet means them, within a pixel.
+        for css in [170_u16, 250] {
+            let percent = super::reading_line_percent(css, em, natural);
+            let drawn = natural * i32::from(percent) / 100;
+            let wanted = em * i32::from(css) / 100;
+            assert!(
+                (drawn - wanted).abs() <= 1,
+                "{css}%: {drawn} px, wanted {wanted}"
+            );
+        }
+        // It was 1.7 of the face's own lines: 108 px, nearly three ems.
+        assert!(natural * 170 / 100 > 2 * em + em / 2);
+    }
+
+    #[test]
+    fn prose_is_drawn_with_the_line_spacing_it_was_measured_with() {
+        let mut blocks = Vec::new();
+        let mut rich = std::collections::BTreeMap::new();
+        for index in 0..30 {
+            rich.insert(
+                blocks.len(),
+                kobo_doc::RichBlock {
+                    spans: Vec::new(),
+                    style: kobo_doc::BlockStyle {
+                        line_height_percent: 170,
+                        ..kobo_doc::BlockStyle::default()
+                    },
+                },
+            );
+            blocks.push(Block::Paragraph(format!(
+                "Paragraph {index}: the quick brown fox jumps over the lazy dog and runs on. \
+                 The quick brown fox jumps over the lazy dog and runs on again."
+            )));
+        }
+        let reader = Reader::open(
+            Document {
+                blocks,
+                rich,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+        no_words_fall_off_a_page(&reader);
+        let face = kobo_ui::Face::Reading;
+        let expected = super::reading_line_percent(
+            170,
+            kobo_ui::FontSize::Body.em_in(face),
+            kobo_ui::FontSize::Body.line_height_in(face),
+        );
+        for piece in reader.page() {
+            assert_eq!(piece.presentation.line_height_percent, expected);
+        }
     }
 
     // Pagination once wrapped the written-out form of a formula while the

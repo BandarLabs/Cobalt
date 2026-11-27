@@ -3,7 +3,7 @@
   "display_name": "Feeds",
   "short_label": "Feeds",
   "summary": "Follow feeds, search saved articles and read offline with images.",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "glyph": "rss",
   "capabilities": [
     "network"
@@ -27,5 +27,5 @@
       }
     ]
   },
-  "release_notes": "An image problem in one feed is no longer reported on the others, and more lead photos load."
+  "release_notes": "Articles that set their own line spacing read at normal spacing, not double spaced."
 }

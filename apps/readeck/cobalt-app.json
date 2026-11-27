@@ -3,8 +3,8 @@
   "display_name": "Readeck",
   "short_label": "Readeck",
   "summary": "Read and search your saved Readeck articles. Needs an account.",
-  "version": "0.1.9",
-  "release_notes": "Find words in an article and go to any page from the reading controls. With the bar shown, the foot of the page says where you are.",
+  "version": "0.1.10",
+  "release_notes": "Articles that set their own line spacing read at normal spacing, not double spaced.",
   "glyph": "paperclip",
   "capabilities": [
     "network",

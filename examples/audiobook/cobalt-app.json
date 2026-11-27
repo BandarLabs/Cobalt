@@ -3,7 +3,7 @@
   "display_name": "Audiobooks",
   "short_label": "Audiobooks",
   "summary": "Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic.",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,7 +11,7 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "A file that will not play says what to do about it, and the library fits its page while a book is playing.",
+  "release_notes": "A book made from a topic is listed by its name in words, not a file name cut off mid-word.",
   "setup": {
     "steps": [
       {

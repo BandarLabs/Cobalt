@@ -3,11 +3,11 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
-  "version": "1.0.36",
+  "version": "1.0.37",
   "glyph": "book-download",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "A catalog page saved while you were offline is fetched again when you come back to Gutenbird on Wi-Fi, instead of asking you to reconnect."
+  "release_notes": "Books that set their own line spacing read at normal spacing, not double spaced."
 }

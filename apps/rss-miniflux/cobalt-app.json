@@ -4,8 +4,8 @@
   "short_label": "Digest",
   "summary": "Read your Miniflux feeds anywhere. Needs an account.",
   "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project.",
-  "version": "0.1.16",
-  "release_notes": "A newly connected account syncs by itself the first time.",
+  "version": "0.1.17",
+  "release_notes": "Articles that set their own line spacing read at normal spacing, not double spaced.",
   "glyph": "inbox",
   "capabilities": [
     "network"

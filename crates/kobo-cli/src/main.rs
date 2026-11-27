@@ -9067,6 +9067,7 @@ const ANSWERS_ITS_OWN_HELP: &[&str] = &[
     "secret",
     "send",
     "setup",
+    "sidekick",
     "stream",
     "sync",
     "trust",
