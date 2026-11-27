@@ -4,8 +4,8 @@
   "short_label": "Library",
   "summary": "Browse and read books from your calibre-web library. Needs an account.",
   "page_description": "Browse a public or private OPDS library, download EPUBs and continue reading offline. Library is an unofficial OPDS client and is not affiliated with or endorsed by the calibre-web or calibre projects.",
-  "version": "0.1.15",
-  "release_notes": "Find words in a book and go to any page from the reading controls. With the bar shown, the foot of the page says where you are.",
+  "version": "0.1.16",
+  "release_notes": "Books that set their own line spacing read at normal spacing, not double spaced.",
   "glyph": "books",
   "capabilities": [
     "network"

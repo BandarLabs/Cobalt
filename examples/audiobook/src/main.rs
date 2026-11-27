@@ -702,7 +702,7 @@ impl Audiobook {
         self.place_of(&book.id)
             .map(|place| place.title.as_str())
             .filter(|title| !title.is_empty())
-            .map_or_else(|| book.title.clone(), str::to_owned)
+            .map_or_else(|| readable_file_title(&book.title), str::to_owned)
     }
 
     /// The title a book made here was saved under, which its files do not
@@ -2248,22 +2248,53 @@ fn read_checkpoint(saved: &[u8]) -> Option<Checkpoint> {
     })
 }
 
+/// A file name that reads as words, for a book with no title of its own.
+///
+/// A book the studio made is saved under a name built from its title, and
+/// one made before the title was kept beside it is listed by that name
+/// alone: `a-string-into-the-sky`. Its words are given back their spaces and
+/// the first its capital. A name that already has spaces, or no joins to
+/// undo, is somebody's own and is left as it is.
+fn readable_file_title(name: &str) -> String {
+    if name.contains(' ') || !name.contains(['-', '_']) {
+        return name.to_owned();
+    }
+    let words = name
+        .split(['-', '_'])
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut characters = words.chars();
+    match characters.next() {
+        Some(first) => first.to_uppercase().chain(characters).collect(),
+        None => name.to_owned(),
+    }
+}
+
+/// The file a studio book is saved as, from its title: lowercase words
+/// joined by dashes, as many whole words as fit in 48 characters.
+///
+/// It used to end at the 48th character wherever that fell, so a long title
+/// was saved, and listed, ending in the first letter of a word.
 fn archive_name(title: &str) -> String {
     let mut name = String::new();
-    let mut dash = false;
-    for character in title.chars() {
-        if character.is_ascii_alphanumeric() {
-            if dash && !name.is_empty() {
-                name.push('-');
+    for word in title
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+    {
+        let joined = usize::from(!name.is_empty());
+        if name.len() + joined + word.len() > 48 {
+            // A first word longer than the whole allowance is cut rather
+            // than leaving no name at all.
+            if name.is_empty() {
+                name.push_str(&word[..48].to_ascii_lowercase());
             }
-            name.push(character.to_ascii_lowercase());
-            dash = false;
-        } else {
-            dash = true;
-        }
-        if name.len() >= 48 {
             break;
         }
+        if joined == 1 {
+            name.push('-');
+        }
+        name.push_str(&word.to_ascii_lowercase());
     }
     let name = name.trim_matches('-');
     format!(

@@ -3,11 +3,11 @@
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
   "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "glyph": "sunrise",
   "capabilities": [
     "network",
     "scheduled-wake"
   ],
-  "release_notes": "The brief no longer promises to refresh itself each morning. It refreshes when you open it, at most every six hours."
+  "release_notes": "Stories from sites that set their own line spacing read at normal spacing, not double spaced."
 }

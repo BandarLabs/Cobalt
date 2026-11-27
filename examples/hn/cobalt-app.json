@@ -3,10 +3,10 @@
   "display_name": "Hacker News",
   "short_label": "Hacker News",
   "summary": "Read Top, New, Ask, and Show stories with complete comment threads.",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "glyph": "news",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Longer articles open, and pictures offered in several sizes load at one the panel can show."
+  "release_notes": "Linked articles that set their own line spacing read at normal spacing, not double spaced."
 }

@@ -1,7 +1,7 @@
 use super::{
-    archive_name, parse_index, parse_places, play_action, read_checkpoint, resume_from,
-    size_on_disk, write_checkpoint, write_places, Audiobook, Book, Checkpoint, Place, Stage, CHECK,
-    CHECKPOINT_KEY, NOW_PLAYING, PLACES_KEY, SAMPLE_NAME, SAMPLE_TITLE, SECRETS,
+    archive_name, parse_index, parse_places, play_action, read_checkpoint, readable_file_title,
+    resume_from, size_on_disk, write_checkpoint, write_places, Audiobook, Book, Checkpoint, Place,
+    Stage, CHECK, CHECKPOINT_KEY, NOW_PLAYING, PLACES_KEY, SAMPLE_NAME, SAMPLE_TITLE, SECRETS,
 };
 use crate::pipeline;
 use kobo_sdk::{action_id, AudioEntry, StandardState, CLARA_BW_METRICS, MAX_ROWS};
@@ -31,6 +31,34 @@ fn book(id: &str, title: &str) -> Book {
 #[test]
 fn a_title_becomes_a_safe_kobo_filename() {
     assert_eq!(archive_name("Moon: Past & Future"), "moon-past-future.mp3z");
+}
+
+#[test]
+fn a_long_title_is_saved_under_whole_words() {
+    // Seen on a reader: the studio cut this one to "...science-of-k".
+    assert_eq!(
+        archive_name("A String into the Sky: The Story and Science of Kites"),
+        "a-string-into-the-sky-the-story-and-science-of.mp3z"
+    );
+    assert_eq!(
+        archive_name(&"x".repeat(80)),
+        format!("{}.mp3z", "x".repeat(48))
+    );
+}
+
+#[test]
+fn a_book_with_no_title_is_listed_by_its_file_name_as_words() {
+    assert_eq!(
+        readable_file_title("a-string-into-the-sky-the-story-and-science-of"),
+        "A string into the sky the story and science of"
+    );
+    assert_eq!(
+        readable_file_title("audio_test_native"),
+        "Audio test native"
+    );
+    // Somebody's own file name is theirs to spell.
+    assert_eq!(readable_file_title("Dune - Part 1"), "Dune - Part 1");
+    assert_eq!(readable_file_title("Middlemarch"), "Middlemarch");
 }
 
 #[test]
@@ -163,7 +191,7 @@ fn a_book_is_named_by_what_it_said_then_the_index_then_its_file() {
     }];
     let books = app.library.clone().expect("the runtime answered");
     assert_eq!(app.title_of(&books[0]), "The Moon");
-    assert_eq!(app.title_of(&books[1]), "stray-recording");
+    assert_eq!(app.title_of(&books[1]), "Stray recording");
     assert_eq!(app.title_of(&books[2]), "Dune, by Frank Herbert");
     assert_eq!(Audiobook::status_of(&books[0], None), "MP3 · 3 MB");
     assert_eq!(

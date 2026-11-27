@@ -72,6 +72,21 @@ When this computer is on a tailnet, the certificates name its tailnet name and
 address either way, unless you name the hosts yourself with --host.";
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
+    // Asked here, before any verb runs, so that `run --help` describes the
+    // helper rather than starting it. `init` has a longer answer of its own.
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+        || matches!(arguments, [help] if help == "help")
+    {
+        let help = if arguments.first().is_some_and(|verb| verb == "init") {
+            INIT_HELP
+        } else {
+            USAGE
+        };
+        println!("{help}");
+        return Ok(());
+    }
     match arguments.split_first() {
         Some((verb, rest)) => match (verb.as_str(), rest) {
             ("init", extra) => init(extra),
@@ -97,13 +112,6 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
 /// trust roots and all three pairings are written onto it over SSH. Without
 /// one, the address and codes are printed for the reader's screens instead.
 fn init(arguments: &[String]) -> Result<(), String> {
-    if arguments
-        .iter()
-        .any(|argument| argument == "--help" || argument == "-h")
-    {
-        println!("{INIT_HELP}");
-        return Ok(());
-    }
     let (target, rest) = super::targets::TargetArgs::parse(arguments)?;
     let (hosts, prefer_tailnet) = parse_hosts(&rest)?;
     let helper = locate()?;
@@ -761,6 +769,14 @@ fn stop() -> Result<(), String> {
             Ok(())
         };
     };
+    // A helper that is not answering has gone, and the number it left behind
+    // may by now belong to something else entirely. Signalling it would end
+    // that instead, so a silent helper's record is only cleared.
+    if !listening() {
+        clear_pid();
+        println!("The Sidekick helper is not running.");
+        return Ok(());
+    }
     let signalled = stop_command(pid)
         .status()
         .map_err(|error| format!("stop PID {pid}: {error}"))?;
@@ -1027,6 +1043,30 @@ mod tests {
             let error = command(&arguments).expect_err("refused");
             assert_eq!(error, USAGE, "{arguments:?}");
         }
+    }
+
+    #[test]
+    fn asking_any_verb_for_help_answers_without_running_it() {
+        // `run --help` used to reach the reference line printed for commands
+        // that do not answer their own help, and once this command answered
+        // its own, `run` would have taken the flag as a reason to start the
+        // helper. Every form is answered here before a verb is looked at.
+        for arguments in [
+            words(&["--help"]),
+            words(&["-h"]),
+            words(&["help"]),
+            words(&["run", "--help"]),
+            words(&["stop", "-h"]),
+            words(&["init", "--help"]),
+            words(&["init", "--device", "192.0.2.1", "--help"]),
+        ] {
+            assert_eq!(command(&arguments), Ok(()), "{arguments:?}");
+        }
+        assert_eq!(
+            super::super::unanswered_help(&words(&["sidekick", "init", "--help"])),
+            None,
+            "the reference line would be printed instead of the init help"
+        );
     }
 
     #[test]
