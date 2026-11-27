@@ -3431,8 +3431,9 @@ fn host_applications(
                                     let metrics = metrics_for(current);
                                     let logical_metrics = metrics.oriented(orientation);
                                     let layout = current.layout_with(&logical_metrics, &chrome);
-                                    if let Some(logical_rect) =
-                                        layout.pressed_control(logical_x, logical_y)
+                                    if let Some(logical_rect) = layout
+                                        .pressed_control(logical_x, logical_y)
+                                        .map(|rect| drawn_control(&layout, rect, &logical_metrics))
                                     {
                                         let rect = physical_feedback_rect(
                                             logical_rect,
@@ -5695,6 +5696,44 @@ fn physical_feedback_rect(
             height: rect.width,
         },
     }
+}
+
+/// The shape a press is drawn on, which for a row's button is its outline
+/// rather than its target.
+///
+/// A row's button answers anywhere in the full height of the row, so a finger
+/// that lands beside the outline still finds it, but the painter strokes an
+/// outline only a line of type tall in the middle of that target. Inverting
+/// the target put a black slab above and below the button, three times its
+/// height on a row with a long summary, as the Store's Update buttons showed.
+///
+/// These lines repeat the painter's `RowButton` arm in kobo-ui on purpose.
+/// Store apps link the painter, and any edit to that file moves the panic
+/// locations compiled into every one of them, so a fix there would have
+/// republished every app for something only the runtime draws. A test paints
+/// a row with the real painter and holds this outline to its stroke.
+fn drawn_control(
+    layout: &Layout,
+    rect: kobo_ui::Rect,
+    metrics: &kobo_ui::DisplayMetrics,
+) -> kobo_ui::Rect {
+    let row_button = layout
+        .nodes
+        .iter()
+        .any(|node| node.rect == rect && matches!(node.kind, LayoutKind::RowButton(_)));
+    if !row_button {
+        return rect;
+    }
+    kobo_ui::with_text_scale(metrics.text_scale, || {
+        let line = kobo_ui::FontSize::Body.line_height();
+        let tight = metrics.space(kobo_ui::Space::Tight);
+        let height = rect.height.min(line + tight * 2);
+        kobo_ui::Rect {
+            y: rect.y + (rect.height - height) / 2,
+            height,
+            ..rect
+        }
+    })
 }
 
 fn feedback_kind(layout: &Layout, rect: kobo_ui::Rect) -> FeedbackKind {
