@@ -33,6 +33,8 @@ shot catalog
 tap 655,257             # Updates filter
 wait 3
 shot updates
+# With more than one update waiting, the bar offers Update all at 268,1380;
+# it installs them for real, so it is tapped by hand rather than here.
 tap 170,257             # All
 wait 3
 tap 963,720             # Backgammon's page, from its more button
@@ -56,6 +58,9 @@ shot opening
 app backgammon
 open backgammon
 shot board
+tap 535,1376            # Roll
+wait 6
+shot roll
 
 app parlor
 open parlor
@@ -138,7 +143,9 @@ shot full-text
 app brief
 open brief
 shot brief
-# The story view waits for the line spacing fix (PR #419) to reach readers.
+tap 400,355             # first story
+wait 6
+shot story
 
 app hn
 open hn
