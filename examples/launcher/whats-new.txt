@@ -8,8 +8,8 @@
 # drops changes from the end. Rewrite the whole file when the version is
 # bumped (docs/RELEASE-TRAIN.md). `cargo test -p kobo-launcher` checks it.
 
-0.3.45
-Update all: the App Store updates every waiting app with one tap.
-Update notices: the line saying an app was updated now stays on screen.
-Pressed buttons: a pressed Update button stays inside its outline.
-Saved catalog pages: Gutenbird fetches them again once Wi-Fi is back.
+0.3.46
+Line spacing: books and pages that set their own now read at normal spacing.
+App updates: a Cobalt update no longer asks every app to update.
+Backgammon dice: Roll works on a reader again.
+Audiobook titles: a book made from a topic is listed by its name.
