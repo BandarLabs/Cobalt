@@ -91,17 +91,8 @@ tap 535,1376            # Clues
 wait 3
 shot clues
 
-app inkling
-open inkling
-shot board
-tap 424,1328            # C
-tap 387,1067            # R
-tap 96,1197             # A
-tap 752,1328            # N
-tap 288,1067            # E
-tap 96,1328             # Guess
-wait 4
-shot guess
+# Inkling is left out: its daily game keeps every guess, so a scripted guess
+# would be repeated on the board by every run that day.
 
 app pubquiz
 open pubquiz
@@ -111,9 +102,9 @@ wait 3
 tap 535,1376            # Start round
 wait 4
 shot question
-tap 400,915             # an answer
+tap 400,421             # the first answer
 wait 4
-shot next-question
+shot answered
 
 app tictactoe
 open tictactoe
@@ -128,9 +119,6 @@ shot feeds
 tap 300,510             # NASA Science
 wait 4
 shot articles
-tap 400,349             # first article
-wait 6
-shot article
 
 app arxiv
 open arxiv
@@ -186,9 +174,6 @@ shot home
 tap 400,340             # Browse
 wait 4
 shot browse
-tap 300,400             # Reading notes
-wait 4
-shot note
 
 app verses
 open verses
@@ -219,6 +204,12 @@ wait 2
 tap 784,1328
 wait 3
 shot three-rows
+tap 285,1328            # Undo, three times, so the owner's count is as it was
+wait 1
+tap 285,1328
+wait 1
+tap 285,1328
+wait 2
 
 app morse
 open morse
@@ -254,10 +245,13 @@ wait 8
 shot watching
 host tools/device-shots-companions.sh ask
 wait 8
-shot asking
+shot waiting
+tap 400,400             # the first agent's request
+wait 4
+shot request
 tap 285,1211            # Allow
 wait 6
-shot next-request
+shot allowed
 host tools/device-shots-companions.sh stop
 
 app paperterm
